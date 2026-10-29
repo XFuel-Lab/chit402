@@ -10,6 +10,32 @@ import { persistFailed } from './persist-error.js';
 
 let tmpSeq = 0;
 
+/** Crash leftovers from this writer: `.<name>.<pid>.<seq>.tmp` in one directory. */
+const STALE_TMP = /^\..+\.\d+\.\d+\.tmp$/;
+
+/**
+ * Drop stale temp files in `dir` only. Subdirectories are left alone.
+ * A name that is not a regular file is left alone.
+ * @param {string} dir
+ * @param {typeof import('node:fs')} [fsImpl]
+ */
+export function unlinkStaleAtomicTemps(dir, fsImpl = fs) {
+  let names;
+  try {
+    names = fsImpl.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!STALE_TMP.test(name)) continue;
+    const full = path.join(dir, name);
+    try {
+      if (!fsImpl.lstatSync(full).isFile()) continue;
+      fsImpl.unlinkSync(full);
+    } catch { /* a stuck temp must not refuse boot */ }
+  }
+}
+
 /**
  * @param {string} target
  * @param {string} text

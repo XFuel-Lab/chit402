@@ -6,7 +6,7 @@ import { deriveEvidence, BOOK_EVIDENCE } from './usage-settled.js';
 import { buildVerifyUrl, explorerUrlForRef } from './receipt.js';
 import { testSwitchesOn } from './test-switch.js';
 import { persistFailed } from './persist-error.js';
-import { writeAtomicJsonFile } from './atomic-json-file.js';
+import { unlinkStaleAtomicTemps, writeAtomicJsonFile } from './atomic-json-file.js';
 
 /** Signed envelope schema for treasury desk push. */
 export const BOOK_WEBHOOK_SCHEMA = 'chit402.book_webhook.v1';
@@ -25,7 +25,10 @@ function rejectWebhookRow() {
   throw persistFailed(new Error('bad webhook row'), 'book-webhook: load failed');
 }
 
-/** Rebuild one stored row or refuse the file. Events stay in file order. */
+/**
+ * Rebuild one stored row or refuse the file. Events stay in file order.
+ * Tightening validateWebhookUrl would make boot refuse rows already stored.
+ */
 function validateStoredWebhook(key, row) {
   const id = Number(key);
   if (!Number.isInteger(id) || id < 1 || String(id) !== key) rejectWebhookRow();
@@ -82,6 +85,7 @@ export class BookWebhookRegistry {
     if (this.persist) {
       try {
         this._fs.mkdirSync(this.dir, { recursive: true });
+        unlinkStaleAtomicTemps(this.dir, this._fs);
         this._load();
       } catch (err) {
         throw err?.code === 'persist_failed' ? err : persistFailed(err, 'book-webhook: mkdir failed');
@@ -500,18 +504,27 @@ export function scheduleBookWebhook(entry, { registry, baseUrl } = {}) {
   const envelope = buildBookWebhookEnvelope(entry, url);
   if (!envelope) return;
 
-  setImmediate(async () => {
-    await deliverBookWebhook(hook.url, envelope, hook.secret, entry.task_id)
+  setImmediate(() => {
+    deliverBookWebhook(hook.url, envelope, hook.secret, entry.task_id)
       .then((res) => {
-        reg.recordDelivery(entry.agent_id, hook, res);
+        try {
+          reg.recordDelivery(entry.agent_id, hook, res);
+        } catch {
+          logger.warn({ agent_id: entry.agent_id, code: 'book_webhook_counter_persist_failed' }, 'book webhook counter persist failed');
+          return;
+        }
         if (res.ok) {
           logger.info({ agentId: entry.agent_id, taskId: entry.task_id, event }, 'Book webhook delivered');
         }
       })
       .catch((err) => {
-        const lastError = err.message?.slice(0, 160) || 'delivery error';
-        reg.recordDelivery(entry.agent_id, hook, { ok: false, threw: true, error: lastError });
-        logger.warn({ err: lastError, agentId: entry.agent_id, taskId: entry.task_id }, 'Book webhook dispatch error');
+        try {
+          const lastError = err.message?.slice(0, 160) || 'delivery error';
+          reg.recordDelivery(entry.agent_id, hook, { ok: false, threw: true, error: lastError });
+          logger.warn({ err: lastError, agentId: entry.agent_id, taskId: entry.task_id }, 'Book webhook dispatch error');
+        } catch {
+          logger.warn({ agent_id: entry.agent_id, code: 'book_webhook_counter_persist_failed' }, 'book webhook counter persist failed');
+        }
       });
   });
 }

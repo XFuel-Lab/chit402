@@ -13,7 +13,7 @@ import crypto from 'crypto';
 import { getAddress, hashMessage, Interface, keccak256, toUtf8Bytes, verifyMessage } from 'ethers';
 import logger from './logger.js';
 import { persistFailed } from './persist-error.js';
-import { writeAtomicJsonFile } from './atomic-json-file.js';
+import { unlinkStaleAtomicTemps, writeAtomicJsonFile } from './atomic-json-file.js';
 import { bindAgentWallet } from './agent-wallet.js';
 import { readAndVerifyReceipt } from './receipt-oracle.js';
 import { receiptQualifiesForLedger, noteIdempotentReplay, markRefundOwed, SETTLEMENT_STATUS } from './usage-settled.js';
@@ -42,6 +42,7 @@ export class AgentRegistry {
     if (this.persist) {
       try {
         fs.mkdirSync(this.dir, { recursive: true });
+        unlinkStaleAtomicTemps(this.dir, fs);
         this._tightenIdentitiesMode();
         this._load();
       } catch (err) {
@@ -57,18 +58,22 @@ export class AgentRegistry {
   /** An existing file looser than mode 600 is tightened. Content is not rewritten. */
   _tightenIdentitiesMode() {
     const file = this._file();
-    let mode;
+    let st;
     try {
-      mode = fs.statSync(file).mode & 0o777;
+      st = fs.statSync(file);
     } catch (err) {
       if (err.code === 'ENOENT') return;
       throw persistFailed(err, 'agent-registry: load failed');
     }
+    if (!st.isFile()) {
+      throw persistFailed(new Error('identities.json is not a file'), 'agent-registry: load failed');
+    }
+    const mode = st.mode & 0o777;
     if ((mode & ~0o600) === 0) return;
     try {
       fs.chmodSync(file, 0o600);
     } catch (err) {
-      throw persistFailed(err, 'agent-registry: load failed');
+      throw persistFailed(err, 'agent-registry: chmod failed');
     }
     logger.warn({ path: file, mode: mode.toString(8) }, 'identities.json permissions tightened');
   }

@@ -84,13 +84,24 @@ Register again with the book session:
 PUT /v1/agents/:agent_id/book/webhook
 ```
 
-`POST` on that same path updates the hook too. Send `X-XFuel-Session` and a JSON body:
+`POST` on that same path updates the hook too. Use your Chit402 book session (`session` in the JSON body, or the session header) and a JSON body:
 
 ```
 {"url":"https://treasury.example/hooks/chit402","events":["settle","collected"],"secret":"optional"}
 ```
 
-If `secret` is omitted, the response includes a new `secret_once`. The integrator has to update its signature check to that value. The previous signing key is no longer used.
+If no webhook is stored and `secret` is omitted, the response includes a new `secret_once`. The integrator has to update its signature check to that value. A later `PUT`/`POST` without `secret` keeps the current secret. To change it, send a new `secret`.
+
+## Rollback to older code
+
+An older gateway build does not read `book-webhooks.json`. It keeps the webhook map in memory only.
+
+A change made while that older build is running is dropped when this build starts again. The file on disk is the one from before the rollback:
+
+- A webhook created or edited during the rollback is not in the file, so the roll-forward load does not have it.
+- A hook deleted during the rollback is still in the file, so it comes back.
+- A new signing secret set during the rollback is only in memory. The file still has the previous secret, so the secret reverts.
+- The older build rewrites `identities.json` at mode `644`. The next boot of this build tightens that file to mode `600` again.
 
 Known gaps:
 

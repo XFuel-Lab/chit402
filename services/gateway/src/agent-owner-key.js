@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ethers } from 'ethers';
 import { persistFailed } from './persist-error.js';
-import { writeAtomicJsonFile } from './atomic-json-file.js';
+import { unlinkStaleAtomicTemps, writeAtomicJsonFile } from './atomic-json-file.js';
 
 const ADDRESS = /^0x[0-9a-f]{40}$/;
 
@@ -47,6 +47,7 @@ export class AgentOwnerKeyStore {
     if (this.persist) {
       try {
         this._fs.mkdirSync(this.dir, { recursive: true });
+        unlinkStaleAtomicTemps(this.dir, this._fs);
         this._load();
       } catch (err) {
         throw err?.code === 'persist_failed' ? err : persistFailed(err, 'agent-owner-key: mkdir failed');

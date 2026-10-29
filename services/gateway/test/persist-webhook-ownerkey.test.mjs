@@ -1372,6 +1372,57 @@ test('14 pinned responses match the capture from main', async () => {
   }
 });
 
+test('17 a failed counter write returns 201, rolls back, and stays up', async () => {
+  const hits = [];
+  const sink = await listen((req, res) => {
+    req.on('data', () => {});
+    req.on('end', () => {
+      hits.push(1);
+      res.writeHead(200).end('ok');
+    });
+  });
+  const dir = dataDir();
+  const wallet = Wallet.createRandom();
+  const spec = specFor(wallet, 't17');
+  let gateway;
+  try {
+    gateway = await serve(dir, { plant: [spec] });
+    const identity = await register(gateway.base, wallet, spec);
+    const put = await putWebhook(gateway.base, identity.agent_id, identity.session, {
+      url: sink.url,
+      secret: DUMMY_SECRET,
+      events: ['inflow'],
+    });
+    assert.equal(put.status, 200);
+    assert.equal(put.json.secret_once, undefined);
+    const file = path.join(gateway.agents, 'book-webhooks.json');
+    fs.rmSync(file);
+    fs.mkdirSync(file);
+    const posted = await inflow(gateway.base, identity.agent_id, identity.session, `${spec.taskId}-counter`);
+    assert.equal(posted.status, 201);
+    const start = Date.now();
+    while (Date.now() - start < 4000) {
+      if (hits.length > 0 && gateway.output().includes('book_webhook_counter_persist_failed')) break;
+      await delay(30);
+    }
+    assert.equal(hits.length > 0, true);
+    const after = await getWebhook(gateway.base, identity.agent_id, identity.session);
+    assert.equal(after.status, 200);
+    assert.equal(after.json.webhook.deliveries, 0);
+    assert.equal(after.json.webhook.failures, 0);
+    assert.equal(after.json.webhook.lastStatus, null);
+    const blob = gateway.output();
+    assert.equal(blob.includes(DUMMY_SECRET), false);
+    assert.equal(blob.includes(identity.session), false);
+    assert.equal(blob.includes('secret_once'), false);
+    leakChunks.push(blob);
+  } finally {
+    leakChunks.push(gateway?.output?.() || '');
+    await sink.close();
+    if (gateway) await gateway.stop();
+  }
+});
+
 test('15 logs and error text do not contain secrets or file bytes', () => {
   const blob = leakChunks.join('\n');
   for (const item of needles) {
@@ -1413,8 +1464,9 @@ test('16 source pins the writer, the stores, and the llms text', () => {
     '849b93d4cf438207817eda145e6ed40193a2f9137e28428c7ce0718f5d5e4970',
   );
   const llmsTs = fs.readFileSync(path.join(repoRoot, 'api/llms.txt.ts'));
+  const llmsLf = Buffer.from(llmsTs.toString('utf8').replace(/\r\n/g, '\n'), 'utf8');
   assert.equal(
-    crypto.createHash('sha256').update(llmsTs).digest('hex'),
+    crypto.createHash('sha256').update(llmsLf).digest('hex'),
     '19ab8e85698d62a809c388abb5ab51cb5e2c0b4231d9f4bac0bbc1be98d8f416',
   );
 });

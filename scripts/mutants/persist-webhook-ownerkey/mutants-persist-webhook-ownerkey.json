@@ -243,6 +243,36 @@
       "nth": 1,
       "suite": "gwpersist",
       "note": "boot chmod uses mode 644"
+    },
+    {
+      "id": "X14_counter_no_rollback",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "current\\.deliveries = priorDeliveries;\\n      current\\.failures = priorFailures;\\n      current\\.lastStatus = priorStatus;\\n      current\\.lastError = priorError;\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a failed counter write keeps the new counters in memory"
+    },
+    {
+      "id": "X20_counter_error_escapes",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "} catch \\{\\n      current\\.deliveries = priorDeliveries;",
+      "flags": "",
+      "replace": "} catch (err) {\n      throw err;\n      current.deliveries = priorDeliveries;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a failed counter write throws out of recordDelivery"
+    },
+    {
+      "id": "X21_counter_logs_secret",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "logger\\.warn\\(\\{ agent_id: id, code: 'book_webhook_counter_persist_failed' \\}, 'book webhook counter persist failed'\\);",
+      "flags": "",
+      "replace": "logger.warn({ agent_id: id, code: 'book_webhook_counter_persist_failed', secret: hookRef.secret }, 'book webhook counter persist failed');",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a failed counter write logs the webhook signing secret"
     }
   ]
 }

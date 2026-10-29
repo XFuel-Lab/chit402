@@ -38,6 +38,19 @@ POST /v1/agents/:agent_id/owner-key
 
 and `{"public_key":"…","wallet_signature":"…","key_signature":"…"}` over the bind message above.
 
+Use your Chit402 book session (`session` in the JSON body, or the session header) for the book routes that read the binding. The bind route itself takes the two signatures above.
+
+## Rollback to older code
+
+An older gateway build does not read `agent-owner-keys.json`. It keeps bindings in memory only.
+
+A change made while that older build is running is dropped when this build starts again. The file on disk is the one from before the rollback:
+
+- A binding created or replaced during the rollback is not in the file, so the roll-forward load does not have it.
+- A binding removed during the rollback is still in the file, so it comes back.
+- Webhook edits made in that same window are dropped the same way. A hook deleted during the rollback comes back, and a new signing secret reverts to the secret in `book-webhooks.json`. See `docs/product/book-webhook.md`.
+- The older build rewrites `identities.json` at mode `644`. The next boot of this build tightens that file to mode `600` again.
+
 Known gaps:
 
 - Book webhook signing secrets, stored beside this file, are plaintext at rest (mode `600`). See `docs/product/book-webhook.md`.
