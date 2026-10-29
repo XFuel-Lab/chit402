@@ -20,7 +20,7 @@ mode (requester / verifier / automatic) decides who gets paid. Chit has no part 
 2. From the paid 200, keep:
    - `xfuel.task_id` and `xfuel.verify_url` (also in headers `x-xfuel-task-id`, `x-xfuel-verify-url`)
    - `PAYMENT-RESPONSE` header (base64 JSON): `transaction`, `network`, `payer`
-3. Keep the inline receipt from that paid 200 as `receipt.json`. It carries `issuer_signature.jws`. The public verify page is an unsigned shell. Read fields from the JWS payload of this saved copy, not from that shell.
+3. Save the `xfuel` object of the paid 200 body as `receipt.json` (`jq .xfuel response.json > receipt.json`). It carries `issuer_signature.jws`. The public verify page is an unsigned shell. Read fields from the JWS payload of this saved copy, not from that shell.
    - (a) The payer runs `npx chit402-verify receipt.json`. That command exits 0 (VERIFIED) only after the receipt is anchored, and before that it exits 2 (PENDING). The command contacts api.chit402.com and the Base/Solana RPC. It checks `issuer_signature.jws` (kid `IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q`).
    - (b) Anyone can run `npx chit402-verify <verify_url>`. Today it returns COULD_NOT_CHECK (exit 2) for these receipts: the public path does not check Solana receipts, and a Base receipt returns VERIFIED_PUBLIC (exit 0) only once its public page carries a signed public attestation. Exit 2 means not checked, not invalid.
    - On the saved receipt, `fulfillment.authorization.payment_ref` is present (`solana:<sig>` or `base:<tx>`), and the part after the first colon equals `PAYMENT-RESPONSE.transaction` (the header is the bare tx; the receipt prefixes the rail).
@@ -59,13 +59,15 @@ Where each field comes from (JWS payload = decoded `issuer_signature.jws` on the
 For many receipts: `{"compute":[{…},{…}]}`, or put the list in a file, pin its sha256 in the note and link it from the artifact.
 
 ```sh
-# receipt.json is the inline receipt from the paid 200. It carries issuer_signature.jws.
+# Save the xfuel object of the paid 200 body as receipt.json:
+# jq .xfuel response.json > receipt.json
 npx chit402-verify receipt.json
 # Exit 0 (VERIFIED) only after the receipt is anchored. Before that it is exit 2 (PENDING).
 # The command contacts api.chit402.com and the Base/Solana RPC.
 # Anyone can run npx chit402-verify <verify_url>. Today it returns COULD_NOT_CHECK (exit 2) for these receipts: the public path does not check Solana receipts, and a Base receipt returns VERIFIED_PUBLIC (exit 0) only once its public page carries a signed public attestation. Exit 2 means not checked, not invalid.
 npx chit402-verify "$VERIFY_URL"
 JWS=$(jq -r .issuer_signature.jws receipt.json)
+[ -n "$JWS" ] && [ "$JWS" != null ] || { echo "no issuer_signature.jws in receipt.json" >&2; exit 1; }
 B=$(echo "$JWS" | cut -d. -f2 | tr '_-' '/+'); while [ $(( ${#B} % 4 )) -ne 0 ]; do B="$B="; done
 P=$(echo "$B" | base64 -d)
 echo "$P" | jq -c --arg v "$VERIFY_URL" --arg n "$NETWORK" --arg h "$(printf %s "$JWS" | sha256sum | cut -d' ' -f1)" \
