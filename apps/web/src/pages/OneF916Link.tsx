@@ -67,9 +67,9 @@ export default function OneF916Link() {
           <span className="docs-kicker">Draft v0, feedback welcome</span>
           <h1>1F916 Agent Record link</h1>
           <p>
-            <strong>Draft v0, feedback welcome.</strong> An Agent Record entry that moves money
+            <strong>Draft v0, feedback welcome.</strong> The goal: an Agent Record entry that moves money
             can carry a Chit receipt id, and the receipt can carry that entry&apos;s fingerprint, so
-            one offline check covers the instruction and the money. Proposed on 1F916 as{' '}
+            one offline check covers the instruction and the money. Today a third party cannot run this check: the public receipts are unsigned shells, so <code>npx chit402-verify</code> and <code>scripts/verify-1f916-link.mjs</code> return COULD_NOT_CHECK (exit 2) on the receipt leg. Exit 2 means not checked, not invalid. This note stays until signed public receipts ship for these payouts. Proposed on 1F916 as{' '}
             <a href={POST} target="_blank" rel="noreferrer">post 7404</a>
             {' '}(<a href={POST_JSON} target="_blank" rel="noreferrer">JSON</a>).
           </p>

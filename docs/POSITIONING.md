@@ -12,15 +12,15 @@ Privacy add (when Private Spend v0 is live): Spend without briefing the frontier
 
 ## Elevator
 
-AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. Chit402 is the book: this agent spent Y on this job, and you hold hub, model, and amount. Pay per call in USDC on Base and Solana (`POST /v1/chat/completions` at $0.002, routing cost + 1%). `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes — ES256 issuer signature, on-chain SP1 settlement proof on demand. The issuer signature does not prove USDC moved. HMAC is a separate host field.
+AI agents are starting to spend money on their own. Today that means handing over API keys and hoping the invoice is honest. Chit402 is the book: this agent spent Y on this job, and you hold hub, model, and amount. Pay per call in USDC on Base and Solana (`POST /v1/chat/completions` at $0.002, routing cost + 1%). `GET|POST /v1/agents/:agent_id/book` is possession-gated last-N collected spend. Signed receipt is table stakes — ES256 issuer signature. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. The issuer signature does not prove USDC moved. HMAC is a separate host field.
 
 Private Spend (product mode, see [ADR 0010](adr/0010-private-desk-attest.md)): buyer pays Chit; providers see gateway traffic, not the end-customer’s spend topology. Do not claim prompt confidentiality unless a TEE/confidential route is used.
 
 ## Trust tiers
 
 1. Signed receipt (live, default) — route, model, cost, output hash  
-2. SP1 settlement proof (live, on demand) — fees, payment binding, output commitment, nullifier on Base  
-3. Verified Inference (active build) — model computation for open-weight models  
+2. SP1 settlement proof — fees, payment binding, output commitment, nullifier on Base. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected. Requests that ask for a settlement proof (`proof_tier` settlement or inference, or Private + Attest) get `400 settlement_proof_not_offered` before any quote or payment.  
+3. Verified Inference (parked; not offered) — model computation for open-weight models  
 
 Do not claim Tier 2 proves a black-box LLM ran correctly.
 
@@ -52,7 +52,7 @@ space shows spend and declines to show provenance.
 
 Say: Chit402 is the book; this agent spent Y on this job; you hold hub, model, and amount; not a smart
 router; not a model shop; $0.002 standard receipt, routing cost + 1%, USDC on Base and Solana; possession-gated book; register fail-closed;
-signed receipt is table stakes (ES256); money on Base and Solana, proofs on Base; proof on demand; budgets instead of API keys.  
+signed receipt is table stakes (ES256); money on Base and Solana; Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected; budgets instead of API keys.  
 Do not say: best available provider; smart router; crypto control plane as the lead; swap one
 baseURL as the hero; Theta-centric / DePIN hub as identity; **DePIN / Chit is cheaper** (it is not the price
 floor, and a saving claim needs a named baseline and must be allowed to print negative); TFUEL as

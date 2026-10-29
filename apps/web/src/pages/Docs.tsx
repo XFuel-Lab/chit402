@@ -155,22 +155,15 @@ function getOperators(apiDomain: string): DocLink[] {
     },
     {
       title: 'Hosted API',
-      description: `Public beta at ${apiDomain}.`,
-      href: `${GITHUB}/docs/HOSTED_TESTNET_ENDPOINT.md`,
-      meta: 'demo',
+      description: `Public API at ${apiDomain}.`,
+      href: `${GITHUB}/docs/CHAT_COMPLETIONS_GATEWAY.md`,
+      meta: 'api',
       external: true,
     },
   ];
 }
 
 const auditors: DocLink[] = [
-  {
-    title: 'Audit readiness',
-    description: 'Phase 1 scope freeze and handover checklist.',
-    href: `${GITHUB}/docs/AUDIT_READINESS_CHECKLIST.md`,
-    meta: 'audit',
-    external: true,
-  },
   {
     title: 'Responsible disclosure',
     description: 'Scope, safe harbour, and how findings are credited.',
@@ -286,7 +279,7 @@ export default function Docs() {
             Each signed receipt carries hub, model, amount, and <code>verify_url</code>. Each call
             is charged a quoted price and gets a receipt, paid in USDC on Base or Solana.{' '}
             <code>GET|POST /v1/agents/:agent_id/book</code> is possession-gated last-N collected
-            spend. The on-chain settlement proof add-on is coming soon.
+            spend. Tier-2 settlement proofs are off while we upgrade the proving system; standard $0.002 receipts are unaffected.
           </p>
           <pre className="docs-code">
             <code>{SNIPPET}</code>
@@ -312,14 +305,6 @@ export default function Docs() {
             <Link to="/doors" className="btn btn-secondary btn-sm">
               Install doors
             </Link>
-            <a
-              href={`${GITHUB}/docs/DEMO_COMMANDS.md`}
-              target="_blank"
-              rel="noreferrer"
-              className="btn btn-secondary btn-sm"
-            >
-              Demo commands
-            </a>
             <a
               href={`${GITHUB}/docs/README.md`}
               target="_blank"
