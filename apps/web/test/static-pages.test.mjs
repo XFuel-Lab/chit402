@@ -93,12 +93,32 @@ const edge = loadEdgeMiddleware(async () => new Response(shell, {
   headers: { 'content-type': 'text/html; charset=utf-8' },
 }));
 
-async function edgeHtml(pathname) {
-  const request = new Request(`https://www.chit402.com${pathname}`, {
-    headers: { host: 'www.chit402.com' },
+async function edgeHtml(pathname, host = 'www.chit402.com') {
+  const request = new Request(`https://${host}${pathname}`, {
+    headers: { host },
   });
   const response = await edge.middleware(request);
   return response.text();
+}
+
+async function edgeResult({
+  pathname = '/',
+  host = 'www.chit402.com',
+  body = shell,
+  status = 200,
+  contentType = 'text/html; charset=utf-8',
+} = {}) {
+  const mod = loadEdgeMiddleware(async () => new Response(body, {
+    status,
+    headers: { 'content-type': contentType },
+  }));
+  const request = new Request(`https://${host}${pathname}`, { headers: { host } });
+  const response = await mod.middleware(request);
+  return {
+    status: response.status,
+    contentType: response.headers.get('content-type'),
+    html: await response.text(),
+  };
 }
 
 const servedHome = await edgeHtml('/');
@@ -273,6 +293,35 @@ test('the middleware entry serves /, /v1/sub, and /security', async () => {
   assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(sub), '/v1/sub has no home copy');
   assert.equal(rootInner(security), '', '/security keeps an empty #root');
   assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(security), '/security has no home copy');
+  for (const host of ['example.vercel.app', 'evilchit402.com']) {
+    const html = await edgeHtml('/', host);
+    assert.equal(html, shell, `${host} / is unchanged`);
+    assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(html), `${host} / has no home block`);
+  }
+});
+
+test('the edge matcher is /, /v1, and /v1/*', () => {
+  const src = readNorm(new URL('../../../middleware.ts', import.meta.url));
+  assert.ok(/matcher:\s*\[\s*'\/',\s*'\/v1',\s*'\/v1\/:path\*',\s*\]/.test(src), 'matcher is /, /v1, and /v1/*');
+});
+
+test('home and the book say third-party-verifiable', () => {
+  const home = readNorm(new URL('../src/content/homeContent.mjs', import.meta.url));
+  const book = readNorm(new URL('../src/pages/Book.tsx', import.meta.url));
+  assert.ok(/third-party-verifiable/.test(home), 'home card says third-party-verifiable');
+  assert.ok(/third-party-verifiable receipt page/.test(book), 'book says third-party-verifiable receipt page');
+});
+
+test('non-HTML and 404 responses pass through the middleware unchanged', async () => {
+  const json = await edgeResult({
+    body: '{"ok":true}',
+    contentType: 'application/json',
+  });
+  assert.equal(json.html, '{"ok":true}', 'non-HTML body is unchanged');
+  assert.equal(json.contentType, 'application/json', 'non-HTML content-type is unchanged');
+  assert.ok(/^(?![\s\S]*Who paid which call — and you still hold it)[\s\S]*$/.test(json.html), 'non-HTML has no home block');
+  const missing = await edgeResult({ status: 404 });
+  assert.equal(missing.status, 404, '404 status is unchanged');
 });
 
 test('the prerender script leaves index.html as the plain shell', () => {

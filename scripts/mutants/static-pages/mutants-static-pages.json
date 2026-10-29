@@ -155,6 +155,56 @@
       "nth": 1,
       "suite": "webstatic",
       "note": "the build script does not write the home block into index.html"
+    },
+    {
+      "id": "R4_host_check_skipped",
+      "file": "middleware.ts",
+      "find": "if \\(!isChitHost\\(host\\)\\)",
+      "flags": "",
+      "replace": "if (false)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "non-chit hosts are not rewritten"
+    },
+    {
+      "id": "R5_host_check_always_true",
+      "file": "middleware.ts",
+      "find": "return h === 'chit402\\.com' \\|\\| h === 'www\\.chit402\\.com' \\|\\| h\\.endsWith\\('\\.chit402\\.com'\\);",
+      "flags": "",
+      "replace": "return true;",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "only chit hosts match"
+    },
+    {
+      "id": "R6_matcher_drops_root",
+      "file": "middleware.ts",
+      "find": "matcher: \\[\\n    '/',\\n",
+      "flags": "",
+      "replace": "matcher: [\n",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "the matcher still includes /"
+    },
+    {
+      "id": "R7_content_type_check_removed",
+      "file": "middleware.ts",
+      "find": "if \\(!contentType\\.includes\\('text/html'\\)\\)",
+      "flags": "",
+      "replace": "if (false)",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "non-HTML responses are not rewritten"
+    },
+    {
+      "id": "R10_status_forced_200",
+      "file": "middleware.ts",
+      "find": "status: response\\.status",
+      "flags": "",
+      "replace": "status: 200",
+      "nth": 1,
+      "suite": "webstatic",
+      "note": "upstream status is preserved"
     }
   ]
 }
