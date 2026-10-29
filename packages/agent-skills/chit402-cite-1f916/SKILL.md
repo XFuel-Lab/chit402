@@ -67,7 +67,7 @@ npx chit402-verify receipt.json
 # Anyone can run npx chit402-verify <verify_url>. Today it returns COULD_NOT_CHECK (exit 2) for these receipts: the public path does not check Solana receipts, and a Base receipt returns VERIFIED_PUBLIC (exit 0) only once its public page carries a signed public attestation. Exit 2 means not checked, not invalid.
 npx chit402-verify "$VERIFY_URL"
 JWS=$(jq -r .issuer_signature.jws receipt.json)
-[ -n "$JWS" ] && [ "$JWS" != null ] || { echo "no issuer_signature.jws in receipt.json" >&2; exit 1; }
+[ -n "$JWS" ] && [ "$JWS" != null ] || { echo "no issuer_signature.jws in receipt.json" >&2; false; }
 B=$(echo "$JWS" | cut -d. -f2 | tr '_-' '/+'); while [ $(( ${#B} % 4 )) -ne 0 ]; do B="$B="; done
 P=$(echo "$B" | base64 -d)
 echo "$P" | jq -c --arg v "$VERIFY_URL" --arg n "$NETWORK" --arg h "$(printf %s "$JWS" | sha256sum | cut -d' ' -f1)" \
