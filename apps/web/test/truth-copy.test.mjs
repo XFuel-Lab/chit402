@@ -182,6 +182,8 @@ test('cite skill reads the saved receipt, not the public shell', () => {
   assert.ok(/npx chit402-verify <verify_url>/.test(src), 'cite skill names npx chit402-verify <verify_url>');
   assert.ok(/npx chit402-verify "\$VERIFY_URL"/.test(src), 'cite skill runs npx chit402-verify on the URL variable');
   assert.ok(/COULD_NOT_CHECK/.test(src), 'cite skill names COULD_NOT_CHECK');
+  assert.ok(!/about an hour after issue/.test(src), 'cite skill does not say about an hour after issue');
+  assert.ok(/Today it returns COULD_NOT_CHECK/.test(src), 'cite skill says today the public check returns COULD_NOT_CHECK');
   for (const field of CITATION_FIELDS) {
     assert.ok(new RegExp(`\\b${field}\\b`).test(src), `cite skill lists ${field}`);
   }
