@@ -11,6 +11,19 @@ import assert from 'node:assert/strict';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const html = readFileSync(join(root, 'index.html'), 'utf8');
 
+const PAGE_CONTENT = {
+  'src/pages/ChitHome.tsx': 'src/content/homeContent.mjs',
+  'src/pages/Pricing.tsx': 'src/content/pricingContent.mjs',
+  'src/pages/Docs.tsx': 'src/content/docsContent.mjs',
+};
+
+function readPage(rel) {
+  const main = readFileSync(join(root, rel), 'utf8').replace(/\r\n/g, '\n');
+  const extra = PAGE_CONTENT[rel];
+  if (!extra) return main;
+  return `${main}\n${readFileSync(join(root, extra), 'utf8').replace(/\r\n/g, '\n')}`;
+}
+
 function metaContent(source, attr, name) {
   const named = new RegExp(
     `<meta[^>]+${attr}="${name}"[^>]*content="([^"]*)"`,
@@ -75,7 +88,7 @@ test('Layout nav uses host nav logo, not cyan check ring SVG', () => {
 test('shared layout and homepage copy do not call paid /v1 unmetered, a free path, or lead with $0.01', () => {
   const layout = readFileSync(join(root, 'src/components/Layout.tsx'), 'utf8');
   const home = readFileSync(join(root, 'src/pages/Home.tsx'), 'utf8');
-  const pricing = readFileSync(join(root, 'src/pages/Pricing.tsx'), 'utf8');
+  const pricing = readPage('src/pages/Pricing.tsx');
   for (const [label, source] of [
     ['Layout.tsx', layout],
     ['Home.tsx', home],
@@ -89,7 +102,7 @@ test('shared layout and homepage copy do not call paid /v1 unmetered, a free pat
   }
   // Plain pricing wording everywhere; Pricing keeps the $0.002 and cost + 1% figures.
   assert.match(pricing, /charges a quoted price and gives a receipt for every call, paid in USDC on Base and Solana\./, 'Pricing uses plain wording');
-  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const docs = readPage('src/pages/Docs.tsx');
   assert.match(docs, /is charged a quoted price and gets a receipt, paid in USDC on Base or Solana\./, 'Docs uses plain wording');
   assert.doesNotMatch(layout, /cost-plus|This agent spent Y|You hold hub/i, 'banner drops jargon');
   assert.match(layout, /real mainnet USDC/, 'banner keeps mainnet warning');
@@ -121,7 +134,7 @@ test('public marketing pages keep book-first wire copy', () => {
     'src/hostConfig.ts',
   ];
   for (const rel of paths) {
-    const source = readFileSync(join(root, rel), 'utf8');
+    const source = readPage(rel);
     assert.doesNotMatch(source, /OpenAI-compatible/i, `${rel} must not say OpenAI-compatible`);
     assert.doesNotMatch(source, /OpenAI \/v1/i, `${rel} must not lead with OpenAI /v1`);
     assert.doesNotMatch(source, /\bOpenAI\b/i, `${rel} must not name OpenAI in user copy`);
@@ -202,7 +215,7 @@ test('prerendered money pages have unique crawler titles (after build)', { skip:
 });
 
 test('Chit home page has principal-first hero, live receipt row, and 90s door', () => {
-  const chitHome = readFileSync(join(root, 'src/pages/ChitHome.tsx'), 'utf8');
+  const chitHome = readPage('src/pages/ChitHome.tsx');
   const receiptCard = readFileSync(join(root, 'src/components/LiveReceiptCard.tsx'), 'utf8');
   const liveSpecimen = readFileSync(join(root, 'src/lib/liveReceiptSpecimen.ts'), 'utf8');
   assert.match(chitHome, /Who paid which call — and you still hold it\./, 'ChitHome leads principal-first');
@@ -230,7 +243,7 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   );
   assert.match(chitHome, /signed receipt/, 'ChitHome 90s block names signed receipt');
   assert.match(chitHome, /Install wires/, 'ChitHome 90s block points to install wires');
-  assert.match(chitHome, /to="\/doors"/, 'ChitHome links install doors from 90s section');
+  assert.match(chitHome, /to="\/doors"|doorsHref: '\/doors'/, 'ChitHome links install doors from 90s section');
   const ninetyBlock = chitHome.match(/chit-ninety-door[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? '';
   assert.doesNotMatch(ninetyBlock, /OpenAI/i, 'ChitHome 90s lead block stays book-first (no vendor wire branding)');
   assert.match(chitHome, /wrapFetchWithPayment\(/, 'ChitHome 90s sample uses the x402 fetch wrapper');
@@ -252,8 +265,8 @@ test('Chit home page has principal-first hero, live receipt row, and 90s door', 
   assert.doesNotMatch(chitHome, /By XFuel Lab|is the parent|XFuel Lab/i, 'ChitHome must not show parent naming in chrome');
   assert.match(chitHome, /USDC on Base and Solana/, 'ChitHome names USDC rails');
   assert.match(chitHome, /Standard receipt \$0\.002 · routing cost \+ 1%/, 'ChitHome surfaces pricing chip');
-  assert.match(chitHome, /to="\/pricing"/, 'ChitHome links to pricing page');
-  assert.match(chitHome, /to="\/products"/, 'ChitHome links to products page');
+  assert.match(chitHome, /to="\/pricing"|pricingHref: '\/pricing'/, 'ChitHome links to pricing page');
+  assert.match(chitHome, /to="\/products"|productsHref: '\/products'/, 'ChitHome links to products page');
   assert.match(chitHome, /Private Desk · Attest/, 'ChitHome surfaces products chip');
   assert.doesNotMatch(chitHome, /POST \/v1\/chat\/completions/, 'ChitHome hero must not lead with POST /v1');
   assert.doesNotMatch(chitHome, /\$0\.01/, 'ChitHome must not lead with $0.01');
@@ -376,11 +389,11 @@ test('install docs show keyless x402 before the partner API key', () => {
 });
 
 test('Docs hub leads with book; install doors on dedicated page', () => {
-  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const docs = readPage('src/pages/Docs.tsx');
   const doors = readFileSync(join(root, 'src/pages/Doors.tsx'), 'utf8');
   const docsDoors = readFileSync(join(root, 'src/pages/DocsDoors.tsx'), 'utf8');
   assert.match(docs, /possession book/i, 'Docs intro leads with possession book');
-  assert.match(docs, /to="\/doors"/, 'Docs hub links to /doors');
+  assert.match(docs, /to="\/doors"|href: '\/doors'/, 'Docs hub links to /doors');
   assert.match(docs, /href: '\/products'/, 'Docs hub lists Products in start here');
   assert.doesNotMatch(docs, /DocDoorGrid/, 'Docs hub does not list every door card');
   assert.match(doors, /<h1>Doors<\/h1>/, 'Doors page has first-class title');
@@ -453,7 +466,7 @@ test('Drop-in door page documents paid install path (not whole product)', () => 
 test('1F916 link draft is a public docs page', () => {
   const app = readFileSync(join(root, 'src/App.tsx'), 'utf8');
   const page = readFileSync(join(root, 'src/pages/OneF916Link.tsx'), 'utf8');
-  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const docs = readPage('src/pages/Docs.tsx');
   const sitemap = readFileSync(join(root, '../../api/sitemap.xml.ts'), 'utf8');
   const llms = readFileSync(join(root, '../../api/llms.txt.ts'), 'utf8');
   const vercel = readFileSync(join(root, '../../vercel.json'), 'utf8');
@@ -511,7 +524,7 @@ test('App routes docs subpages', () => {
 
 test('Products page surfaces three book-first seats', () => {
   const products = readFileSync(join(root, 'src/pages/Products.tsx'), 'utf8');
-  const pricing = readFileSync(join(root, 'src/pages/Pricing.tsx'), 'utf8');
+  const pricing = readPage('src/pages/Pricing.tsx');
   assert.match(products, /<h1>Three seats on the possession book\./, 'Products page title');
   assert.match(products, /name: 'Stamp'/, 'Products includes Stamp seat');
   assert.match(products, /\$0\.002/, 'Products states Stamp price');
@@ -521,7 +534,7 @@ test('Products page surfaces three book-first seats', () => {
   assert.match(products, /Tier-2 settlement proofs are temporarily unavailable while we upgrade the proving system\. Standard receipts at \$0\.002 are unaffected\./, 'Products carries the Tier-2 notice');
   assert.doesNotMatch(products, /\$0\.10/, 'Products shows no Tier-2 price');
   assert.doesNotMatch(products, /\bOpenAI\b/i, 'Products must not name OpenAI');
-  assert.match(pricing, /to="\/products"/, 'Pricing links to products');
+  assert.match(pricing, /to="\/products"|link\('\/products'/, 'Pricing links to products');
 });
 
 test('Security page uses host-aware product naming', () => {
@@ -737,7 +750,7 @@ test('BookBot price line and footer use plain words', () => {
 
 test('old pricing jargon and "table stakes" are gone from web pages and prerender', () => {
   for (const rel of ['src/pages/ThetaAI.tsx', 'src/pages/AgentShop.tsx', 'src/pages/Products.tsx', 'src/pages/Pricing.tsx', 'src/pages/Docs.tsx', 'src/pages/OpenClawDocs.tsx', 'scripts/prerender-titles.mjs']) {
-    const src = readFileSync(join(root, rel), 'utf8');
+    const src = readPage(rel);
     assert.doesNotMatch(src, /cost-plus, quoted, receipted/i, rel);
     assert.doesNotMatch(src, /table stakes/i, rel);
   }
@@ -749,7 +762,7 @@ test('XFuel host description and Pricing footnote use plain wording', () => {
   const host = readFileSync(join(root, 'src/hostConfig.ts'), 'utf8');
   assert.equal((host.match(/XFuel keeps your book: who paid, for what, and how much\. Every paid call gets a signed receipt with a link \(verify_url\) to check it, at a price based on our cost\. USDC on Base and Solana\./g) || []).length, 2);
   assert.doesNotMatch(host, /the book: hub, model, and amount/);
-  const pricing = readFileSync(join(root, 'src/pages/Pricing.tsx'), 'utf8');
+  const pricing = readPage('src/pages/Pricing.tsx');
   assert.match(pricing, /fee based on our cost plus a margin/);
   assert.doesNotMatch(pricing, /cost-plus fee basis/);
 });
@@ -767,7 +780,7 @@ test('middleware ledes drop the old cost-plus phrase', () => {
 });
 
 test('#650 follow-up: docs index and book copy stay on chit402-verify 0.4.11 wording', () => {
-  const docs = readFileSync(join(root, 'src/pages/Docs.tsx'), 'utf8');
+  const docs = readPage('src/pages/Docs.tsx');
   const book = readFileSync(join(root, 'src/pages/Book.tsx'), 'utf8');
   const trust = readFileSync(join(root, 'src/pages/IssuerTrust.tsx'), 'utf8');
   const receipt = readFileSync(join(root, 'src/pages/ReceiptCheckDocs.tsx'), 'utf8');

@@ -139,14 +139,16 @@ test('feedback omits the receipt unless the caller opts in', () => {
 
 test('the feedback box is opt-in and does not collect a contact address', () => {
   const src = readFileSync(new URL('../src/pages/ReceiptCheck.tsx', import.meta.url), 'utf8');
-  assert.match(src, /Something wrong\? Tell us/);
-  assert.match(src, /What did you expect\?/);
-  assert.match(src, /What were you trying to do\?/);
-  assert.match(src, /Attach the receipt I pasted so the team can reproduce it/);
-  assert.match(src, /Notes are posted publicly as GitHub issues\. Don't include private info\./);
+  const copy = readFileSync(new URL('../src/content/checkContent.mjs', import.meta.url), 'utf8');
+  const bundled = `${src}\n${copy}`;
+  assert.match(bundled, /Something wrong\? Tell us/);
+  assert.match(bundled, /What did you expect\?/);
+  assert.match(bundled, /What were you trying to do\?/);
+  assert.match(bundled, /Attach the receipt I pasted so the team can reproduce it/);
+  assert.match(bundled, /Notes are posted publicly as GitHub issues\. Don't include private info\./);
   assert.equal(src.includes('defaultChecked'), false);
   assert.equal(src.includes('type="email"'), false);
-  assert.equal(src.includes('contact'), false);
+  assert.equal((src + copy).includes('contact'), false);
 });
 
 test('issuer history docs use the CLI exit', () => {

@@ -8,6 +8,7 @@ import {
   receiptFeedbackBody,
   type ReceiptCheckView,
 } from '../lib/receiptCheckCore.mjs';
+import { checkContent } from '../content/checkContent.mjs';
 
 function feedbackUrl() {
   return import.meta.env.DEV ? '/v1/receipts/feedback' : `${getApiHost()}/v1/receipts/feedback`;
@@ -49,13 +50,13 @@ function CheckFeedback({ view, receipt }: { view: ReceiptCheckView; receipt: str
         payload = null;
       }
       if (res.status === 202) {
-        setMessage('Sent.');
+        setMessage(checkContent.sent);
         setOpen(false);
         return;
       }
-      setMessage(payload && typeof payload.message === 'string' ? payload.message : 'Feedback was not filed.');
+      setMessage(payload && typeof payload.message === 'string' ? payload.message : checkContent.notFiled);
     } catch {
-      setMessage('Feedback was not filed.');
+      setMessage(checkContent.notFiled);
     } finally {
       setPending(false);
     }
@@ -64,26 +65,27 @@ function CheckFeedback({ view, receipt }: { view: ReceiptCheckView; receipt: str
   return (
     <div className="receipt-check-feedback">
       <p className="receipt-check-feedback-public">
-        Notes are posted publicly as GitHub issues. Don't include private info.
+        {checkContent.feedbackPublic}
       </p>
       {!open && (
         <button type="button" className="receipt-check-feedback-link" onClick={() => setOpen(true)}>
-          Something wrong? Tell us
+          {checkContent.feedbackOpen}
         </button>
       )}
       {open && (
         <form className="receipt-check-feedback-form" onSubmit={onSend}>
           <label>
-            What did you expect?
+            {checkContent.expectedLabel}
             <select value={expected} required onChange={(event) => setExpected(event.target.value)}>
-              <option value="">Choose</option>
-              <option value="verified">verified</option>
-              <option value="invalid">invalid</option>
-              <option value="other">other</option>
+              {checkContent.expectedOptions.map((option) => (
+                <option key={option} value={option === 'Choose' ? '' : option}>
+                  {option}
+                </option>
+              ))}
             </select>
           </label>
           <label>
-            What were you trying to do?
+            {checkContent.intentLabel}
             <input
               value={intent}
               required
@@ -92,7 +94,7 @@ function CheckFeedback({ view, receipt }: { view: ReceiptCheckView; receipt: str
             />
           </label>
           <label>
-            Note
+            {checkContent.noteLabel}
             <textarea
               value={note}
               maxLength={1000}
@@ -106,10 +108,10 @@ function CheckFeedback({ view, receipt }: { view: ReceiptCheckView; receipt: str
               checked={attach}
               onChange={(event) => setAttach(event.target.checked)}
             />
-            Attach the receipt I pasted so the team can reproduce it
+            {checkContent.attachLabel}
           </label>
           <button className="receipt-check-button" type="submit" disabled={pending}>
-            {pending ? 'Sending' : 'Send'}
+            {pending ? checkContent.sending : checkContent.send}
           </button>
         </form>
       )}
@@ -147,9 +149,9 @@ export default function ReceiptCheck() {
       setView({
         kind: 'verdict',
         overall: 'COULD_NOT_CHECK',
-        lines: ['COULD_NOT_CHECK', 'The check could not be completed.'],
-        error: 'The check could not be completed.',
-        hint: 'Try this check again.',
+        lines: ['COULD_NOT_CHECK', checkContent.couldNot],
+        error: checkContent.couldNot,
+        hint: checkContent.tryAgain,
         accepted: null,
         example: null,
         feedbackEnabled: false,
@@ -171,33 +173,30 @@ export default function ReceiptCheck() {
     <div className="page receipt-check">
       <SeoHead
         title="Receipt check | Chit402"
-        description="Paste a receipt, a receipt id, or a receipt URL. Free. The verdict matches chit402-verify."
+        description={checkContent.description}
       />
       <div className="container receipt-check-wrap">
         <header className="page-header">
-          <span className="docs-kicker">Free · no account</span>
-          <h1>Receipt check</h1>
-          <p>
-            Paste a receipt, a receipt id, or a receipt URL. The verdict is the same text{' '}
-            <code>chit402-verify</code> prints.
-          </p>
+          <span className="docs-kicker">{checkContent.kicker}</span>
+          <h1>{checkContent.h1}</h1>
+          <p>{checkContent.intro}</p>
         </header>
 
         <form className="receipt-check-form" onSubmit={onSubmit}>
           <label className="receipt-check-label" htmlFor="receipt-check-input">
-            Receipt
+            {checkContent.fieldLabel}
           </label>
           <textarea
             id="receipt-check-input"
             className="receipt-check-input"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder="Paste the receipt JSON, or a receipt id or URL"
+            placeholder={checkContent.placeholder}
             spellCheck={false}
             rows={8}
           />
           <button className="receipt-check-button" type="submit" disabled={pending || input.trim().length === 0}>
-            {pending ? 'Checking' : 'Check'}
+            {pending ? checkContent.pending : checkContent.submit}
           </button>
         </form>
 
@@ -221,13 +220,13 @@ export default function ReceiptCheck() {
             {view.hint && <p className="receipt-check-hint">{view.hint}</p>}
             {view.kind === 'input-error' && view.accepted && (
               <>
-                <p className="receipt-check-accepted-label">Accepted input</p>
+                <p className="receipt-check-accepted-label">{checkContent.acceptedHeading}</p>
                 <ul className="receipt-check-accepted">
                   {view.accepted.map((item) => <li key={item}>{item}</li>)}
                 </ul>
                 {view.example && (
                   <p className="receipt-check-example-row">
-                    <span>Example</span>
+                    <span>{checkContent.exampleLabel}</span>
                     <button
                       type="button"
                       className="receipt-check-example"
@@ -244,9 +243,9 @@ export default function ReceiptCheck() {
         )}
 
         <p className="receipt-check-foot">
-          <Link to="/docs/verify">What the verdict means</Link>
+          <Link to={checkContent.verifyHref}>{checkContent.verifyLabel}</Link>
           {' · '}
-          <Link to="/docs/receipt-check">Hash and key history</Link>
+          <Link to={checkContent.historyHref}>{checkContent.historyLabel}</Link>
         </p>
       </div>
     </div>
