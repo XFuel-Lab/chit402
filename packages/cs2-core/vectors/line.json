@@ -1,0 +1,305 @@
+{
+  "schema": "chit402.cs2.line.v1",
+  "hash": "SHA-256",
+  "source": "SIMPLE §S1 line and §S5 slot key. Synthetic fields, not a payment.",
+  "line_bytes": 1024,
+  "used_bytes": 803,
+  "pad_bytes": 221,
+  "header_hex": "6332",
+  "header_ascii": "c2",
+  "header_reading": "Pinned 2-byte line type. SIMPLE §S1 gives the header 2 bytes and calls it cs2, line type. The bytes are ASCII c and 2. The commitment domain string cs2 is 3 bytes and is not the header.",
+  "domains": {
+    "pay": "pay",
+    "cnt": "cnt",
+    "line": "cs2",
+    "sigma": "cs2-sig",
+    "state": "chit402-state-v1",
+    "empty": "empty"
+  },
+  "formulas": {
+    "P": "SHA-256(ASCII(\"pay\") || salt_p || payment half)",
+    "K": "SHA-256(ASCII(\"cnt\") || salt_c || content half without salt_c)",
+    "C": "SHA-256(ASCII(\"cs2\") || P || K || SHA-256(sigma))",
+    "sigma_digest": "SHA-256(ASCII(\"cs2-sig\") || payment id || K)",
+    "payment_id": "chainId (8 BE) || blockHash (32) || txIndex (4 BE) || logIndex (2 BE)",
+    "y_dedup": "chainId (8 BE) || txHash (32) || logIndex (2 BE)",
+    "slot_key": "SHA-256(ASCII(\"chit402-state-v1\") || kind (1) || chainId (8 BE) || id)",
+    "state_leaf": "SHA-256(0x00 || ASCII(\"chit402-state-v1\") || key || SHA-256(value))",
+    "state_node": "SHA-256(0x01 || left || right)",
+    "empty_0": "SHA-256(0x02 || ASCII(\"empty\"))",
+    "empty_next": "SHA-256(0x01 || empty_d || empty_d)"
+  },
+  "notes": {
+    "block_hash": "Required on the canonical payment id. Absent, null, and empty are rejected. Thirty-two zero bytes are a present hash.",
+    "sigma": "H(sigma) covers the 64-byte signature. The alg byte is stored in the line and is not inside H(sigma).",
+    "uri_prefix": "A text prefix is UTF-8, then zero-padded to 256 bytes. A 256-byte value is stored as given.",
+    "y_dedup": "The dedup key does not include blockHash, so one Transfer under two block hashes counts once.",
+    "empty_depth": "max_empty_depth is an implementation limit, not a wire field."
+  },
+  "implementation_limits": {
+    "max_empty_depth": 64
+  },
+  "sizes": {
+    "header": 2,
+    "payment": 271,
+    "content": 465,
+    "sigma": 65
+  },
+  "payment_fields": [
+    {
+      "name": "chainId",
+      "at": 0,
+      "size": 8
+    },
+    {
+      "name": "blockHash",
+      "at": 8,
+      "size": 32
+    },
+    {
+      "name": "blockNumber",
+      "at": 40,
+      "size": 8
+    },
+    {
+      "name": "blockTime",
+      "at": 48,
+      "size": 8
+    },
+    {
+      "name": "txIndex",
+      "at": 56,
+      "size": 4
+    },
+    {
+      "name": "logIndex",
+      "at": 60,
+      "size": 2
+    },
+    {
+      "name": "txHash",
+      "at": 62,
+      "size": 32
+    },
+    {
+      "name": "token",
+      "at": 94,
+      "size": 20
+    },
+    {
+      "name": "from",
+      "at": 114,
+      "size": 20
+    },
+    {
+      "name": "to",
+      "at": 134,
+      "size": 20
+    },
+    {
+      "name": "value",
+      "at": 154,
+      "size": 32
+    },
+    {
+      "name": "method",
+      "at": 186,
+      "size": 1
+    },
+    {
+      "name": "authorizer",
+      "at": 187,
+      "size": 20
+    },
+    {
+      "name": "nonce",
+      "at": 207,
+      "size": 32
+    },
+    {
+      "name": "saltP",
+      "at": 239,
+      "size": 32
+    }
+  ],
+  "content_fields": [
+    {
+      "name": "uuid",
+      "at": 0,
+      "size": 16
+    },
+    {
+      "name": "sellerIdHash",
+      "at": 16,
+      "size": 32
+    },
+    {
+      "name": "sellerKeyId",
+      "at": 48,
+      "size": 32
+    },
+    {
+      "name": "requestMethod",
+      "at": 80,
+      "size": 1
+    },
+    {
+      "name": "uriDigest",
+      "at": 81,
+      "size": 32
+    },
+    {
+      "name": "uriPrefix",
+      "at": 113,
+      "size": 256
+    },
+    {
+      "name": "contentDigest",
+      "at": 369,
+      "size": 32
+    },
+    {
+      "name": "responseDigest",
+      "at": 401,
+      "size": 32
+    },
+    {
+      "name": "saltC",
+      "at": 433,
+      "size": 32
+    }
+  ],
+  "sigma_fields": [
+    {
+      "name": "alg",
+      "at": 0,
+      "size": 1
+    },
+    {
+      "name": "sigma",
+      "at": 1,
+      "size": 64
+    }
+  ],
+  "reasons": [
+    "bad_type",
+    "bad_length",
+    "bad_header",
+    "bad_hex",
+    "bad_uint",
+    "bad_range",
+    "missing_block_hash",
+    "bad_padding",
+    "bad_kind",
+    "bad_id_length",
+    "bad_depth"
+  ],
+  "slot_keys": [
+    {
+      "name": "payTo",
+      "kind": 1,
+      "kind_hex": "01",
+      "chain_id": 8453,
+      "chain_id_hex": "0000000000002105",
+      "id_hex": "1111111111111111111111111111111111111111",
+      "preimage_hex": "636869743430322d73746174652d76310100000000000021051111111111111111111111111111111111111111",
+      "key_hex": "c6b40c18d820237cb21ae8016f9f92a5a68f42b5bb30ae56969ff04c7a7b5e14"
+    },
+    {
+      "name": "wallet",
+      "kind": 2,
+      "kind_hex": "02",
+      "chain_id": 8453,
+      "chain_id_hex": "0000000000002105",
+      "id_hex": "1111111111111111111111111111111111111111",
+      "preimage_hex": "636869743430322d73746174652d76310200000000000021051111111111111111111111111111111111111111",
+      "key_hex": "4ccc2ec4ceae1ff0046f133bb181b6d489d16271e113279784f446e081f0de9b"
+    },
+    {
+      "name": "book",
+      "kind": 3,
+      "kind_hex": "03",
+      "chain_id": 8453,
+      "chain_id_hex": "0000000000002105",
+      "id_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+      "preimage_hex": "636869743430322d73746174652d76310300000000000021052222222222222222222222222222222222222222222222222222222222222222",
+      "key_hex": "e0b35a2c3b103508754c6ba420f0e9bc3c9ae5d75c0f8b8a48dba569cf686af7"
+    },
+    {
+      "name": "epoch",
+      "kind": 4,
+      "kind_hex": "04",
+      "chain_id": 8453,
+      "chain_id_hex": "0000000000002105",
+      "id_hex": "",
+      "preimage_hex": "636869743430322d73746174652d7631040000000000002105",
+      "key_hex": "704eb0fa877f4f138ae508a4e5a29dc4c001ffe4415856c2ff7d6453f37c70d7"
+    }
+  ],
+  "hash_domains": {
+    "leaf": {
+      "key_hex": "c6b40c18d820237cb21ae8016f9f92a5a68f42b5bb30ae56969ff04c7a7b5e14",
+      "value_hex": "01",
+      "hash_hex": "34c64c8170a9c3dcd3144fac58851b8be41d4194908e29a4af40e733c015344c"
+    },
+    "node": {
+      "left_hex": "840850734821db93d0578d224007ed370d3f7e149f1884179cdaa871e154096a",
+      "right_hex": "840850734821db93d0578d224007ed370d3f7e149f1884179cdaa871e154096a",
+      "hash_hex": "cc3c183ca07f1fb9de7287b36bcbc1357b7c41027d94e79341b9c642e35de074"
+    },
+    "empty": [
+      {
+        "depth": 0,
+        "hash_hex": "840850734821db93d0578d224007ed370d3f7e149f1884179cdaa871e154096a"
+      },
+      {
+        "depth": 1,
+        "hash_hex": "cc3c183ca07f1fb9de7287b36bcbc1357b7c41027d94e79341b9c642e35de074"
+      }
+    ]
+  },
+  "line": {
+    "sample": {
+      "payment": {
+        "chainId": 8453,
+        "blockHash": "abababababababababababababababababababababababababababababababab",
+        "blockNumber": 12345678,
+        "blockTime": 1700000000,
+        "txIndex": 7,
+        "logIndex": 4,
+        "txHash": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "token": "2222222222222222222222222222222222222222",
+        "from": "3333333333333333333333333333333333333333",
+        "to": "1111111111111111111111111111111111111111",
+        "value": "1000000",
+        "method": 1,
+        "authorizer": "3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a",
+        "nonce": "4444444444444444444444444444444444444444444444444444444444444444",
+        "saltP": "5555555555555555555555555555555555555555555555555555555555555555"
+      },
+      "content": {
+        "uuid": "66666666666666666666666666666666",
+        "sellerIdHash": "7777777777777777777777777777777777777777777777777777777777777777",
+        "sellerKeyId": "8888888888888888888888888888888888888888888888888888888888888888",
+        "requestMethod": 2,
+        "uriDigest": "9999999999999999999999999999999999999999999999999999999999999999",
+        "uriPrefix": "https://example.test/v1",
+        "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "responseDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "saltC": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "sigma": {
+        "alg": 1,
+        "sigma": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      }
+    },
+    "uri_prefix_text": "https://example.test/v1",
+    "line_hex": "63320000000000002105abababababababababababababababababababababababababababababababab0000000000bc614e000000006553f100000000070004cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd22222222222222222222222222222222222222223333333333333333333333333333333333333333111111111111111111111111111111111111111100000000000000000000000000000000000000000000000000000000000f4240013a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a44444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555666666666666666666666666666666667777777777777777777777777777777777777777777777777777777777777777888888888888888888888888888888888888888888888888888888888888888802999999999999999999999999999999999999999999999999999999999999999968747470733a2f2f6578616d706c652e746573742f76310000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc01dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "payment_id_hex": "0000000000002105abababababababababababababababababababababababababababababababab000000070004",
+    "y_dedup_hex": "0000000000002105cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd0004",
+    "P": "d48849bf2ae34cbd363b068a2729f1c9d9771929c78fed4922072b67f2bfdfe9",
+    "K": "4d917923a6266c61236fc18147e47f9486de6c9260de40744def3ead4f5f7e6f",
+    "C": "58e6ba2a912c96751e993e8e7bf1a58373ce9822bf40a708f04cce6808e1fa1b",
+    "sigma_digest": "cc7a456bb21de461436bb3412125bfcf2107bd83191e37764f903ee29e999f05"
+  }
+}

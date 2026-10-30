@@ -1,0 +1,281 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": ["node", "--test", "--test-concurrency=1", "packages/cs2-core/line/line.test.mjs"]
+  },
+  "mutants": [
+    {
+      "id": "L01_header_type",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "export const HEADER_BYTE_1 = 0x32;",
+      "replace": "export const HEADER_BYTE_1 = 0x33;",
+      "note": "second header byte is no longer ASCII 2"
+    },
+    {
+      "id": "L02_header_ignores_type",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (line[0] !== HEADER_BYTE_0 || line[1] !== HEADER_BYTE_1) return fail('bad_header');",
+      "replace": "if (line[0] !== HEADER_BYTE_0) return fail('bad_header');",
+      "note": "decode checks only the first header byte"
+    },
+    {
+      "id": "L03_pad_check_off",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (line[i] !== 0) return fail('bad_padding');",
+      "replace": "if (false && line[i] !== 0) return fail('bad_padding');",
+      "note": "non-zero pad is accepted"
+    },
+    {
+      "id": "L04_pad_skip_last",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "for (let i = USED_BYTES; i < LINE_BYTES; i += 1) {\n    if (line[i] !== 0) return fail('bad_padding');",
+      "replace": "for (let i = USED_BYTES; i < LINE_BYTES - 1; i += 1) {\n    if (line[i] !== 0) return fail('bad_padding');",
+      "note": "last pad byte is not checked"
+    },
+    {
+      "id": "L05_pad_skip_first",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "for (let i = USED_BYTES; i < LINE_BYTES; i += 1) {\n    if (line[i] !== 0) return fail('bad_padding');",
+      "replace": "for (let i = USED_BYTES + 1; i < LINE_BYTES; i += 1) {\n    if (line[i] !== 0) return fail('bad_padding');",
+      "note": "first pad byte is not checked"
+    },
+    {
+      "id": "L06_encode_pad_ones",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "for (let i = USED_BYTES; i < LINE_BYTES; i += 1) line[i] = 0;",
+      "replace": "for (let i = USED_BYTES; i < LINE_BYTES; i += 1) line[i] = 1;",
+      "note": "encode writes non-zero padding"
+    },
+    {
+      "id": "L07_empty_string_not_missing",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (value === undefined || value === null || value === '') return fail('missing_block_hash');",
+      "replace": "if (value === undefined || value === null) return fail('missing_block_hash');",
+      "note": "empty blockHash is not missing"
+    },
+    {
+      "id": "L08_null_not_missing",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (value === undefined || value === null || value === '') return fail('missing_block_hash');",
+      "replace": "if (value === undefined || value === '') return fail('missing_block_hash');",
+      "note": "null blockHash is not missing"
+    },
+    {
+      "id": "L09_omitted_not_missing",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (value === undefined || value === null || value === '') return fail('missing_block_hash');",
+      "replace": "if (value === null || value === '') return fail('missing_block_hash');",
+      "note": "omitted blockHash is not missing"
+    },
+    {
+      "id": "L10_zero_hash_missing",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (value === undefined || value === null || value === '') return fail('missing_block_hash');",
+      "replace": "if (value === undefined || value === null || value === '' || (value instanceof Uint8Array && value.length === 32 && value.every((b) => b === 0))) return fail('missing_block_hash');",
+      "note": "32 zero bytes count as a missing blockHash"
+    },
+    {
+      "id": "L11_domain_pay",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const DOMAIN_PAY = 'pay';",
+      "replace": "const DOMAIN_PAY = 'Pay';",
+      "note": "P domain is not ASCII pay"
+    },
+    {
+      "id": "L12_domain_cnt",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const DOMAIN_CNT = 'cnt';",
+      "replace": "const DOMAIN_CNT = 'content';",
+      "note": "K domain is not ASCII cnt"
+    },
+    {
+      "id": "L13_domain_line",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const DOMAIN_LINE = 'cs2';",
+      "replace": "const DOMAIN_LINE = 'cs3';",
+      "note": "C domain is not ASCII cs2"
+    },
+    {
+      "id": "L14_domain_sig",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const DOMAIN_SIG = 'cs2-sig';",
+      "replace": "const DOMAIN_SIG = 'cs2sig';",
+      "note": "sigma domain drops the hyphen"
+    },
+    {
+      "id": "L15_omit_salt_p",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "sha256(ascii(DOMAIN_PAY), saltP, paymentHalf)",
+      "replace": "sha256(ascii(DOMAIN_PAY), paymentHalf)",
+      "note": "P does not prepend salt_p"
+    },
+    {
+      "id": "L16_k_includes_salt",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "contentHalf.slice(0, CONTENT_BYTES - SALT_BYTES)",
+      "replace": "contentHalf.slice(0, CONTENT_BYTES)",
+      "note": "K hashes the content half with salt_c still inside it"
+    },
+    {
+      "id": "L17_sigma_includes_alg",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "sigmaBlock.slice(1, SIGMA_BYTES)",
+      "replace": "sigmaBlock.slice(0, SIGMA_BYTES)",
+      "note": "H(sigma) includes the alg byte"
+    },
+    {
+      "id": "L18_c_raw_sigma",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "sha256(ascii(DOMAIN_LINE), p, k, sigmaHash)",
+      "replace": "sha256(ascii(DOMAIN_LINE), p, k, sigma64)",
+      "note": "C binds sigma instead of H(sigma)"
+    },
+    {
+      "id": "L19_little_endian",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "for (let i = width - 1; i >= 0; i -= 1) {",
+      "replace": "for (let i = 0; i < width; i += 1) {",
+      "note": "multi-byte integers are little-endian"
+    },
+    {
+      "id": "L20_bigint_narrow",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (value < 0n || value > max) return fail('bad_range');\n    return { ok: true, value };",
+      "replace": "if (value < 0n || value > max) return fail('bad_range');\n    return { ok: true, value: BigInt(Number(value)) };",
+      "note": "uint64 values above 2^53 lose low bits"
+    },
+    {
+      "id": "L21_kind_zero",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "[KIND_PAYTO, 20],",
+      "replace": "[0x00, 20],\n  [KIND_PAYTO, 20],",
+      "note": "kind 0x00 is accepted"
+    },
+    {
+      "id": "L22_kind_05",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "[KIND_EPOCH, 0],",
+      "replace": "[KIND_EPOCH, 0],\n  [0x05, 20],",
+      "note": "kind 0x05 is accepted"
+    },
+    {
+      "id": "L23_epoch_len",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "[KIND_EPOCH, 0],",
+      "replace": "[KIND_EPOCH, 32],",
+      "note": "epoch id width is 32 instead of 0"
+    },
+    {
+      "id": "L24_payto_len",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "[KIND_PAYTO, 20],",
+      "replace": "[KIND_PAYTO, 32],",
+      "note": "payTo id width is 32 instead of 20"
+    },
+    {
+      "id": "L25_id_reason",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (!id.ok) return id.reason === 'bad_length' ? fail('bad_id_length') : id;",
+      "replace": "if (!id.ok) return id;",
+      "note": "wrong id width is not bad_id_length"
+    },
+    {
+      "id": "L26_empty_prefix",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const STATE_EMPTY_PREFIX = 0x02;",
+      "replace": "const STATE_EMPTY_PREFIX = 0x00;",
+      "note": "empty hash prefix is 0x00"
+    },
+    {
+      "id": "L27_empty_recurrence",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "hash = sha256(Uint8Array.of(STATE_NODE_PREFIX), hash, hash);",
+      "replace": "hash = sha256(Uint8Array.of(STATE_EMPTY_PREFIX), hash, hash);",
+      "note": "empty depth d+1 does not use the node prefix"
+    },
+    {
+      "id": "L28_leaf_prefix",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const STATE_LEAF_PREFIX = 0x00;",
+      "replace": "const STATE_LEAF_PREFIX = 0x01;",
+      "note": "state leaf prefix is 0x01"
+    },
+    {
+      "id": "L29_node_prefix",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const STATE_NODE_PREFIX = 0x01;",
+      "replace": "const STATE_NODE_PREFIX = 0x03;",
+      "note": "state node prefix is 0x03"
+    },
+    {
+      "id": "L30_hex_upper",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (!/^[0-9a-f]+$/.test(hexBody)) return fail('bad_hex');",
+      "replace": "if (!/^[0-9a-fA-F]+$/.test(hexBody)) return fail('bad_hex');",
+      "note": "uppercase hex is accepted"
+    },
+    {
+      "id": "L31_hex_0x",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const hexBody = value;",
+      "replace": "const hexBody = value.startsWith('0x') ? value.slice(2) : value;",
+      "note": "a 0x prefix is stripped"
+    },
+    {
+      "id": "L32_short_line",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (value.length !== LINE_BYTES) return fail('bad_length');",
+      "replace": "if (value.length !== LINE_BYTES && value.length !== USED_BYTES) return fail('bad_length');",
+      "note": "an 803-byte line is not bad_length"
+    },
+    {
+      "id": "L33_depth_low",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "export const MAX_EMPTY_DEPTH = 64;",
+      "replace": "export const MAX_EMPTY_DEPTH = 63;",
+      "note": "empty depth 64 is refused"
+    },
+    {
+      "id": "L34_depth_high",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (depth < 0 || depth > MAX_EMPTY_DEPTH) return fail('bad_depth');",
+      "replace": "if (depth < 0 || depth > MAX_EMPTY_DEPTH + 1) return fail('bad_depth');",
+      "note": "empty depth 65 is accepted"
+    },
+    {
+      "id": "L35_negzero",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (Object.is(value, -0)) return fail('bad_range');",
+      "replace": "if (false && Object.is(value, -0)) return fail('bad_range');",
+      "note": "negative zero is a valid integer"
+    },
+    {
+      "id": "L36_payid_uses_txhash",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const blockHash = readBlockHash(input.blockHash);",
+      "replace": "const blockHash = readBlockHash(input.txHash);",
+      "note": "payment id reads txHash instead of blockHash"
+    },
+    {
+      "id": "L37_dedup_uses_blockhash",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const txHash = readFixed(input.txHash, 32);",
+      "replace": "const txHash = readFixed(input.blockHash, 32);",
+      "note": "Y dedup key reads blockHash instead of txHash"
+    },
+    {
+      "id": "L38_hex_unpadded",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "bytes[i].toString(16).padStart(2, '0')",
+      "replace": "bytes[i].toString(16)",
+      "note": "hex drops a leading zero nibble"
+    },
+    {
+      "id": "L39_drop_kind",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "sha256(ascii(DOMAIN_STATE), Uint8Array.of(kind), chain.bytes, id.bytes)",
+      "replace": "sha256(ascii(DOMAIN_STATE), chain.bytes, id.bytes)",
+      "note": "slot key omits the kind byte"
+    }
+  ]
+}
