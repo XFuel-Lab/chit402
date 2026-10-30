@@ -1,0 +1,21 @@
+{
+  "note": "Low-S and y-parity for both curves. kms_der_high_s is the high-S form a KMS Sign can return. low_s is r||s after that curve order is applied. y_parity is trial recovery of the low-S signature against public_key.",
+  "signatures": [
+    {
+      "curve": "secp256k1",
+      "digest": "84f270ec7c60bf7938e047226ef9c53311d79ae99aecb0c85010172cec0e8dae",
+      "public_key": "04a64db41e2968c849c2a5615ba0d6e816734a6d3e6ea6ecd6f3acb7d59daa9102e7af12d6e07238e7d5f5f6e9d6a529833a30f7385075fd74029db8009a5ace9a",
+      "kms_der_high_s": "304502207754b4fa0e8aced06d4167a2c59cca4cda1869c06ebadfb6488550015a88522c022100825500c59f8e10add56dd13a08bc5f464c2fd7fb20dd044b01bc74f838cb9bf3",
+      "low_s": "7754b4fa0e8aced06d4167a2c59cca4cda1869c06ebadfb6488550015a88522c7daaff3a6071ef522a922ec5f743a0b86e7f04eb8e6b9bf0be15e994976aa54e",
+      "y_parity": 1
+    },
+    {
+      "curve": "P-256",
+      "digest": "4242424242424242424242424242424242424242424242424242424242424242",
+      "public_key": "045ecbe4d1a6330a44c8f7ef951d4bf165e6c6b721efada985fb41661bc6e7fd6c8734640c4998ff7e374b06ce1a64a2ecd82ab036384fb83d9a79b127a27d5032",
+      "kms_der_high_s": "3045022051590b7a515140d2d784c85608668fdfef8c82fd1f5be52421554a0dc3d033ed0221008ebd5242285b98a83e3cadbf20e86938fa24064c32681b476e8768867a5ebe3f",
+      "low_s": "51590b7a515140d2d784c85608668fdfef8c82fd1f5be52421554a0dc3d033ed7142adbcd7a46758c1c35240df1796c6c2c2f46174af833d8532623c82046712",
+      "y_parity": 0
+    }
+  ]
+}
