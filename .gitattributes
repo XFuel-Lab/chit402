@@ -5,3 +5,4 @@
 docs/well-known/issuer-key.json text eol=lf
 docs/well-known/issuer-key.sig text eol=lf
 docs/well-known/issuer-key.ref.json text eol=lf
+packages/cs2-core/vectors/*.json text eol=lf
