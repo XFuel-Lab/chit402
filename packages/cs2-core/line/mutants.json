@@ -68,11 +68,11 @@
       "note": "omitted blockHash is not missing"
     },
     {
-      "id": "L10_zero_hash_missing",
+      "id": "L10_zero_hash_present",
       "file": "packages/cs2-core/line/index.mjs",
-      "find": "if (value === undefined || value === null || value === '') return fail('missing_block_hash');",
-      "replace": "if (value === undefined || value === null || value === '' || (value instanceof Uint8Array && value.length === 32 && value.every((b) => b === 0))) return fail('missing_block_hash');",
-      "note": "32 zero bytes count as a missing blockHash"
+      "find": "if (isZero(parsed.bytes)) return fail('missing_block_hash');",
+      "replace": "if (false && isZero(parsed.bytes)) return fail('missing_block_hash');",
+      "note": "32 zero bytes count as a present blockHash"
     },
     {
       "id": "L11_domain_pay",
@@ -117,18 +117,18 @@
       "note": "K hashes the content half with salt_c still inside it"
     },
     {
-      "id": "L17_sigma_includes_alg",
+      "id": "L17_sigma_drops_alg",
       "file": "packages/cs2-core/line/index.mjs",
-      "find": "sigmaBlock.slice(1, SIGMA_BYTES)",
-      "replace": "sigmaBlock.slice(0, SIGMA_BYTES)",
-      "note": "H(sigma) includes the alg byte"
+      "find": "const sigmaHash = sha256(sigmaBlock);",
+      "replace": "const sigmaHash = sha256(sigmaBlock.subarray(1));",
+      "note": "H(sigma) drops the alg byte"
     },
     {
       "id": "L18_c_raw_sigma",
       "file": "packages/cs2-core/line/index.mjs",
-      "find": "sha256(ascii(DOMAIN_LINE), p, k, sigmaHash)",
-      "replace": "sha256(ascii(DOMAIN_LINE), p, k, sigma64)",
-      "note": "C binds sigma instead of H(sigma)"
+      "find": "sha256(ascii(DOMAIN_LINE), lineHeader, p, k, sigmaHash)",
+      "replace": "sha256(ascii(DOMAIN_LINE), lineHeader, p, k, sigmaBlock)",
+      "note": "C binds the sigma block instead of its hash"
     },
     {
       "id": "L19_little_endian",
@@ -276,6 +276,97 @@
       "find": "sha256(ascii(DOMAIN_STATE), Uint8Array.of(kind), chain.bytes, id.bytes)",
       "replace": "sha256(ascii(DOMAIN_STATE), chain.bytes, id.bytes)",
       "note": "slot key omits the kind byte"
+    },
+    {
+      "id": "L40_c_drops_header",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "sha256(ascii(DOMAIN_LINE), lineHeader, p, k, sigmaHash)",
+      "replace": "sha256(ascii(DOMAIN_LINE), p, k, sigmaHash)",
+      "note": "C does not bind the header"
+    },
+    {
+      "id": "L41_sig_drops_alg",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "sha256(ascii(DOMAIN_SIG), id, k, sigmaBlock.subarray(0, 1))",
+      "replace": "sha256(ascii(DOMAIN_SIG), id, k)",
+      "note": "sigma digest does not bind alg"
+    },
+    {
+      "id": "L42_decode_zero_hash",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (isZero(blockHash)) return fail('missing_block_hash');",
+      "replace": "if (false && isZero(blockHash)) return fail('missing_block_hash');",
+      "note": "decode accepts a zero blockHash"
+    },
+    {
+      "id": "L43_zero_salt",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (isZero(saltP) || isZero(saltC) || bytesEqual(saltP, saltC)) return fail('bad_salt');",
+      "replace": "if (bytesEqual(saltP, saltC)) return fail('bad_salt');",
+      "note": "an all-zero salt is accepted"
+    },
+    {
+      "id": "L44_reused_salt",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (isZero(saltP) || isZero(saltC) || bytesEqual(saltP, saltC)) return fail('bad_salt');",
+      "replace": "if (isZero(saltP) || isZero(saltC)) return fail('bad_salt');",
+      "note": "salt_p equal to salt_c is accepted"
+    },
+    {
+      "id": "L45_high_s",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (s < 1n || s > P256_HALF_N) return fail('bad_sigma');",
+      "replace": "if (s < 1n || s >= P256_N) return fail('bad_sigma');",
+      "note": "high-S signatures are accepted"
+    },
+    {
+      "id": "L46_leading_zeros",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (!/^(0|[1-9][0-9]*)$/.test(value)) return fail('bad_uint');",
+      "replace": "if (!/^[0-9]+$/.test(value)) return fail('bad_uint');",
+      "note": "decimal strings with leading zeros are accepted"
+    },
+    {
+      "id": "L47_hex_uint",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (!/^(0|[1-9][0-9]*)$/.test(value)) return fail('bad_uint');",
+      "replace": "if (!/^(0|[1-9a-fA-Fx][0-9a-fA-Fx]*)$/.test(value)) return fail('bad_uint');",
+      "note": "hex-ish strings are accepted as integers"
+    },
+    {
+      "id": "L48_uint_width",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (value.length !== width) return fail('bad_length');\n    return { ok: true, value: readBe(value, 0, width) };",
+      "replace": "return { ok: true, value: readBe(value, 0, width) };",
+      "note": "a byte-array integer of the wrong width is accepted"
+    },
+    {
+      "id": "L49_uint_truncation",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const parsed = BigInt(value);\n    if (parsed > max) return fail('bad_range');",
+      "replace": "const parsed = BigInt(value);",
+      "note": "a decimal string above the field width is truncated"
+    },
+    {
+      "id": "L50_unknown_field",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const known = knownOnly(input, fields.map(([name]) => name));\n  if (!known.ok) return known;",
+      "replace": "const known = { ok: true };",
+      "note": "unknown payment fields are ignored"
+    },
+    {
+      "id": "L51_uri_nul",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (value.includes('\\0')) return fail('bad_uri');",
+      "replace": "if (false && value.includes('\\0')) return fail('bad_uri');",
+      "note": "a NUL in a URI prefix is accepted"
+    },
+    {
+      "id": "L52_wrong_curve",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;",
+      "replace": "const P256_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;",
+      "note": "low-S uses the secp256k1 order"
     }
   ]
 }

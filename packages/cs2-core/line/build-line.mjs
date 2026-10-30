@@ -22,9 +22,11 @@ import {
   SCHEMA,
   SIGMA_BYTES,
   USED_BYTES,
+  authorizationKey,
   canonicalPaymentId,
   commitments,
   contentOffsets,
+  decodeLine,
   emptyHash,
   encodeLine,
   paymentOffsets,
@@ -92,7 +94,7 @@ export function vectorDocument() {
   if (!encoded.ok) throw new Error(encoded.reason);
   const committed = commitments(encoded.line);
   if (!committed.ok) throw new Error(committed.reason);
-  const digest = sigmaDigest(SAMPLE.payment, committed.K);
+  const digest = sigmaDigest(SAMPLE.payment, committed.K, SAMPLE.sigma.alg);
   if (!digest.ok || digest.hex !== committed.hex.sigmaDigest) {
     throw new Error('sigmaDigest drifted from commitments');
   }
@@ -125,10 +127,11 @@ export function vectorDocument() {
     formulas: {
       P: 'SHA-256(ASCII("pay") || salt_p || payment half)',
       K: 'SHA-256(ASCII("cnt") || salt_c || content half without salt_c)',
-      C: 'SHA-256(ASCII("cs2") || P || K || SHA-256(sigma))',
-      sigma_digest: 'SHA-256(ASCII("cs2-sig") || payment id || K)',
-      payment_id: 'chainId (8 BE) || blockHash (32) || txIndex (4 BE) || logIndex (2 BE)',
-      y_dedup: 'chainId (8 BE) || txHash (32) || logIndex (2 BE)',
+      C: 'SHA-256(ASCII("cs2") || header || P || K || SHA-256(alg || sigma))',
+      sigma_digest: 'SHA-256(ASCII("cs2-sig") || payment id || K || alg)',
+      payment_id: 'chainId (8 BE) || blockHash (32) || txIndex (4 BE) || localLogIndex (2 BE)',
+      y_dedup: 'chainId (8 BE) || txHash (32) || localLogIndex (2 BE)',
+      authorization_key: 'chainId (8 BE) || token (20) || authorizer (20) || nonce (32); nonce zero yields no key',
       slot_key: 'SHA-256(ASCII("chit402-state-v1") || kind (1) || chainId (8 BE) || id)',
       state_leaf: 'SHA-256(0x00 || ASCII("chit402-state-v1") || key || SHA-256(value))',
       state_node: 'SHA-256(0x01 || left || right)',
@@ -136,9 +139,13 @@ export function vectorDocument() {
       empty_next: 'SHA-256(0x01 || empty_d || empty_d)',
     },
     notes: {
-      block_hash: 'Required on the canonical payment id. Absent, null, and empty are rejected. Thirty-two zero bytes are a present hash.',
-      sigma: 'H(sigma) covers the 64-byte signature. The alg byte is stored in the line and is not inside H(sigma).',
-      uri_prefix: 'A text prefix is UTF-8, then zero-padded to 256 bytes. A 256-byte value is stored as given.',
+      block_hash: 'Required on the canonical payment id. Absent, null, empty, and 32 zero bytes are rejected.',
+      P_salt: 'salt_p is prepended and is also the last 32 bytes of the payment half, matching the written formula.',
+      sigma: 'H(alg || sigma) is the 65-byte block. The sigma message also binds alg. r and s are P-256 low-S: 1 <= r < n and 1 <= s <= n/2.',
+      header: 'The 2 header bytes are inside C, so a future line type cannot reuse this C.',
+      uri_prefix: 'NUL-free UTF-8, then zero fill to 256 bytes. A NUL with later non-zero bytes is rejected. A 512-char lowercase hex string is raw bytes.',
+      local_log_index: 'Receipt-local index of the Transfer log inside the transaction, not the RPC block logIndex. The sample uses txIndex 7 and localLogIndex 4: the Transfer is the fifth log in that receipt.',
+      salts: 'salt_p and salt_c must each be non-zero and must differ. The codec does not prove they came from a CSPRNG.',
       y_dedup: 'The dedup key does not include blockHash, so one Transfer under two block hashes counts once.',
       empty_depth: 'max_empty_depth is an implementation limit, not a wire field.',
     },
@@ -187,8 +194,80 @@ export function vectorDocument() {
       K: committed.hex.K,
       C: committed.hex.C,
       sigma_digest: committed.hex.sigmaDigest,
+      authorization_key_hex: authorizationKey({
+        chainId: SAMPLE.payment.chainId,
+        token: SAMPLE.payment.token,
+        authorizer: SAMPLE.payment.authorizer,
+        nonce: SAMPLE.payment.nonce,
+      }).hex,
     },
+    multi_log: multiLogRow(),
+    max_line: maxLineRow(),
+    negatives: negativeRows(encoded.line),
   };
+}
+
+function multiLogRow() {
+  const payment = { ...SAMPLE.payment, txIndex: 2, localLogIndex: 9 };
+  const id = canonicalPaymentId(payment);
+  if (!id.ok) throw new Error(id.reason);
+  return {
+    tx_index: 2,
+    local_log_index: 9,
+    note: 'localLogIndex 9 is the Transfer inside this receipt. It is not a block log index.',
+    payment_id_hex: id.hex,
+    tx_index_hex: id.hex.slice(80, 88),
+    local_log_index_hex: id.hex.slice(88, 92),
+  };
+}
+
+function maxLineRow() {
+  const parts = {
+    payment: {
+      ...SAMPLE.payment,
+      chainId: '18446744073709551615',
+      blockNumber: '18446744073709551615',
+      blockTime: '18446744073709551615',
+      txIndex: 4294967295,
+      localLogIndex: 65535,
+      value: '115792089237316195423570985008687907853269984665640564039457584007913129639935',
+      method: 255,
+    },
+    content: SAMPLE.content,
+    sigma: SAMPLE.sigma,
+  };
+  const encoded = encodeLine(parts);
+  if (!encoded.ok) throw new Error(encoded.reason);
+  const committed = commitments(encoded.line);
+  if (!committed.ok) throw new Error(committed.reason);
+  return {
+    parts,
+    line_hex: toHex(encoded.line),
+    payment_id_hex: canonicalPaymentId(parts.payment).hex,
+    C: committed.hex.C,
+    local_log_index: 65535,
+  };
+}
+
+function negativeRows(line) {
+  const pad = Uint8Array.from(line);
+  pad[USED_BYTES] = 1;
+  const header = Uint8Array.from(line);
+  header[1] = 0;
+  const zeroHash = Uint8Array.from(line);
+  zeroHash.fill(0, HEADER_BYTES + 8, HEADER_BYTES + 40);
+  const short = line.slice(0, LINE_BYTES - 1);
+  const rows = [
+    ['bad-padding', pad],
+    ['bad-header', header],
+    ['zero-block-hash', zeroHash],
+    ['short-line', short],
+  ];
+  return rows.map(([id, bytes]) => {
+    const got = decodeLine(bytes);
+    if (got.ok) throw new Error(`${id} decoded`);
+    return { id, reason: got.reason, line_hex: toHex(bytes) };
+  });
 }
 
 export function renderLineJson() {

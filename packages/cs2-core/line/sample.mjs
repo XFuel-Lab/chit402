@@ -12,7 +12,7 @@ export const SAMPLE = Object.freeze({
     blockNumber: 12345678,
     blockTime: 1700000000,
     txIndex: 7,
-    logIndex: 4,
+    localLogIndex: 4,
     txHash: 'cd'.repeat(32),
     token: '22'.repeat(20),
     from: '33'.repeat(20),
@@ -36,6 +36,6 @@ export const SAMPLE = Object.freeze({
   }),
   sigma: Object.freeze({
     alg: 1,
-    sigma: 'dd'.repeat(64),
+    sigma: `${'00'.repeat(31)}01${'00'.repeat(31)}01`,
   }),
 });

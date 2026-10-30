@@ -3,14 +3,13 @@
  *
  * A line is 1,024 bytes: a 2-byte header, a 271-byte payment half, a 465-byte
  * content half, a 65-byte σ block, and 221 zero pad bytes. P, K and C are
- * SHA-256 commitments. The canonical payment id is
- * (chainId, blockHash, txIndex, local log index) and blockHash is required
- * (DS-114). The Y dedup key is (chainId, txHash, logIndex). Slot keys and the
- * state hash domains are the §S5 bytes.
- *
- * DS-05 distinct payment ids, DS-10 fixed length, DS-11 payment binding
- * fields, DS-12 blockHash in the id, DS-39 commitments and zero pad, DS-114
- * required blockHash plus the dedup key.
+ * SHA-256 commitments. C binds the header and H(alg ‖ σ). The σ message binds
+ * alg too. The canonical payment id is (chainId, blockHash, txIndex,
+ * localLogIndex). blockHash is required and must be non-zero. The Y dedup key
+ * is (chainId, txHash, localLogIndex) and does not include blockHash.
+ * localLogIndex is the Transfer's index inside the transaction receipt, not
+ * an RPC block log index. Slot keys and the state leaf, node, and empty hash
+ * domains follow the published byte layout.
  *
  * Bad input returns { ok: false, reason } and does not throw. Reasons are the
  * fixed strings in REASONS. A reason never contains input bytes. This module
@@ -60,6 +59,10 @@ const STATE_LEAF_PREFIX = 0x00;
 const STATE_NODE_PREFIX = 0x01;
 const STATE_EMPTY_PREFIX = 0x02;
 
+/** NIST P-256 order. Seller keys are compressed P-256, so σ is low-S on this n. */
+const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+const P256_HALF_N = P256_N >> 1n;
+
 const ID_LENGTH_BY_KIND = new Map([
   [KIND_PAYTO, 20],
   [KIND_WALLET, 20],
@@ -74,7 +77,7 @@ export const PAYMENT_FIELDS = Object.freeze([
   ['blockNumber', 8],
   ['blockTime', 8],
   ['txIndex', 4],
-  ['logIndex', 2],
+  ['localLogIndex', 2],
   ['txHash', 32],
   ['token', 20],
   ['from', 20],
@@ -108,7 +111,7 @@ const UINT_BITS = Object.freeze({
   blockNumber: 64,
   blockTime: 64,
   txIndex: 32,
-  logIndex: 16,
+  localLogIndex: 16,
   value: 256,
   method: 8,
   requestMethod: 8,
@@ -127,6 +130,11 @@ export const REASONS = Object.freeze([
   'bad_kind',
   'bad_id_length',
   'bad_depth',
+  'bad_salt',
+  'bad_sigma',
+  'bad_uri',
+  'unknown_field',
+  'nonce_none',
 ]);
 
 const REASON_SET = new Set(REASONS);
@@ -233,9 +241,42 @@ function readFixed(value, width) {
   return { ok: true, bytes: out };
 }
 
+function isZero(bytes) {
+  let acc = 0;
+  for (let i = 0; i < bytes.length; i += 1) acc |= bytes[i];
+  return acc === 0;
+}
+
+function bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+function knownOnly(input, names) {
+  const allowed = new Set(names);
+  for (const key of Object.keys(input)) {
+    if (!allowed.has(key)) return fail('unknown_field');
+  }
+  return { ok: true };
+}
+
+function fieldSlice(buf, base, fields, name) {
+  let at = base;
+  for (const [field, size] of fields) {
+    if (field === name) return buf.slice(at, at + size);
+    at += size;
+  }
+  return null;
+}
+
 function readBlockHash(value) {
   if (value === undefined || value === null || value === '') return fail('missing_block_hash');
-  return readFixed(value, 32);
+  const parsed = readFixed(value, 32);
+  if (!parsed.ok) return parsed;
+  if (isZero(parsed.bytes)) return fail('missing_block_hash');
+  return parsed;
 }
 
 function readUint(value, bits) {
@@ -257,7 +298,7 @@ function readUint(value, bits) {
   }
   if (typeof value === 'string') {
     if (value.length === 0 || value.length > 78) return fail('bad_uint');
-    if (!/^[0-9]+$/.test(value)) return fail('bad_uint');
+    if (!/^(0|[1-9][0-9]*)$/.test(value)) return fail('bad_uint');
     const parsed = BigInt(value);
     if (parsed > max) return fail('bad_range');
     return { ok: true, value: parsed };
@@ -265,23 +306,65 @@ function readUint(value, bits) {
   return fail('bad_type');
 }
 
+function uriPrefixOk(bytes) {
+  let end = bytes.length;
+  for (let i = 0; i < bytes.length; i += 1) {
+    if (bytes[i] === 0) {
+      end = i;
+      break;
+    }
+  }
+  for (let i = end; i < bytes.length; i += 1) {
+    if (bytes[i] !== 0) return false;
+  }
+  try {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, end));
+    return !text.includes('\u0000');
+  } catch {
+    return false;
+  }
+}
+
 function readUriPrefix(value) {
+  let bytes;
   if (value instanceof Uint8Array) {
     if (value.length > 256) return fail('bad_length');
     const out = new Uint8Array(256);
     out.set(value, 0);
-    return { ok: true, bytes: out };
+    bytes = out;
+  } else if (typeof value === 'string') {
+    if (value.includes('\0')) return fail('bad_uri');
+    if (value.length === 512 && /^[0-9a-fA-F]{512}$/.test(value)) {
+      if (!/^[0-9a-f]{512}$/.test(value)) return fail('bad_hex');
+      const parsed = readFixed(value, 256);
+      if (!parsed.ok) return parsed;
+      bytes = parsed.bytes;
+    } else {
+      const utf8 = new TextEncoder().encode(value);
+      if (utf8.length > 256) return fail('bad_length');
+      const out = new Uint8Array(256);
+      out.set(utf8, 0);
+      bytes = out;
+    }
+  } else {
+    return fail('bad_type');
   }
-  if (typeof value !== 'string') return fail('bad_type');
-  if (value.length === 512) {
-    if (/^[0-9a-f]{512}$/.test(value)) return readFixed(value, 256);
-    if (/^[0-9a-fA-F]{512}$/.test(value)) return fail('bad_hex');
-  }
-  const utf8 = new TextEncoder().encode(value);
-  if (utf8.length > 256) return fail('bad_length');
-  const out = new Uint8Array(256);
-  out.set(utf8, 0);
-  return { ok: true, bytes: out };
+  if (!uriPrefixOk(bytes)) return fail('bad_uri');
+  return { ok: true, bytes };
+}
+
+function checkSigma(sigma64) {
+  if (sigma64.length !== 64) return fail('bad_length');
+  const r = readBe(sigma64, 0, 32);
+  const s = readBe(sigma64, 32, 32);
+  if (r < 1n || r >= P256_N) return fail('bad_sigma');
+  if (s < 1n || s > P256_HALF_N) return fail('bad_sigma');
+  return { ok: true };
+}
+
+function checkSalts(saltP, saltC) {
+  if (isZero(saltP) || isZero(saltC) || bytesEqual(saltP, saltC)) return fail('bad_salt');
+  return { ok: true };
 }
 
 function readField(name, value, size) {
@@ -300,6 +383,8 @@ function readField(name, value, size) {
 
 function writeFields(target, base, fields, input) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return fail('bad_type');
+  const known = knownOnly(input, fields.map(([name]) => name));
+  if (!known.ok) return known;
   let at = base;
   for (const [name, size] of fields) {
     const parsed = readField(name, input[name], size);
@@ -344,6 +429,8 @@ assertSpecSizes();
  */
 export function encodeLine(parts) {
   if (parts === null || typeof parts !== 'object' || Array.isArray(parts)) return fail('bad_type');
+  const top = knownOnly(parts, ['payment', 'content', 'sigma']);
+  if (!top.ok) return top;
   const line = new Uint8Array(LINE_BYTES);
   line[0] = HEADER_BYTE_0;
   line[1] = HEADER_BYTE_1;
@@ -353,13 +440,21 @@ export function encodeLine(parts) {
   if (!content.ok) return content;
   const sigma = writeFields(line, LAYOUT.sigma, SIGMA_FIELDS, parts.sigma);
   if (!sigma.ok) return sigma;
+  const salts = checkSalts(
+    fieldSlice(line, LAYOUT.payment, PAYMENT_FIELDS, 'saltP'),
+    fieldSlice(line, LAYOUT.content, CONTENT_FIELDS, 'saltC'),
+  );
+  if (!salts.ok) return salts;
+  const sigmaOk = checkSigma(fieldSlice(line, LAYOUT.sigma, SIGMA_FIELDS, 'sigma'));
+  if (!sigmaOk.ok) return sigmaOk;
   for (let i = USED_BYTES; i < LINE_BYTES; i += 1) line[i] = 0;
   return { ok: true, line };
 }
 
 /**
- * Decode a 1,024-byte line. Non-zero pad bytes are rejected. Any 803-byte
- * body with the header is accepted; this codec does not check chain meaning.
+ * Decode a 1,024-byte line. Non-zero padding, a zero blockHash, a zero or
+ * repeated salt, a non-canonical URI prefix, and a σ outside P-256 low-S
+ * are rejected.
  * @param {Uint8Array} value
  */
 export function decodeLine(value) {
@@ -370,6 +465,17 @@ export function decodeLine(value) {
   for (let i = USED_BYTES; i < LINE_BYTES; i += 1) {
     if (line[i] !== 0) return fail('bad_padding');
   }
+  const blockHash = fieldSlice(line, LAYOUT.payment, PAYMENT_FIELDS, 'blockHash');
+  if (isZero(blockHash)) return fail('missing_block_hash');
+  const salts = checkSalts(
+    fieldSlice(line, LAYOUT.payment, PAYMENT_FIELDS, 'saltP'),
+    fieldSlice(line, LAYOUT.content, CONTENT_FIELDS, 'saltC'),
+  );
+  if (!salts.ok) return salts;
+  const prefix = fieldSlice(line, LAYOUT.content, CONTENT_FIELDS, 'uriPrefix');
+  if (!uriPrefixOk(prefix)) return fail('bad_uri');
+  const sigmaOk = checkSigma(fieldSlice(line, LAYOUT.sigma, SIGMA_FIELDS, 'sigma'));
+  if (!sigmaOk.ok) return sigmaOk;
   return {
     ok: true,
     payment: readFields(line, LAYOUT.payment, PAYMENT_FIELDS),
@@ -378,20 +484,20 @@ export function decodeLine(value) {
   };
 }
 
-function paymentIdBytes(chainId, blockHash, txIndex, logIndex) {
+function paymentIdBytes(chainId, blockHash, txIndex, localLogIndex) {
   const out = new Uint8Array(8 + 32 + 4 + 2);
   writeBe(out, 0, chainId, 8);
   out.set(blockHash, 8);
   writeBe(out, 40, txIndex, 4);
-  writeBe(out, 44, logIndex, 2);
+  writeBe(out, 44, localLogIndex, 2);
   return out;
 }
 
-function dedupBytes(chainId, txHash, logIndex) {
+function dedupBytes(chainId, txHash, localLogIndex) {
   const out = new Uint8Array(8 + 32 + 2);
   writeBe(out, 0, chainId, 8);
   out.set(txHash, 8);
-  writeBe(out, 40, logIndex, 2);
+  writeBe(out, 40, localLogIndex, 2);
   return out;
 }
 
@@ -408,15 +514,15 @@ export function canonicalPaymentId(input) {
   if (!chainId.ok) return chainId;
   const txIndex = readUint(input.txIndex, 32);
   if (!txIndex.ok) return txIndex;
-  const logIndex = readUint(input.logIndex, 16);
-  if (!logIndex.ok) return logIndex;
-  const bytes = paymentIdBytes(chainId.value, blockHash.bytes, txIndex.value, logIndex.value);
+  const localLogIndex = readUint(input.localLogIndex, 16);
+  if (!localLogIndex.ok) return localLogIndex;
+  const bytes = paymentIdBytes(chainId.value, blockHash.bytes, txIndex.value, localLogIndex.value);
   return { ok: true, bytes, hex: toHex(bytes) };
 }
 
 /**
- * Y dedup key (chainId, txHash, logIndex). blockHash is not part of this key,
- * so one Transfer under two block hashes dedups once (DS-114).
+ * Y dedup key (chainId, txHash, localLogIndex). blockHash is not part of this key,
+ * so one Transfer under two block hashes dedups once.
  * @param {object} input
  */
 export function yDedupKey(input) {
@@ -425,38 +531,39 @@ export function yDedupKey(input) {
   if (!chainId.ok) return chainId;
   const txHash = readFixed(input.txHash, 32);
   if (!txHash.ok) return txHash;
-  const logIndex = readUint(input.logIndex, 16);
-  if (!logIndex.ok) return logIndex;
-  const bytes = dedupBytes(chainId.value, txHash.bytes, logIndex.value);
+  const localLogIndex = readUint(input.localLogIndex, 16);
+  if (!localLogIndex.ok) return localLogIndex;
+  const bytes = dedupBytes(chainId.value, txHash.bytes, localLogIndex.value);
   return { ok: true, bytes, hex: toHex(bytes) };
 }
 
 function commitmentBytes(line) {
+  const lineHeader = line.slice(0, HEADER_BYTES);
   const paymentHalf = line.slice(LAYOUT.payment, LAYOUT.payment + PAYMENT_BYTES);
   const saltP = paymentHalf.slice(PAYMENT_BYTES - SALT_BYTES);
   const contentHalf = line.slice(LAYOUT.content, LAYOUT.content + CONTENT_BYTES);
   const saltC = contentHalf.slice(CONTENT_BYTES - SALT_BYTES);
   const contentBody = contentHalf.slice(0, CONTENT_BYTES - SALT_BYTES);
   const sigmaBlock = line.slice(LAYOUT.sigma, LAYOUT.sigma + SIGMA_BYTES);
-  const sigma64 = sigmaBlock.slice(1, SIGMA_BYTES);
   const p = sha256(ascii(DOMAIN_PAY), saltP, paymentHalf);
   const k = sha256(ascii(DOMAIN_CNT), saltC, contentBody);
-  const sigmaHash = sha256(sigma64);
-  const c = sha256(ascii(DOMAIN_LINE), p, k, sigmaHash);
+  const sigmaHash = sha256(sigmaBlock);
+  const c = sha256(ascii(DOMAIN_LINE), lineHeader, p, k, sigmaHash);
   const id = paymentIdBytes(
     readBe(paymentHalf, 0, 8),
     paymentHalf.slice(8, 40),
     readBe(paymentHalf, 56, 4),
     readBe(paymentHalf, 60, 2),
   );
-  const sigmaDigest = sha256(ascii(DOMAIN_SIG), id, k);
+  const sigmaDigest = sha256(ascii(DOMAIN_SIG), id, k, sigmaBlock.subarray(0, 1));
   return { p, k, c, sigmaDigest };
 }
 
 /**
  * P, K, C and the σ message hash. Accepts a 1,024-byte line or encodeLine parts.
- * P = H("pay" ‖ salt_p ‖ payment half). K = H("cnt" ‖ salt_c ‖ content without salt_c).
- * C = H("cs2" ‖ P ‖ K ‖ H(σ)) where σ is the 64-byte signature, not the alg byte.
+ * P = H("pay" ‖ salt_p ‖ payment half). salt_p is also the last 32 bytes of the half.
+ * K = H("cnt" ‖ salt_c ‖ content without salt_c).
+ * C = H("cs2" ‖ header ‖ P ‖ K ‖ H(alg ‖ σ)).
  * @param {Uint8Array | object} input
  */
 export function commitments(input) {
@@ -482,16 +589,47 @@ export function commitments(input) {
 }
 
 /**
- * σ message H("cs2-sig" ‖ payment id ‖ K). K is 32 bytes.
+ * σ message H("cs2-sig" ‖ payment id ‖ K ‖ alg). K is 32 bytes. alg is one byte.
  * @param {object} payment
  * @param {Uint8Array | string} k
+ * @param {number | bigint | string} alg
  */
-export function sigmaDigest(payment, k) {
+export function sigmaDigest(payment, k, alg) {
   const id = canonicalPaymentId(payment);
   if (!id.ok) return id;
   const key = readFixed(k, 32);
   if (!key.ok) return key;
-  const bytes = sha256(ascii(DOMAIN_SIG), id.bytes, key.bytes);
+  const algByte = readUint(alg, 8);
+  if (!algByte.ok) return algByte;
+  const algBytes = new Uint8Array(1);
+  writeBe(algBytes, 0, algByte.value, 1);
+  const bytes = sha256(ascii(DOMAIN_SIG), id.bytes, key.bytes, algBytes);
+  return { ok: true, bytes, hex: toHex(bytes) };
+}
+
+/**
+ * Authorization dedup key (chainId, token, authorizer, nonce).
+ * A zero nonce means "nonce: none" and produces no key.
+ * @param {object} input
+ */
+export function authorizationKey(input) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return fail('bad_type');
+  const known = knownOnly(input, ['chainId', 'token', 'authorizer', 'nonce']);
+  if (!known.ok) return known;
+  const chainId = readUint(input.chainId, 64);
+  if (!chainId.ok) return chainId;
+  const token = readFixed(input.token, 20);
+  if (!token.ok) return token;
+  const authorizer = readFixed(input.authorizer, 20);
+  if (!authorizer.ok) return authorizer;
+  const nonce = readFixed(input.nonce, 32);
+  if (!nonce.ok) return nonce;
+  if (isZero(nonce.bytes)) return fail('nonce_none');
+  const bytes = new Uint8Array(8 + 20 + 20 + 32);
+  writeBe(bytes, 0, chainId.value, 8);
+  bytes.set(token.bytes, 8);
+  bytes.set(authorizer.bytes, 28);
+  bytes.set(nonce.bytes, 48);
   return { ok: true, bytes, hex: toHex(bytes) };
 }
 

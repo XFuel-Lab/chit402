@@ -18,6 +18,7 @@ import {
   REASONS,
   SIGMA_BYTES,
   USED_BYTES,
+  authorizationKey,
   canonicalPaymentId,
   commitments,
   contentOffsets,
@@ -50,7 +51,7 @@ const PAYMENT_AT = [
   ['blockNumber', 40, 8],
   ['blockTime', 48, 8],
   ['txIndex', 56, 4],
-  ['logIndex', 60, 2],
+  ['localLogIndex', 60, 2],
   ['txHash', 62, 32],
   ['token', 94, 20],
   ['from', 114, 20],
@@ -109,7 +110,7 @@ function oracleLine(sample) {
   writeBe(line, base + 40, p.blockNumber, 8);
   writeBe(line, base + 48, p.blockTime, 8);
   writeBe(line, base + 56, p.txIndex, 4);
-  writeBe(line, base + 60, p.logIndex, 2);
+  writeBe(line, base + 60, p.localLogIndex, 2);
   putHex(line, base + 62, p.txHash);
   putHex(line, base + 94, p.token);
   putHex(line, base + 114, p.from);
@@ -144,10 +145,11 @@ function oracleCommit(line) {
   const content = line.subarray(273, 273 + 465);
   const saltC = content.subarray(465 - 32);
   const body = content.subarray(0, 465 - 32);
-  const sigma = line.subarray(738 + 1, 738 + 65);
+  const header = line.subarray(0, 2);
+  const sigmaBlock = line.subarray(738, 738 + 65);
   const P = sha(Buffer.from('pay'), saltP, payment);
   const K = sha(Buffer.from('cnt'), saltC, body);
-  const C = sha(Buffer.from('cs2'), P, K, sha(sigma));
+  const C = sha(Buffer.from('cs2'), header, P, K, sha(sigmaBlock));
   const id = Buffer.concat([
     payment.subarray(0, 8),
     payment.subarray(8, 40),
@@ -159,7 +161,7 @@ function oracleCommit(line) {
     payment.subarray(62, 94),
     payment.subarray(60, 62),
   ]);
-  const sig = sha(Buffer.from('cs2-sig'), id, K);
+  const sig = sha(Buffer.from('cs2-sig'), id, K, sigmaBlock.subarray(0, 1));
   return { P, K, C, id, y, sig };
 }
 
@@ -181,6 +183,10 @@ function mulberry32(seed) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return (t ^ (t >>> 14)) >>> 0;
   };
+}
+
+function partsOf(decoded) {
+  return { payment: decoded.payment, content: decoded.content, sigma: decoded.sigma };
 }
 
 function assertFail(result, reason) {
@@ -313,7 +319,7 @@ test('sample line matches an independent encoder', () => {
   assert.equal(id.bytes.length, 46);
   assert.equal(dedup.bytes.length, 42);
   assert.notEqual(id.hex, dedup.hex);
-  assert.equal(sigmaDigest(SAMPLE.payment, got.K).hex, got.hex.sigmaDigest);
+  assert.equal(sigmaDigest(SAMPLE.payment, got.K, SAMPLE.sigma.alg).hex, got.hex.sigmaDigest);
   assert.equal(commitments(SAMPLE).hex.C, got.hex.C);
 });
 
@@ -325,7 +331,7 @@ test('round trip keeps every field', () => {
   assert.equal(decoded.payment.blockNumber, 12345678n);
   assert.equal(decoded.payment.blockTime, 1700000000n);
   assert.equal(decoded.payment.txIndex, 7);
-  assert.equal(decoded.payment.logIndex, 4);
+  assert.equal(decoded.payment.localLogIndex, 4);
   assert.equal(decoded.payment.value, 1000000n);
   assert.equal(decoded.payment.method, 1);
   assert.equal(decoded.content.requestMethod, 2);
@@ -343,7 +349,7 @@ test('round trip keeps every field', () => {
   const text = Buffer.from(SAMPLE.content.uriPrefix, 'utf8');
   assert.deepEqual(prefix.subarray(0, text.length), text);
   assert.ok(prefix.subarray(text.length).every((byte) => byte === 0));
-  const again = encodeLine(decoded);
+  const again = encodeLine(partsOf(decoded));
   assert.deepEqual(Buffer.from(again.line), Buffer.from(encoded.line));
   const id = canonicalPaymentId(decoded.payment);
   assert.equal(id.hex, canonicalPaymentId(SAMPLE.payment).hex);
@@ -377,7 +383,7 @@ test('changing one half changes only its commitment', () => {
   assert.notEqual(saltC.hex.K, base.hex.K);
   const sig = commitments({
     ...SAMPLE,
-    sigma: { ...SAMPLE.sigma, sigma: 'de'.repeat(64) },
+    sigma: { ...SAMPLE.sigma, sigma: `${'00'.repeat(31)}02${'00'.repeat(31)}02` },
   });
   assert.equal(sig.hex.P, base.hex.P);
   assert.equal(sig.hex.K, base.hex.K);
@@ -388,7 +394,8 @@ test('changing one half changes only its commitment', () => {
   });
   assert.equal(alg.hex.P, base.hex.P);
   assert.equal(alg.hex.K, base.hex.K);
-  assert.equal(alg.hex.C, base.hex.C);
+  assert.notEqual(alg.hex.C, base.hex.C);
+  assert.notEqual(alg.hex.sigmaDigest, base.hex.sigmaDigest);
   assert.notEqual(hex(encodeLine({ ...SAMPLE, sigma: { ...SAMPLE.sigma, alg: 2 } }).line), hex(encodeLine(SAMPLE).line));
 });
 
@@ -404,15 +411,13 @@ test('a payment id missing blockHash is rejected', () => {
   assertFail(commitments({ ...SAMPLE, payment: rest }), 'missing_block_hash');
   assertFail(sigmaDigest(rest, Buffer.alloc(32)), 'missing_block_hash');
   const zeros = '00'.repeat(32);
-  const present = canonicalPaymentId({ ...SAMPLE.payment, blockHash: zeros });
-  assert.equal(present.ok, true);
-  assert.equal(present.hex.slice(16, 80), zeros);
-  const presentBytes = canonicalPaymentId({ ...SAMPLE.payment, blockHash: new Uint8Array(32) });
-  assert.equal(presentBytes.ok, true);
-  assert.equal(presentBytes.hex, present.hex);
-  const encoded = encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, blockHash: zeros } });
-  assert.equal(encoded.ok, true);
-  assert.equal(decodeLine(encoded.line).ok, true);
+  assertFail(canonicalPaymentId({ ...SAMPLE.payment, blockHash: zeros }), 'missing_block_hash');
+  assertFail(canonicalPaymentId({ ...SAMPLE.payment, blockHash: new Uint8Array(32) }), 'missing_block_hash');
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, blockHash: zeros } }), 'missing_block_hash');
+  const crafted = Uint8Array.from(encodeLine(SAMPLE).line);
+  crafted.fill(0, 10, 42);
+  assertFail(decodeLine(crafted), 'missing_block_hash');
+  assertFail(commitments(crafted), 'missing_block_hash');
 });
 
 test('the dedup key ignores blockHash and the payment id ignores txHash', () => {
@@ -423,13 +428,14 @@ test('the dedup key ignores blockHash and the payment id ignores txHash', () => 
   const y1 = yDedupKey(SAMPLE.payment);
   const y2 = yDedupKey({ ...SAMPLE.payment, blockHash: otherHash });
   assert.equal(y1.hex, y2.hex);
-  const y3 = yDedupKey({ chainId: 8453, txHash: SAMPLE.payment.txHash, logIndex: 4 });
+  const y3 = yDedupKey({ chainId: 8453, txHash: SAMPLE.payment.txHash, localLogIndex: 4 });
   assert.equal(y3.hex, y1.hex);
   const moved = yDedupKey({ ...SAMPLE.payment, txHash: otherHash });
   assert.notEqual(moved.hex, y1.hex);
   assert.equal(canonicalPaymentId({ ...SAMPLE.payment, txHash: otherHash }).hex, a.hex);
-  assertFail(yDedupKey({ chainId: 8453, blockHash: SAMPLE.payment.blockHash, logIndex: 4 }), 'bad_type');
-  assertFail(yDedupKey({ chainId: 8453, txHash: '', logIndex: 4 }), 'bad_hex');
+  assertFail(yDedupKey({ chainId: 8453, blockHash: SAMPLE.payment.blockHash, localLogIndex: 4 }), 'bad_type');
+  assertFail(yDedupKey({ chainId: 8453, txHash: '', localLogIndex: 4 }), 'bad_hex');
+  assertFail(canonicalPaymentId({ ...SAMPLE.payment, logIndex: 4, localLogIndex: undefined }), 'bad_type');
 });
 
 test('non-zero padding is rejected and data bytes still decode', () => {
@@ -447,16 +453,17 @@ test('non-zero padding is rejected and data bytes still decode', () => {
   flipped[100] ^= 0xff;
   const decoded = decodeLine(flipped);
   assert.equal(decoded.ok, true);
-  assert.deepEqual(Buffer.from(encodeLine(decoded).line), Buffer.from(flipped));
+  assert.deepEqual(Buffer.from(encodeLine(partsOf(decoded)).line), Buffer.from(flipped));
   for (let i = 0; i < LINE_BYTES; i += 1) {
     const next = line.slice();
     next[i] ^= 0xff;
     const result = decodeLine(next);
     if (i < 2) assertFail(result, 'bad_header');
     else if (i >= 803) assertFail(result, 'bad_padding');
-    else {
-      assert.equal(result.ok, true, `data byte ${i}`);
-      assert.deepEqual(Buffer.from(encodeLine(result).line), Buffer.from(next));
+    else if (!result.ok) {
+      assert.ok(['missing_block_hash', 'bad_salt', 'bad_uri', 'bad_sigma'].includes(result.reason), `${i} ${result.reason}`);
+    } else {
+      assert.deepEqual(Buffer.from(encodeLine(partsOf(result)).line), Buffer.from(next));
     }
   }
 });
@@ -501,15 +508,16 @@ test('integer width, endianness, and -0 are enforced', () => {
   const topLine = encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, value: top } });
   assert.equal(topLine.line[2 + 154], 0x80);
   assert.equal(decodeLine(topLine.line).payment.value, top);
-  assert.equal(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, logIndex: 65535 } }).ok, true);
-  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, logIndex: 65536 } }), 'bad_range');
+  assert.equal(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, localLogIndex: 65535 } }).ok, true);
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, localLogIndex: 65536 } }), 'bad_range');
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, localLogIndex: '65536' } }), 'bad_range');
   assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, txIndex: 4294967296 } }), 'bad_range');
   assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, txIndex: -1 } }), 'bad_range');
   assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, chainId: -0 } }), 'bad_range');
   assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, chainId: 1.5 } }), 'bad_uint');
   assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, value: 1n << 256n } }), 'bad_range');
   assertFail(canonicalPaymentId({ ...SAMPLE.payment, chainId: -0 }), 'bad_range');
-  assertFail(canonicalPaymentId({ ...SAMPLE.payment, logIndex: -1 }), 'bad_range');
+  assertFail(canonicalPaymentId({ ...SAMPLE.payment, localLogIndex: -1 }), 'bad_range');
   const zeroNonce = encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, nonce: '00'.repeat(32) } });
   assert.equal(zeroNonce.ok, true);
   assert.ok(zeroNonce.line.subarray(2 + 207, 2 + 239).every((byte) => byte === 0));
@@ -535,9 +543,7 @@ test('hex is lowercase and unprefixed; text prefixes are UTF-8', () => {
   const raw = new Uint8Array(256);
   raw[0] = 0x00;
   raw[1] = 0xff;
-  const opaque = encodeLine({ ...SAMPLE, content: { ...SAMPLE.content, uriPrefix: raw } });
-  assert.equal(opaque.line[at], 0x00);
-  assert.equal(opaque.line[at + 1], 0xff);
+  assertFail(encodeLine({ ...SAMPLE, content: { ...SAMPLE.content, uriPrefix: raw } }), 'bad_uri');
   const upperPrefix = 'AB'.repeat(256);
   assertFail(encodeLine({ ...SAMPLE, content: { ...SAMPLE.content, uriPrefix: upperPrefix } }), 'bad_hex');
 });
@@ -568,7 +574,7 @@ test('fuzz decode never throws and only returns known reasons', () => {
       assert.deepEqual(Object.keys(result).sort(), ['ok', 'reason']);
       continue;
     }
-    const again = encodeLine(result);
+    const again = encodeLine(partsOf(result));
     assert.equal(again.ok, true);
     assert.deepEqual(Buffer.from(again.line), Buffer.from(buf));
   }
@@ -578,19 +584,94 @@ test('fuzz decode never throws and only returns known reasons', () => {
     line[1] = 0x32;
     for (let i = 2; i < 803; i += 1) line[i] = next() & 0xff;
     const decoded = decodeLine(line);
-    assert.equal(decoded.ok, true);
-    assert.deepEqual(Buffer.from(encodeLine(decoded).line), Buffer.from(line));
-    assert.equal(commitments(line).ok, true);
-    assert.doesNotThrow(() => canonicalPaymentId(decoded.payment));
-    assert.doesNotThrow(() => yDedupKey(decoded.payment));
+    if (!decoded.ok) assert.ok(REASONS.includes(decoded.reason));
+    else assert.deepEqual(Buffer.from(encodeLine(partsOf(decoded)).line), Buffer.from(line));
     assert.doesNotThrow(() => slotKey({ kind: next() & 0xff, chainId: next(), id: line.subarray(0, next() % 40) }));
     assert.doesNotThrow(() => emptyHash((next() % 80) - 5));
   }
 });
 
+test('salts, URI prefix, low-S, canonical integers, and the authorization key', () => {
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, saltP: '00'.repeat(32) } }), 'bad_salt');
+  assertFail(encodeLine({ ...SAMPLE, content: { ...SAMPLE.content, saltC: '00'.repeat(32) } }), 'bad_salt');
+  assertFail(encodeLine({
+    ...SAMPLE,
+    payment: { ...SAMPLE.payment, saltP: '55'.repeat(32) },
+    content: { ...SAMPLE.content, saltC: '55'.repeat(32) },
+  }), 'bad_salt');
+  const reused = Uint8Array.from(encodeLine(SAMPLE).line);
+  reused.set(reused.subarray(2 + 239, 2 + 271), 273 + 433);
+  assertFail(decodeLine(reused), 'bad_salt');
+
+  assertFail(encodeLine({ ...SAMPLE, content: { ...SAMPLE.content, uriPrefix: `${SAMPLE.content.uriPrefix}\0` } }), 'bad_uri');
+  const nulled = Uint8Array.from(encodeLine(SAMPLE).line);
+  nulled[273 + 113 + SAMPLE.content.uriPrefix.length] = 0;
+  nulled[273 + 113 + SAMPLE.content.uriPrefix.length + 1] = 1;
+  assertFail(decodeLine(nulled), 'bad_uri');
+  const badUtf8 = Uint8Array.from(encodeLine(SAMPLE).line);
+  badUtf8[273 + 113] = 0xff;
+  assertFail(decodeLine(badUtf8), 'bad_uri');
+
+  const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+  const half = P256_N >> 1n;
+  function sigmaOf(r, s) {
+    const raw = Buffer.alloc(64);
+    writeBe(raw, 0, r, 32);
+    writeBe(raw, 32, s, 32);
+    return raw.toString('hex');
+  }
+  assert.equal(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(1n, half) } }).ok, true);
+  assertFail(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(1n, half + 1n) } }), 'bad_sigma');
+  assertFail(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(0n, 1n) } }), 'bad_sigma');
+  assertFail(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(P256_N, 1n) } }), 'bad_sigma');
+  assertFail(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: 'ff'.repeat(64) } }), 'bad_sigma');
+
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, chainId: '0001000000' } }), 'bad_uint');
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, chainId: '0x2105' } }), 'bad_uint');
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, chainId: 'ff' } }), 'bad_uint');
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, value: '1e2' } }), 'bad_uint');
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, chainId: '18446744073709551616' } }), 'bad_range');
+  const wideChain = new Uint8Array(9);
+  wideChain.set(Buffer.from(SPEC_CHAIN_HEX, 'hex'), 0);
+  wideChain[8] = 0xff;
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, chainId: wideChain } }), 'bad_length');
+  assertFail(encodeLine({ ...SAMPLE, payment: { ...SAMPLE.payment, extra: 1 } }), 'unknown_field');
+  assertFail(encodeLine({ ...SAMPLE, note: true }), 'unknown_field');
+
+  const auth = authorizationKey({
+    chainId: SAMPLE.payment.chainId,
+    token: SAMPLE.payment.token,
+    authorizer: SAMPLE.payment.authorizer,
+    nonce: SAMPLE.payment.nonce,
+  });
+  assert.equal(auth.ok, true);
+  assert.equal(auth.bytes.length, 80);
+  const authAgain = authorizationKey({
+    chainId: SAMPLE.payment.chainId,
+    token: SAMPLE.payment.token,
+    authorizer: SAMPLE.payment.authorizer,
+    nonce: SAMPLE.payment.nonce,
+    blockHash: SAMPLE.payment.blockHash,
+  });
+  assertFail(authAgain, 'unknown_field');
+  assertFail(authorizationKey({
+    chainId: 8453,
+    token: SAMPLE.payment.token,
+    authorizer: SAMPLE.payment.authorizer,
+    nonce: '00'.repeat(32),
+  }), 'nonce_none');
+  const otherNonce = authorizationKey({
+    chainId: 8453,
+    token: SAMPLE.payment.token,
+    authorizer: SAMPLE.payment.authorizer,
+    nonce: '45'.repeat(32),
+  });
+  assert.notEqual(otherNonce.hex, auth.hex);
+});
+
 test('the committed vector file matches the spec and the codec', () => {
-  const text = readFileSync(VECTOR_PATH, 'utf8');
-  assert.equal(text, renderLineJson());
+  const text = readFileSync(VECTOR_PATH, 'utf8').replace(/\r\n/g, '\n');
+  assert.equal(text, renderLineJson().replace(/\r\n/g, '\n'));
   const vector = JSON.parse(text);
   assert.equal(vector.schema, 'chit402.cs2.line.v1');
   assert.equal(vector.header_hex, '6332');
@@ -617,4 +698,22 @@ test('the committed vector file matches the spec and the codec', () => {
   assert.equal(vector.hash_domains.empty[0].hash_hex, hex(empty0));
   assert.equal(vector.hash_domains.empty[1].hash_hex, hex(sha(Buffer.from([0x01]), empty0, empty0)));
   assert.equal(toHex(oracle), vector.line.line_hex);
+  assert.equal(vector.multi_log.tx_index, 2);
+  assert.equal(vector.multi_log.local_log_index, 9);
+  assert.equal(vector.multi_log.tx_index_hex, '00000002');
+  assert.equal(vector.multi_log.local_log_index_hex, '0009');
+  assert.equal(vector.max_line.local_log_index, 65535);
+  assert.equal(encodeLine(vector.max_line.parts).ok, true);
+  const expectReason = {
+    'bad-padding': 'bad_padding',
+    'bad-header': 'bad_header',
+    'zero-block-hash': 'missing_block_hash',
+    'short-line': 'bad_length',
+  };
+  for (const row of vector.negatives) {
+    assert.equal(row.reason, expectReason[row.id]);
+    assert.equal(decodeLine(Uint8Array.from(Buffer.from(row.line_hex, 'hex'))).reason, row.reason);
+  }
+  assert.match(vector.notes.local_log_index, /not the RPC block logIndex/);
+  assert.match(vector.notes.P_salt, /last 32 bytes/);
 });
