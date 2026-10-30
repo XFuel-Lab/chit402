@@ -1,6 +1,8 @@
-# ChitAnchor Sepolia v0. Compiler settings match hardhat.config.cjs for 0.8.24
-# (via IR, optimizer 200). evm_version is solc 0.8.24's default, which is what
-# Hardhat uses when the config does not set one.
+# ChitAnchor on Base Sepolia, v0.
+# Compiler profile, shared with deploy/chit-simple/sepolia-pack/foundry.toml:
+# solc 0.8.24, via IR, optimizer 200, Cancun.
+# bytecode_hash none and cbor_metadata false keep the runtime code hash
+# independent of the checkout path.
 [profile.default]
 src = "../../contracts/chit-simple"
 test = "t"
@@ -11,7 +13,8 @@ via_ir = true
 optimizer = true
 optimizer_runs = 200
 evm_version = "cancun"
-ffi = true
+bytecode_hash = "none"
+cbor_metadata = false
 remappings = ["chit-simple/=../../contracts/chit-simple/"]
 fs_permissions = [
   { access = "read", path = "../../contracts/chit-simple" },

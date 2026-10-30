@@ -1,10 +1,10 @@
 {
-  "about": "ChitAnchor Sepolia v0. Run from the repo root: node scripts/mutants/run-mutants.mjs . --list test/chit-simple/mutants.json --timeout-sec 180. Score is KILLED / (KILLED + SURVIVED). forge must be on PATH. The suite skips the invariant fuzz so each mutant stays on the unit and vector tests.",
+  "about": "ChitAnchor on Base Sepolia, v0. Run from the repo root: node scripts/mutants/run-mutants.mjs . --list test/chit-simple/mutants.json --timeout-sec 180. Score is KILLED / (KILLED + SURVIVED). forge and node must be on PATH. The suite runs pretest.sh, then forge test without the invariant fuzz.",
   "timeoutSec": 180,
   "suites": {
     "anchor": {
       "cwd": "test/chit-simple",
-      "argv": ["forge", "test", "--offline", "--no-match-contract", "Invariant"],
+      "argv": ["sh", "-c", "sh pretest.sh && forge test --offline --no-match-contract Invariant"],
       "env": {
         "FOUNDRY_DISABLE_NIGHTLY_WARNING": "1"
       }

@@ -1,6 +1,5 @@
 {
   "schema": "chit402.cs2.chit-anchor-abi.v0",
-  "ds": "139",
   "anchored": {
     "event": "Anchored(uint64 indexed epoch, uint64 indexed hourStart, uint64 size, bytes32 root, bytes32 stateRoot, uint8 kind)",
     "signature": "Anchored(uint64,uint64,uint64,bytes32,bytes32,uint8)",
@@ -10,7 +9,7 @@
     "data_words": 4,
     "kind_hourly": 0,
     "kind_v0": 0,
-    "note": "Frozen DS-139. v0 emits kind 0 only. Readers fetch by topic0 plus the indexed epoch and hourStart. topic0 is keccak256 of the canonical signature."
+    "note": "Frozen event shape. v0 emits kind 0 only. Readers fetch by topic0 plus the indexed epoch and hourStart. topic0 is keccak256 of the canonical signature."
   },
   "checkpoint_key_rotated": {
     "event": "CheckpointKeyRotated(uint64 version, address oldAddr, address newAddr)",

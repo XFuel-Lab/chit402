@@ -1,6 +1,6 @@
-# ChitAnchor ABI (Sepolia v0)
+# ChitAnchor ABI (Base Sepolia v0)
 
-Frozen for P0-7. The Anchored event is DS-139. v0 emits `kind = 0` only. This file and `vectors/anchored-topic0.json` are the ABI spec. The owner deploys from `deploy/chit-simple/sepolia-pack/`. Nothing here is a proxy.
+Frozen for P0-7. v0 emits `kind = 0` only. This file and `vectors/anchored-topic0.json` are the ABI spec. The owner deploys from `deploy/chit-simple/sepolia-pack/`. Nothing here is a proxy.
 
 Solidity `0.8.24`, via IR, optimizer 200 runs. No `delegatecall`, `selfdestruct`, owner, or payable path.
 
@@ -33,7 +33,7 @@ Checks, in order:
 | 3 | `epoch == stored epoch + 1` | `BadEpoch()` |
 | 4 | `hourStart % 3600 == 0` | `BadHour()` |
 | 5 | `hourStart > stored hourStart` | `HourNotIncreasing()` |
-| 6 | `hourStart + 3600 <= block.timestamp` (finished hour, DS-140) | `HourNotFinished()` |
+| 6 | `hourStart + 3600 <= block.timestamp` (finished hour) | `HourNotFinished()` |
 | 7 | `size > stored size` | `SizeNotIncreasing()` |
 | 8 | RFC 9162 consistency of `(stored size, stored root)` to `(size, root)`, genesis when stored size is 0 | `BadConsistency()` |
 
@@ -49,7 +49,7 @@ Genesis (stored size 0) accepts an empty proof once. The stored root starts as t
 rotateCheckpointKey(address newAddr, uint64 version)
 ```
 
-v0 authorization is the current checkpoint address (the 2-of-3 controller signatures are the later full surface). Checks:
+In v0 on Base Sepolia, `rotateCheckpointKey` is authorized by the checkpoint key alone, so a rotation is not a trust event. The 2-of-3 secp256k1 controller path (SIMPLE §S6) is required before any mainnet deploy. This PR does not add that path. Checks:
 
 | Check | Error |
 |---|---|

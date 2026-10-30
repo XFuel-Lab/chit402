@@ -4,7 +4,7 @@ pragma solidity 0.8.24;
 import {Rfc9162} from "./Rfc9162.sol";
 
 /// @title ChitAnchor
-/// @notice Sepolia v0 hourly log anchor. The checkpoint address is the only
+/// @notice Base Sepolia v0 hourly log anchor. The checkpoint address is the only
 ///         sender. A finished hour is one whose whole 3600 seconds are already
 ///         in the past. Kind 0 is the only kind this deployment emits.
 contract ChitAnchor {

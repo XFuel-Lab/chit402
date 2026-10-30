@@ -29,7 +29,6 @@ interface Vm {
     function readFileBinary(string calldata path) external view returns (bytes memory);
     function parseJsonString(string calldata json, string calldata key) external pure returns (string memory);
     function parseJsonUint(string calldata json, string calldata key) external pure returns (uint256);
-    function ffi(string[] calldata commandInput) external returns (bytes memory);
     function toString(uint256) external pure returns (string memory);
 }
 

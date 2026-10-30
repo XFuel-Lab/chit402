@@ -136,12 +136,7 @@ contract Rfc9162VectorTest is Test {
         revert("pair missing");
     }
 
-    function _load() private returns (bytes memory) {
-        string[] memory cmd = new string[](3);
-        cmd[0] = "node";
-        cmd[1] = "pack-consistency.mjs";
-        cmd[2] = "cache/consistency.bin";
-        vm.ffi(cmd);
+    function _load() private view returns (bytes memory) {
         return vm.readFileBinary("cache/consistency.bin");
     }
 

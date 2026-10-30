@@ -165,7 +165,8 @@ contract Handler {
         try anchor.anchor(dom, ep + 1, hour, uint64(all.length), newRoot, state, proof) {} catch {}
     }
 
-    function stranger(address who, bytes32 leaf, bytes32 state) external {
+    /// @dev A third party is any sender other than the current checkpoint.
+    function thirdParty(address who, bytes32 leaf, bytes32 state) external {
         if (who == anchor.checkpoint()) return;
         (uint64 ep, uint64 hour0, uint64 sz,,) = anchor.latest();
         if (leaves.length >= CAP || uint256(sz) != leaves.length) return;
@@ -202,7 +203,8 @@ contract Handler {
         expectedCheckpoint = next;
     }
 
-    function rotateStranger(address who, uint96 salt) external {
+    /// @dev A third party cannot rotate the checkpoint key.
+    function rotateThirdParty(address who, uint96 salt) external {
         if (who == anchor.checkpoint()) return;
         address next = address(uint160(uint256(keccak256(abi.encodePacked(salt, who)))));
         if (next == address(0) || next == anchor.checkpoint()) return;

@@ -399,8 +399,31 @@ contract ChitAnchorTest is Test {
         string memory gotHash = string.concat("0x", _hex(keccak256(address(deployed).code)));
         if (keccak256(bytes(gotAddr)) != keccak256(bytes(wantAddr))) revert(gotAddr);
         if (keccak256(bytes(gotHash)) != keccak256(bytes(wantHash))) revert(gotHash);
+        string memory preview = vm.readFile("cache/pack-preview.txt");
+        assertTrue(_has(preview, gotAddr), "pack address");
+        assertTrue(_has(preview, gotHash), "pack hash");
         assertEq(vm.parseJsonUint(json, ".example.chainId"), 84532, "chain");
         assertEq(vm.parseJsonUint(json, ".example.nonce"), 0, "nonce");
+        assertEq(vm.parseJsonString(json, ".bytecodeHash"), "none", "bytecode hash");
+        assertEq(vm.parseJsonString(json, ".evmVersion"), "cancun", "cancun");
+    }
+
+    function test_pack_has_no_key_on_argv() public view {
+        string memory flag = string.concat("--private-", "key");
+        string memory envName = string.concat("PRIVATE_", "KEY");
+        string memory root = "../../deploy/chit-simple/sepolia-pack/";
+        _noKey(string.concat(root, "README.md"), flag, envName);
+        _noKey(string.concat(root, "DeployChitAnchor.s.sol"), flag, envName);
+        _noKey(string.concat(root, "print-runtime.mjs"), flag, envName);
+        _noKey(string.concat(root, "foundry.toml"), flag, envName);
+        _noKey(string.concat(root, "constructor-args.json"), flag, envName);
+        _noKey(string.concat(root, "expected-runtime.json"), flag, envName);
+    }
+
+    function _noKey(string memory path, string memory flag, string memory envName) private view {
+        string memory text = vm.readFile(path);
+        assertFalse(_has(text, flag), path);
+        assertFalse(_has(text, envName), path);
     }
 
     function test_gas_anchor_genesis() public {
