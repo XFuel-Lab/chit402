@@ -122,7 +122,7 @@ import { assertReceiptPolicyBoot, writeReceiptPolicyHistory } from './receipt-po
 import { VERIFIER_MIN, VERIFIER_MIN_HEADER, receiptPolicyAdvisory, withVerifierAdvisory } from './verifier-min.js';
 import { writeAnchorWallets } from './anchor-wallets.js';
 import { receiptLaneForEntry } from './receipt-lane.js';
-import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook } from './agent-book.js';
+import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook, BOOK_POSSESSION_REQUIRED_BODY } from './agent-book.js';
 import { privateNoStore } from './private-read.js';
 import { coverageForLedger } from './export-coverage.js';
 import {
@@ -1026,6 +1026,50 @@ function receiptOwnsTx(tx, { receipt, task, ledgerRow } = {}) {
 }
 
 // ─── Express App Factory ─────────────────────────────────────────────────────
+
+/** POST-only book subroutes. GET and HEAD on these paths are 405. */
+export const BOOK_POST_ONLY_SUBROUTES = Object.freeze([
+  '/v1/agents/:agent_id/book/inflow',
+  '/v1/agents/:agent_id/book/inflow/correct',
+  '/v1/agents/:agent_id/book/ingest',
+  '/v1/agents/:agent_id/book/escrow',
+  '/v1/agents/:agent_id/book/rotate',
+]);
+
+const BOOK_METHOD_NOT_ALLOWED_BODY = '{"error":"method_not_allowed"}';
+
+/**
+ * Exact path match for one book pattern. A leading `*` segment consumes the
+ * rest of the path. The shipped patterns have no `*` segment.
+ * @param {string} pattern
+ * @param {string} pathname
+ */
+export function bookPostOnlyPatternMatches(pattern, pathname) {
+  const pSegs = String(pattern).split('/').filter(Boolean);
+  const aSegs = String(pathname || '').split('?')[0].split('/').filter(Boolean);
+  let ai = 0;
+  for (let pi = 0; pi < pSegs.length; pi++) {
+    const part = pSegs[pi];
+    if (part.startsWith('*')) {
+      return ai < aSegs.length && pi === pSegs.length - 1;
+    }
+    if (ai >= aSegs.length) return false;
+    if (part.startsWith(':')) {
+      if (!aSegs[ai]) return false;
+      ai += 1;
+      continue;
+    }
+    if (part !== aSegs[ai]) return false;
+    ai += 1;
+  }
+  return ai === aSegs.length;
+}
+
+/** True when pathname is one of BOOK_POST_ONLY_SUBROUTES. */
+export function requestHitsBookPostOnlySubroute(pathname) {
+  const path = String(pathname || '').split('?')[0];
+  return BOOK_POST_ONLY_SUBROUTES.some((pattern) => bookPostOnlyPatternMatches(pattern, path));
+}
 
 /**
  * Build and return a configured Express app.
@@ -4936,6 +4980,33 @@ export async function createApp() {
     }
   });
 
+  function bookPostOnlyMethodGuard(req, res, next) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    if (!requestHitsBookPostOnlySubroute(req.path)) return next();
+    res.set('Allow', 'POST');
+    res.set('Cache-Control', 'private, no-store');
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.status(405);
+    if (req.method === 'HEAD') {
+      res.set('Content-Length', '0');
+      return res.end();
+    }
+    res.set('Content-Length', String(Buffer.byteLength(BOOK_METHOD_NOT_ALLOWED_BODY)));
+    return res.end(BOOK_METHOD_NOT_ALLOWED_BODY);
+  }
+
+  function sendBookPossessionRequired(req, res, body) {
+    // The hint is a fixed constant. req is accepted so a body cannot be built
+    // from the request without an edit at this function.
+    void req;
+    const payload = JSON.stringify(body);
+    res.status(401);
+    res.set('Content-Type', 'application/json; charset=utf-8');
+    res.set('Cache-Control', 'private, no-store');
+    res.set('Content-Length', String(Buffer.byteLength(payload)));
+    return res.end(payload);
+  }
+
   async function sendAgentBook(req, res) {
     try {
       const claim = claimFromRequest(req);
@@ -4945,6 +5016,7 @@ export async function createApp() {
           verify: verifyBook,
         });
         if (set.status !== 200) {
+          if (set.status === 401) return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);
           return res.status(set.status).end();
         }
       }
@@ -4957,6 +5029,7 @@ export async function createApp() {
           : null,
       });
       if (result.body == null) {
+        if (result.status === 401) return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);
         return res.status(result.status).end();
       }
       return res.status(result.status).json(result.body);
@@ -5236,7 +5309,7 @@ export async function createApp() {
       const session = claim.session;
       const proof = claim.proof;
       if (!session && !proof) {
-        return res.status(401).end();
+        return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);
       }
 
       const id = Number(req.params.agent_id);
@@ -5287,7 +5360,7 @@ export async function createApp() {
       const session = claim.session || body.session;
       const proof = claim.proof || body.proof;
       if (!session && !proof) {
-        return res.status(401).end();
+        return sendBookPossessionRequired(req, res, BOOK_POSSESSION_REQUIRED_BODY);
       }
 
       const id = Number(req.params.agent_id);
@@ -5934,6 +6007,8 @@ export async function createApp() {
     publicBaseUrl: config.service.publicBaseUrl,
     publicHosts: config.service.publicHosts,
   });
+
+  app.use(bookPostOnlyMethodGuard);
 
   // ── 404 fallback ────────────────────────────────────────────────────────
 

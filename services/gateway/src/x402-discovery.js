@@ -724,6 +724,28 @@ const BOOK_WEBHOOK_ENVELOPE_SCHEMA = {
   },
 };
 
+const BOOK_POST_ONLY_405 = {
+  description: 'GET or HEAD on this POST-only path. Allow is POST. Body is {"error":"method_not_allowed"}.',
+  headers: {
+    Allow: {
+      schema: { type: 'string', enum: ['POST'] },
+      description: 'POST',
+    },
+  },
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['error'],
+        properties: {
+          error: { const: 'method_not_allowed' },
+        },
+      },
+    },
+  },
+};
+
 const AGENTS_BOOK_OP = {
   operationId: 'getAgentBook',
   summary: 'Possession-gated agent spend book',
@@ -732,7 +754,10 @@ const AGENTS_BOOK_OP = {
     + 'and remaining under a prepaid ceiling. Possession-gated: '
     + 'present the register session or HMAC over agent_id + window. '
     + 'POST with { session, budget } sets Y (null = unlimited). '
-    + 'Unauth or wrong proof returns 401/403 with an empty body. '
+    + 'No session and no proof returns 401 JSON: error possession_required, '
+    + 'message is Send your Chit402 book session from POST /v1/agents/register, '
+    + 'and docs https://www.chit402.com/docs/private-spend. '
+    + 'Wrong proof or an unknown agent_id returns 403 with no JSON body. '
     + 'Not a public index. Only collected rows appear. '
     + 'This route is not the paid door — that stays POST /v1/chat/completions.',
   tags: ['Agents'],
@@ -763,7 +788,26 @@ const AGENTS_BOOK_OP = {
         'application/json': { schema: AGENTS_BOOK_OUTPUT_SCHEMA },
       },
     },
-    401: { description: 'No possession proof. Empty body.' },
+    401: {
+      description:
+        'No session and no proof. JSON body error is possession_required. '
+        + 'message is Send your Chit402 book session from POST /v1/agents/register. '
+        + 'docs is https://www.chit402.com/docs/private-spend.',
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['error', 'message', 'docs'],
+            properties: {
+              error: { const: 'possession_required' },
+              message: { const: 'Send your Chit402 book session from POST /v1/agents/register' },
+              docs: { const: 'https://www.chit402.com/docs/private-spend' },
+            },
+          },
+        },
+      },
+    },
     403: { description: 'Wrong proof or unknown agent_id. Empty body.' },
   },
 };
@@ -1244,6 +1288,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or invalid inflow_claim signature.' },
             409: { description: 'Duplicate task_id.' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },
@@ -1281,6 +1326,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or invalid correction signature.' },
             404: { description: 'Inflow row not found.' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },
@@ -1327,6 +1373,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             403: { description: 'Demo key or session does not match agent_id.' },
             402: { description: 'Stamp payment required ($0.002 USDC / 2000 atomic) unless a pilot waiver key applies.' },
             409: { description: 'Duplicate transaction (replay protection).' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },
@@ -1414,7 +1461,26 @@ export function buildOpenApiSpec(baseUrl = '') {
           ],
           responses: {
             200: { description: 'CSV, JSON audit pack, or print HTML.' },
-            401: { description: 'No possession proof.' },
+            401: {
+              description:
+                'No session and no proof. JSON body error is possession_required. '
+                + 'message is Send your Chit402 book session from POST /v1/agents/register. '
+                + 'docs is https://www.chit402.com/docs/private-spend.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['error', 'message', 'docs'],
+                    properties: {
+                      error: { const: 'possession_required' },
+                      message: { const: 'Send your Chit402 book session from POST /v1/agents/register' },
+                      docs: { const: 'https://www.chit402.com/docs/private-spend' },
+                    },
+                  },
+                },
+              },
+            },
             403: { description: 'Wrong proof or unknown agent_id.' },
           },
         },
@@ -1440,7 +1506,26 @@ export function buildOpenApiSpec(baseUrl = '') {
           },
           responses: {
             200: { description: 'CSV, JSON audit pack, or print HTML.' },
-            401: { description: 'No possession proof.' },
+            401: {
+              description:
+                'No session and no proof. JSON body error is possession_required. '
+                + 'message is Send your Chit402 book session from POST /v1/agents/register. '
+                + 'docs is https://www.chit402.com/docs/private-spend.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['error', 'message', 'docs'],
+                    properties: {
+                      error: { const: 'possession_required' },
+                      message: { const: 'Send your Chit402 book session from POST /v1/agents/register' },
+                      docs: { const: 'https://www.chit402.com/docs/private-spend' },
+                    },
+                  },
+                },
+              },
+            },
             403: { description: 'Wrong proof or unknown agent_id.' },
           },
         },
@@ -1644,6 +1729,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or wrong proof.' },
             404: { description: 'Escrow not found.' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },
@@ -1828,6 +1914,7 @@ export function buildOpenApiSpec(baseUrl = '') {
             400: { description: 'Session mismatch.' },
             401: { description: 'No possession proof.' },
             403: { description: 'Demo key or wrong proof.' },
+            405: BOOK_POST_ONLY_405,
           },
         },
       },

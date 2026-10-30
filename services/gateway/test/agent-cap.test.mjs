@@ -165,7 +165,8 @@ async function settlePaid(path = '/v1/chat/completions', headers = {}) {
   return { res, body, settles: settleCount() - before };
 }
 
-test('unauth book still 401 empty', async () => {
+test('unauth book still 401 with possession hint', async () => {
+  const hint = '{"error":"possession_required","message":"Send your Chit402 book session from POST /v1/agents/register","docs":"https://www.chit402.com/docs/private-spend"}';
   const getRes = await fetch(`${base}/v1/agents/1/book`);
   const postRes = await fetch(`${base}/v1/agents/1/book`, {
     method: 'POST',
@@ -174,8 +175,8 @@ test('unauth book still 401 empty', async () => {
   });
   assert.equal(getRes.status, 401);
   assert.equal(postRes.status, 401);
-  assert.equal(await emptyBody(getRes), '');
-  assert.equal(await emptyBody(postRes), '');
+  assert.equal(await emptyBody(getRes), hint);
+  assert.equal(await emptyBody(postRes), hint);
 });
 
 test('no cap → settle + book unchanged (unlimited)', async () => {
