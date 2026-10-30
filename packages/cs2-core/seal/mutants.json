@@ -1,0 +1,269 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": ["node", "--test", "--test-concurrency=1", "packages/cs2-core/seal/seal.test.mjs"]
+  },
+  "mutants": [
+    {
+      "id": "S01_dk_label",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "const DK_LABEL = ascii('dk');",
+      "replace": "const DK_LABEL = ascii('dx');",
+      "note": "key-committing AAD uses the wrong label"
+    },
+    {
+      "id": "S02_info_domain",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "const INFO = ascii('chit402-seal-v1');",
+      "replace": "const INFO = ascii('chit402-seal-v2');",
+      "note": "HPKE info domain changed"
+    },
+    {
+      "id": "S03_leaf_label",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "const LEAF_LABEL = ascii('line');",
+      "replace": "const LEAF_LABEL = ascii('lines');",
+      "note": "leaf domain is no longer line"
+    },
+    {
+      "id": "S04_dummy_label",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "const DUMMY_LABEL = ascii('chit402-dummy-x25519-v1');",
+      "replace": "const DUMMY_LABEL = ascii('chit402-dummy-x25519-v2');",
+      "note": "dummy recipient label changed"
+    },
+    {
+      "id": "S05_zero_nonce",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "const ZERO_NONCE = new Uint8Array(12);",
+      "replace": "const ZERO_NONCE = new Uint8Array(12).fill(1);",
+      "note": "one-time nonce is no longer the zero nonce"
+    },
+    {
+      "id": "S06_slot_count",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "export const SLOT_COUNT = 2;",
+      "replace": "export const SLOT_COUNT = 1;",
+      "note": "only one recipient slot is allocated"
+    },
+    {
+      "id": "S07_slot_width",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "export const SLOT_BYTES = ENC_BYTES + DK_BYTES + TAG_BYTES;",
+      "replace": "export const SLOT_BYTES = ENC_BYTES + DK_BYTES;",
+      "note": "slot drops the AEAD tag width"
+    },
+    {
+      "id": "S08_header_second_byte",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "if (line[0] !== HEADER_BYTE_0 || line[1] !== HEADER_BYTE_1) return fail('bad_header');",
+      "replace": "if (line[0] !== HEADER_BYTE_0) return fail('bad_header');",
+      "note": "header check ignores the second byte"
+    },
+    {
+      "id": "S09_pad_check",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "if (line[i] !== 0) return fail('bad_padding');",
+      "replace": "if (false && line[i] !== 0) return fail('bad_padding');",
+      "note": "non-zero pad is accepted"
+    },
+    {
+      "id": "S10_line_length_short",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "if (line.length !== LINE_BYTES) return fail('bad_length');",
+      "replace": "if (line.length > LINE_BYTES) return fail('bad_length');",
+      "note": "a short buffer is no longer a length error"
+    },
+    {
+      "id": "S11_line_length_long",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "if (line.length !== LINE_BYTES) return fail('bad_length');",
+      "replace": "if (line.length < LINE_BYTES) return fail('bad_length');",
+      "note": "a long buffer is no longer a length error"
+    },
+    {
+      "id": "S12_open_length",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "if (sealed.length !== SEALED_BYTES) return fail('bad_length');",
+      "replace": "if (sealed.length < SEALED_BYTES) return fail('bad_length');",
+      "nth": 2,
+      "note": "open accepts a blob longer than 1,200 bytes"
+    },
+    {
+      "id": "S13_slot_aad",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "return Uint8Array.of(slot);",
+      "replace": "return Uint8Array.of(0);",
+      "note": "both slots use the same AAD, so they can be swapped"
+    },
+    {
+      "id": "S14_random_constant",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "cryptoObj.getRandomValues(out);",
+      "replace": "out.fill(7);",
+      "note": "fresh seals reuse one fixed seed"
+    },
+    {
+      "id": "S15_leaf_prefix",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "sha256(Uint8Array.of(0x00), LEAF_LABEL, commit.bytes, dkHash.bytes, ct.bytes)",
+      "replace": "sha256(Uint8Array.of(0x01), LEAF_LABEL, commit.bytes, dkHash.bytes, ct.bytes)",
+      "note": "leaf prefix is no longer 0x00"
+    },
+    {
+      "id": "S16_leaf_omits_c",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "sha256(Uint8Array.of(0x00), LEAF_LABEL, commit.bytes, dkHash.bytes, ct.bytes)",
+      "replace": "sha256(Uint8Array.of(0x00), LEAF_LABEL, dkHash.bytes, ct.bytes)",
+      "note": "leaf no longer binds C"
+    },
+    {
+      "id": "S17_return_dk",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "dkCommitment: dkHash,\n      sealedCommitment: ctHash,",
+      "replace": "dkCommitment: dkHash,\n      sealedCommitment: ctHash,\n      dk,",
+      "note": "seal result returns the data key"
+    },
+    {
+      "id": "S18_open_returns_shape",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "pt.fill(0);\n      return fail('open_failed');",
+      "replace": "pt.fill(0);\n      return shape;",
+      "note": "a bad plaintext shape is no longer a uniform open failure"
+    },
+    {
+      "id": "S19_zero_dk",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "if (isZero(dk)) return fail('bad_key');",
+      "replace": "if (false && isZero(dk)) return fail('bad_key');",
+      "note": "the all-zero data key is accepted"
+    },
+    {
+      "id": "S20_skip_second_slot",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "const slot1 = writeSlot(sealed, 1, recoveryBytes, dk, esk1);",
+      "replace": "const slot1 = { ok: true };",
+      "note": "slot 1 is left empty"
+    },
+    {
+      "id": "S21_write_slot_offset",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "const at = LINE_CT_BYTES + (slot * SLOT_BYTES);",
+      "replace": "const at = LINE_CT_BYTES;",
+      "nth": 1,
+      "note": "both wraps are written at slot 0"
+    },
+    {
+      "id": "S22_open_any_skips_slot1",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "const second = openLine(sealed, sk, 1);",
+      "replace": "const second = { ok: false, reason: 'open_failed' };",
+      "note": "openLineAny never tries the recovery slot"
+    },
+    {
+      "id": "S23_slot_index_check",
+      "file": "packages/cs2-core/seal/index.js",
+      "find": "if (slot !== 0 && slot !== 1) return fail('bad_type');",
+      "replace": "if (slot !== 0 && slot !== 1 && slot !== 2) return fail('bad_type');",
+      "note": "slot 2 is no longer rejected up front"
+    },
+    {
+      "id": "H01_aead_id",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "export const AEAD_ID = 0x0003;",
+      "replace": "export const AEAD_ID = 0x0001;",
+      "note": "suite id names AES-128-GCM instead of ChaCha20-Poly1305"
+    },
+    {
+      "id": "H02_kem_id",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "export const KEM_ID = 0x0020;",
+      "replace": "export const KEM_ID = 0x0021;",
+      "note": "KEM id is not X25519"
+    },
+    {
+      "id": "H03_kdf_id",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "export const KDF_ID = 0x0001;",
+      "replace": "export const KDF_ID = 0x0002;",
+      "note": "KDF id is not HKDF-SHA256"
+    },
+    {
+      "id": "H04_zero_dh",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!out || isZero(out)) return null;",
+      "replace": "if (!out) return null;",
+      "note": "all-zero X25519 output is accepted"
+    },
+    {
+      "id": "H05_eae_label",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "'eae_prk'",
+      "replace": "'eae_prK'",
+      "note": "KEM extract label changed"
+    },
+    {
+      "id": "H06_kem_context_order",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "kemContext = concat([pkE, pkR]);",
+      "replace": "kemContext = concat([pkR, pkE]);",
+      "note": "base kem_context swaps enc and pkR"
+    },
+    {
+      "id": "H07_decap_context_order",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "kemContext = concat([enc, pkR]);",
+      "replace": "kemContext = concat([pkR, enc]);",
+      "note": "decap kem_context swaps enc and pkR"
+    },
+    {
+      "id": "H08_auth_dh_order",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "sharedDh = concat([dhER, dhSR]);",
+      "replace": "sharedDh = concat([dhSR, dhER]);",
+      "note": "auth encap concatenates the DH shares backwards"
+    },
+    {
+      "id": "H09_psk_when_base",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (gotPsk && (mode === MODE_BASE || mode === MODE_AUTH)) return fail('bad_key');",
+      "replace": "if (false && gotPsk && (mode === MODE_BASE || mode === MODE_AUTH)) return fail('bad_key');",
+      "note": "base mode accepts a PSK"
+    },
+    {
+      "id": "H10_missing_psk",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!gotPsk && (mode === MODE_PSK || mode === MODE_AUTH_PSK)) return fail('bad_key');",
+      "replace": "if (false && !gotPsk && (mode === MODE_PSK || mode === MODE_AUTH_PSK)) return fail('bad_key');",
+      "note": "PSK mode runs with an empty PSK"
+    },
+    {
+      "id": "H11_nonce_endian",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "for (let i = out.length - 1; i >= 0; i -= 1) {",
+      "replace": "for (let i = 0; i < out.length; i += 1) {",
+      "note": "sequence number is xored from the wrong end"
+    },
+    {
+      "id": "H12_export_label",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "ctx.exporterSecret, 'sec', exporterContext, length",
+      "replace": "ctx.exporterSecret, 'export', exporterContext, length",
+      "note": "exporter label is not sec"
+    },
+    {
+      "id": "H13_base_nonce_label",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "secret, 'base_nonce', keyScheduleContext, NN",
+      "replace": "secret, 'nonce', keyScheduleContext, NN",
+      "note": "key schedule nonce label changed"
+    },
+    {
+      "id": "H14_psk_id_label",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "'psk_id_hash', pskId",
+      "replace": "'psk_id', pskId",
+      "note": "psk_id_hash label changed"
+    }
+  ]
+}
