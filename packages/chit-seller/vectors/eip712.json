@@ -1,0 +1,22 @@
+{
+  "schema": "chit402.cs2.payto-control.v1",
+  "note": "Test keys only. Two contracts on chain 84532. signature_a is uint16-be length || r || s || yParity.",
+  "mail_digest": "be609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2",
+  "domain_type": "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+  "domain_version": "13",
+  "payto_control_type": "PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)",
+  "revoke_type": "Revoke(address payTo,bytes32 keyHash)",
+  "revoke_by_key_type": "RevokeByKey(bytes32 keyHash)",
+  "book_action_type": "BookAction(bytes32 bookId,bytes32 eventHash,uint8 kind,uint64 seq,uint64 expiry)",
+  "statement_record_type": "StatementRecord(bytes32 bookId,uint64 period,uint32 version,bytes32 statementHash,uint64 expiry)",
+  "test_key": "a11ce",
+  "test_nonce_k": "b0b",
+  "payTo": "0xe05fcc23807536bee418f142d19fa0d21bb0cff7",
+  "key": "020217e617f0b6443928278f96999e69a23a4f2c152bdf6d6cdf66e5b80282d4ed",
+  "signer": "0xe05fcc23807536bee418f142d19fa0d21bb0cff7",
+  "contract_a": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "contract_b": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "digest_a": "175434b2329682e4b51a25eb6509c300d4a95bed4b8dd20f6748f4f3474dd645",
+  "digest_b": "7281fe729aaf13b32c04407c0df40270a1cf5f69de6301c32837c49034a61729",
+  "signature_a": "00415d45cb81aa765d69ca52e3869491ecf0e8fdf6a63d64e65b5213647ee4973ae5151fb01be492af2b6755042af16e263271f8f1ba287ec2f6681e0f5db92812df00"
+}

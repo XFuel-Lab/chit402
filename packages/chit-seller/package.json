@@ -1,0 +1,14 @@
+{
+  "name": "chit-seller",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Chit Simple v13 seller tooling. Signs sigma only when the on-chain payment matches the call. Not published.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test --test-reporter=tap --test-concurrency=1 seller.test.mjs",
+    "mutants": "node run-mutants.mjs"
+  }
+}

@@ -1,0 +1,255 @@
+{
+  "about": "P0-6 seller sigma signer. Run from the repo root: node packages/chit-seller/run-mutants.mjs . Score is KILLED / (KILLED + SURVIVED). The run fails below 90%.",
+  "suite": {
+    "cwd": ".",
+    "argv": ["node", "--test", "--test-concurrency=1", "packages/chit-seller/seller.test.mjs"]
+  },
+  "mutants": [
+    {
+      "id": "payer",
+      "file": "packages/chit-seller/match.mjs",
+      "find": "if (!sameAddress(observed.payer, authorization.payer)) return refuse('payer_mismatch');",
+      "replace": "if (false && !sameAddress(observed.payer, authorization.payer)) return refuse('payer_mismatch');",
+      "note": "transfer from is not checked"
+    },
+    {
+      "id": "authorizer",
+      "file": "packages/chit-seller/match.mjs",
+      "find": "if (!sameAddress(observed.authorizer, authorization.payer)) return refuse('payer_mismatch');",
+      "replace": "if (false && !sameAddress(observed.authorizer, authorization.payer)) return refuse('payer_mismatch');",
+      "note": "AuthorizationUsed authorizer is not checked"
+    },
+    {
+      "id": "payee",
+      "file": "packages/chit-seller/match.mjs",
+      "find": "if (!sameAddress(observed.payee, authorization.payee)) return refuse('payee_mismatch');",
+      "replace": "if (false && !sameAddress(observed.payee, authorization.payee)) return refuse('payee_mismatch');",
+      "note": "payee is not checked"
+    },
+    {
+      "id": "price_gt",
+      "file": "packages/chit-seller/match.mjs",
+      "find": "if (observed.price !== price) return refuse('price_mismatch');",
+      "replace": "if (observed.price > price) return refuse('price_mismatch');",
+      "note": "a smaller on-chain value still signs"
+    },
+    {
+      "id": "price_lt",
+      "file": "packages/chit-seller/match.mjs",
+      "find": "if (observed.price !== price) return refuse('price_mismatch');",
+      "replace": "if (observed.price < price) return refuse('price_mismatch');",
+      "note": "a larger on-chain value still signs"
+    },
+    {
+      "id": "token",
+      "file": "packages/chit-seller/match.mjs",
+      "find": "if (!sameAddress(observed.token, authorization.token)) return refuse('token_mismatch');",
+      "replace": "if (false && !sameAddress(observed.token, authorization.token)) return refuse('token_mismatch');",
+      "note": "token is not checked"
+    },
+    {
+      "id": "log_index_required",
+      "file": "packages/chit-seller/match.mjs",
+      "find": "if (payment.txHash == null || payment.localLogIndex == null || authorization.price == null) {",
+      "replace": "if (payment.txHash == null || authorization.price == null) {",
+      "note": "a tx hash alone is no longer ambiguous"
+    },
+    {
+      "id": "nonce_first",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (sameHex(auth.nonce, want)) {",
+      "replace": "if (true || sameHex(auth.nonce, want)) {",
+      "note": "the first AuthorizationUsed is accepted"
+    },
+    {
+      "id": "nonce_missing",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (!hit) return refuse('nonce_mismatch');",
+      "replace": "if (false && !hit) return refuse('nonce_mismatch');",
+      "note": "a missing nonce falls through"
+    },
+    {
+      "id": "payment_id",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (!id.ok) return fromCodec(id);",
+      "replace": "if (false && !id.ok) return fromCodec(id);",
+      "note": "a zero blockHash is read from the chain"
+    },
+    {
+      "id": "chain_id",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (reportedChain !== chainId) return refuse('chain_mismatch');",
+      "replace": "if (false && reportedChain !== chainId) return refuse('chain_mismatch');",
+      "note": "chain id is not checked"
+    },
+    {
+      "id": "unknown_block",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (!block || !sameHex(block.hash, blockHash)) return refuse('unknown_block');",
+      "replace": "if (false && (!block || !sameHex(block.hash, blockHash))) return refuse('unknown_block');",
+      "note": "a missing block is not refused"
+    },
+    {
+      "id": "finality_inclusive",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (block.number > head.number) return refuse('not_finalized');",
+      "replace": "if (block.number >= head.number) return refuse('not_finalized');",
+      "note": "the finalized head itself is refused"
+    },
+    {
+      "id": "finality_skipped",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (block.number > head.number) return refuse('not_finalized');",
+      "replace": "if (false && block.number > head.number) return refuse('not_finalized');",
+      "note": "a block above the head is final"
+    },
+    {
+      "id": "reorg",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (!canonical || !sameHex(canonical.hash, blockHash)) return refuse('reorged');",
+      "replace": "if (false && (!canonical || !sameHex(canonical.hash, blockHash))) return refuse('reorged');",
+      "note": "a non-canonical hash is accepted"
+    },
+    {
+      "id": "receipt_status",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (receipt.status !== 1) return refuse('bad_payment');",
+      "replace": "if (false && receipt.status !== 1) return refuse('bad_payment');",
+      "note": "a failed receipt signs"
+    },
+    {
+      "id": "receipt_block",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (!sameHex(receipt.blockHash, blockHash)) return refuse('tx_mismatch');",
+      "replace": "if (false && !sameHex(receipt.blockHash, blockHash)) return refuse('tx_mismatch');",
+      "note": "the receipt block hash is not checked"
+    },
+    {
+      "id": "receipt_index",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "if (receipt.txIndex !== txIndex) return refuse('tx_mismatch');",
+      "replace": "if (false && receipt.txIndex !== txIndex) return refuse('tx_mismatch');",
+      "note": "the receipt transaction index is not checked"
+    },
+    {
+      "id": "log_slot",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "const log = receipt.logs[Number(localLogIndex)];",
+      "replace": "const log = receipt.logs[0];",
+      "note": "the first log is used instead of the local index"
+    },
+    {
+      "id": "finalized_tag",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "const gotHead = await readCall(() => reader.getBlockByNumber('finalized'));",
+      "replace": "const gotHead = await readCall(() => reader.getBlockByNumber('latest'));",
+      "note": "finality reads latest instead of finalized"
+    },
+    {
+      "id": "rpc_by_hash",
+      "file": "packages/chit-seller/chain.mjs",
+      "find": "return rpc('eth_getBlockByHash', [`0x${hex}`, false]);",
+      "replace": "return rpc('eth_getBlockByNumber', [`0x${hex}`, false]);",
+      "note": "the payment block is loaded by number"
+    },
+    {
+      "id": "refuse_echo",
+      "file": "packages/chit-seller/reasons.mjs",
+      "find": "  return { ok: false, reason };",
+      "replace": "  return { ok: false, reason, detail: reason };",
+      "note": "a refusal carries an extra field"
+    },
+    {
+      "id": "alg",
+      "file": "packages/chit-seller/sigma.mjs",
+      "find": "if (typeof input.alg !== 'number' || !isAllowedAlg(input.alg)) return deny('bad_alg', onRefuse);",
+      "replace": "if (false && (typeof input.alg !== 'number' || !isAllowedAlg(input.alg))) return deny('bad_alg', onRefuse);",
+      "note": "a disallowed alg reads the chain"
+    },
+    {
+      "id": "duplicate_payment",
+      "file": "packages/chit-seller/sigma.mjs",
+      "find": "if (!input.store.claim(payClaim)) return deny('duplicate_sigma', onRefuse);",
+      "replace": "if (false && !input.store.claim(payClaim)) return deny('duplicate_sigma', onRefuse);",
+      "note": "the same payment id signs twice"
+    },
+    {
+      "id": "duplicate_auth",
+      "file": "packages/chit-seller/sigma.mjs",
+      "find": "if (!input.store.claim(authClaim)) {",
+      "replace": "if (false && !input.store.claim(authClaim)) {",
+      "note": "the same authorization signs a second transfer"
+    },
+    {
+      "id": "sigma_curve",
+      "file": "packages/chit-seller/sigma.mjs",
+      "find": "sig = signRawDigest(digest.bytes, d, k, P256);",
+      "replace": "sig = signRawDigest(digest.bytes, d, k, SECP256K1);",
+      "note": "sigma is signed on secp256k1"
+    },
+    {
+      "id": "domain_version",
+      "file": "packages/chit-seller/typed-data.mjs",
+      "find": "export const DOMAIN_VERSION = '13';",
+      "replace": "export const DOMAIN_VERSION = '1';",
+      "note": "the domain version is the pre-ruling value"
+    },
+    {
+      "id": "drop_verifying_contract",
+      "file": "packages/chit-seller/typed-data.mjs",
+      "find": "  Object.freeze({ name: 'verifyingContract', type: 'address' }),",
+      "replace": "  Object.freeze({ name: 'salt', type: 'bytes32' }),",
+      "note": "verifyingContract is replaced by salt"
+    },
+    {
+      "id": "signature_width",
+      "file": "packages/chit-seller/signature-field.mjs",
+      "find": "if (length !== EOA_SIGNATURE_BYTES) return refuse('bad_signature');",
+      "replace": "if (false && length !== EOA_SIGNATURE_BYTES) return refuse('bad_signature');",
+      "note": "a non-65-byte signature is accepted"
+    },
+    {
+      "id": "y_parity_legacy",
+      "file": "packages/chit-seller/eip712.mjs",
+      "find": "  const yParity = opened.bytes[64];\n  if (yParity !== 0 && yParity !== 1) return refuse('bad_signature');",
+      "replace": "  const yParity = opened.bytes[64] >= 27 ? opened.bytes[64] - 27 : opened.bytes[64];\n  if (yParity !== 0 && yParity !== 1) return refuse('bad_signature');",
+      "note": "yParity 27/28 is accepted"
+    },
+    {
+      "id": "low_s",
+      "file": "packages/chit-seller/eip712.mjs",
+      "find": "if (!isLowS(s, curve)) return refuse('bad_signature');",
+      "replace": "if (false && !isLowS(s, curve)) return refuse('bad_signature');",
+      "note": "high-S is accepted"
+    },
+    {
+      "id": "parity_byte",
+      "file": "packages/chit-seller/eip712.mjs",
+      "find": "const signature = encodeSignatureField(concat([sig.raw, Uint8Array.of(sig.yParity)]));",
+      "replace": "const signature = encodeSignatureField(concat([sig.raw, Uint8Array.of(27 + sig.yParity)]));",
+      "note": "the signature byte is 27/28"
+    },
+    {
+      "id": "payto_curve",
+      "file": "packages/chit-seller/eip712.mjs",
+      "find": "const signed = signDigest(digest.bytes, input.privateKey, input.k, SECP256K1);",
+      "nth": 1,
+      "replace": "const signed = signDigest(digest.bytes, input.privateKey, input.k, P256);",
+      "note": "PayToControl is signed on P-256"
+    },
+    {
+      "id": "retire_inclusive",
+      "file": "packages/chit-seller/pinned-contract.mjs",
+      "find": "if (entryChain !== chain || at < start || (end != null && at >= end)) continue;",
+      "replace": "if (entryChain !== chain || at < start || (end != null && at > end)) continue;",
+      "note": "the retire hour stays on the old contract"
+    },
+    {
+      "id": "overlap",
+      "file": "packages/chit-seller/pinned-contract.mjs",
+      "find": "if (hits.length > 1) return refuse('ambiguous_contract');",
+      "replace": "if (hits.length > 2) return refuse('ambiguous_contract');",
+      "note": "two pins for one hour are accepted"
+    }
+  ]
+}
