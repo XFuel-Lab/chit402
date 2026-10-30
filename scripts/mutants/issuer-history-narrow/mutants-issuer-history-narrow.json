@@ -1,0 +1,219 @@
+{
+  "about": "Issuer-history extensions only narrow the bundled snapshot. After a run, rebuild dist (npx tsc -p packages/verify): the last mutant leaves a mutated dist/.",
+  "timeoutSec": 180,
+  "suites": {
+    "verify": {
+      "cwd": "packages/verify",
+      "argv": [
+        "sh",
+        "-c",
+        "./node_modules/.bin/tsc -p . && node --test --test-concurrency=1 test/issuer-history-extension-narrow.test.mjs test/issuer-history-attacks.test.mjs test/head-signature.test.mjs test/check-input.test.mjs test/fixed-head-cli-wiring.test.mjs test/kid-history-window.test.mjs test/issuer-history-sealed-pin.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test"
+      }
+    }
+  },
+  "mutants": [
+    {
+      "id": "NR1_allow_new_kid",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(prior\\.length === 0\\) return \\{ ok: false, reason: 'extension_adds_key' \\};",
+      "replace": "if (prior.length === 0) continue;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "NR2_allow_jwk_change",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "return \\{ ok: false, reason: 'extension_changes_key' \\};",
+      "replace": "continue;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "NR3_allow_contracts",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(shape\\) return \\{ ok: false, reason: shape \\};",
+      "replace": "if (false && shape) return { ok: false, reason: shape };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "NR4_narrow_live_skip",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "const liveNarrow = extensionNarrowsBundle\\(bundled\\.document, doc\\);",
+      "replace": "const liveNarrow = { ok: true as const };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "SA1_drop_signer_active",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(!signerRow \\|\\| signerRow\\.status !== 'active'\\) return 'issuer_history_signer_inactive';",
+      "replace": "if (false) return 'issuer_history_signer_inactive';",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "SA2_first_row_status",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "const signerRow = signerRows\\[signerRows\\.length - 1\\];",
+      "replace": "const signerRow = signerRows[0];",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "SA3_revoked_only",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "signerRow\\.status !== 'active'",
+      "replace": "signerRow.status !== 'active' && signerRow.status !== 'retired'",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "KB1_head_key_from_supplied",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "const rows = keyRows;",
+      "replace": "const rows = doc.entries || [];",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "KB2_fixed_head_key_from_supplied",
+      "file": "packages/verify/src/check-input.ts",
+      "find": "const jwk = keyForKid\\(headerKid, \\[embedded, \\.\\.\\.fixedKeyEntries\\.map\\(\\(entry\\) => entry\\?\\.jwk\\)\\]\\);",
+      "replace": "const jwk = keyForKid(headerKid, [embedded, ...(history?.entries || []).map((entry) => entry?.jwk)]);",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "KB3_epoch_key_from_supplied",
+      "file": "packages/verify/src/check-input.ts",
+      "find": "for \\(const entry of epochKeyEntries\\)",
+      "replace": "for (const entry of history?.entries || [])",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "KB4_value_key_from_supplied",
+      "file": "packages/verify/src/index.ts",
+      "find": "if \\(legacyNarrow\\.ok\\) return supplied;",
+      "replace": "if (supplied) return supplied;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "KB5_tree_head_caller_history_unchecked",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "extensionNarrowsBundle\\(bundled, issuerHistory\\)",
+      "replace": "{ ok: true as const }",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "JW1_head_history_jwks",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "jwks: historySignerJwks\\(options\\.trustedKids, callerJwks\\),",
+      "replace": "jwks: jwks?.keys ? { keys: jwks.keys } : undefined,",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "JW2_resolve_history_jwks",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "return \\{ trustedKids, jwks: undefined \\};",
+      "replace": "return { trustedKids, jwks: callerJwks };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "L1_gate_off",
+      "file": "packages/verify/src/index.ts",
+      "find": "if \\(\\(detachedForm \\|\\| inferredForm\\)",
+      "replace": "if (false && (detachedForm || inferredForm)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "PC1_delete_prod_call",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "const fileNarrow = extensionNarrowsBundle\\(bundled\\.document, doc\\);",
+      "replace": "const fileNarrow = { ok: true as const };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y1_non_narrowing_row_ok",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(!appendedRowNarrows\\(prior, row\\)\\) return \\{ ok: false, reason: 'extension_not_narrowing' \\};",
+      "replace": "if (false) return { ok: false, reason: 'extension_not_narrowing' };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y2_later_not_after_narrows",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(earliest == null \\|\\| next < earliest\\) return true;",
+      "replace": "if (earliest == null || next > earliest) return true;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y3_legacy_self_compare",
+      "file": "packages/verify/src/index.ts",
+      "find": "const legacyNarrow = extensionNarrowsBundle\\(bundled, supplied\\);",
+      "replace": "const legacyNarrow = extensionNarrowsBundle(supplied, supplied);",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y5_wallets_history_jwks",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "const verified = verifyIssuerHistoryDocument\\(doc, \\{ trustedKids \\}\\);",
+      "replace": "const verified = verifyIssuerHistoryDocument(doc, { jwks: jwks?.keys ? { keys: jwks.keys } : undefined, trustedKids });",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y8_signer_window_doc",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "windowDoc = trustDoc;",
+      "replace": "windowDoc = issuerHistory;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "W3_head_fetched_jwks",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "historySignerJwks\\(options\\.trustedKids, callerJwks\\)",
+      "replace": "historySignerJwks(options.trustedKids, jwks)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "W5_sealed_not_allowed",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "sameHistoryDocument\\(supplied, bundle\\) \\|\\| sealedHistoryDocument\\(supplied\\)",
+      "replace": "sameHistoryDocument(supplied, bundle)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "W6_thumbprint_touch_off",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(entry\\?\\.jwk && isEs256PublicJwk\\(entry\\.jwk\\) && ids\\.has\\(jwkThumbprint\\(entry\\.jwk\\)\\)\\) return true;",
+      "replace": "if (false && entry?.jwk) return true;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "W9_receipt_history_fetched_jwks",
+      "file": "packages/verify/src/index.ts",
+      "find": "jwks: historySignerJwks\\(options\\.trustedKids, options\\.jwks\\),",
+      "replace": "jwks: jwks?.keys ? { keys: jwks.keys } : undefined,",
+      "nth": 1,
+      "suite": "verify"
+    }
+  ]
+}

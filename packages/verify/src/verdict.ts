@@ -117,6 +117,12 @@ const WINDOW_FAIL = new Set([
   'introduced_key_signature',
   'inherited_key_window',
   'issuer_history_not_extension',
+  'extension_adds_key',
+  'extension_changes_key',
+  'extension_adds_contract',
+  'extension_unknown_field',
+  'extension_not_narrowing',
+  'issuer_history_signer_inactive',
   'version_window_closed',
   'version_window_not_open',
   'version_window_missing',
@@ -692,6 +698,14 @@ export function overallLine(verdict: VerifyVerdict, legacyOverall?: string | nul
 /** Fragment for `https://chit402.com/docs/verify#`. Ids have no spaces. */
 export function verdictDocAnchor(reason: string): string {
   if (reason === 'key untrusted') return 'key_untrusted';
+  if (
+    reason === 'extension_adds_key'
+    || reason === 'extension_changes_key'
+    || reason === 'extension_adds_contract'
+    || reason === 'extension_unknown_field'
+    || reason === 'extension_not_narrowing'
+    || reason === 'issuer_history_signer_inactive'
+  ) return 'issuer_history_invalid';
   // Documented under the signature section of docs/verify.
   if (reason === 'typ_mismatch') return 'signature_invalid';
   return reason;
