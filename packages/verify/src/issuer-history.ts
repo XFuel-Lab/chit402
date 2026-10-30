@@ -590,8 +590,10 @@ export async function checkReceiptIssuerHistory(
     ? sealedSnapshotForPin(pin, doc, { jwks, trustedKids })
     : null;
   const pinOk = exactPin || sealed != null;
+  // The receipt window still accepts a caller JWKS for a kid whose label is
+  // not its thumbprint. File, live and tree-head history do not.
   const signed = doc && pinOk
-    ? verifyIssuerHistoryDocument(doc, pinnedHistoryTrust(trustedKids, jwks))
+    ? verifyIssuerHistoryDocument(doc, { jwks, trustedKids })
     : null;
   const usable = doc && pinOk && signed?.valid ? doc : null;
   const loaded = doc != null;
