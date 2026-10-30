@@ -1,0 +1,281 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": ["node", "--test", "--test-concurrency=1", "packages/cs2-core/smt/smt.test.mjs"]
+  },
+  "mutants": [
+    {
+      "id": "S01_safe_integer",
+      "file": "packages/cs2-core/smt/size.mjs",
+      "find": "!Number.isSafeInteger(value) || ",
+      "replace": "",
+      "note": "a fractional size is accepted"
+    },
+    {
+      "id": "S02_negative_zero",
+      "file": "packages/cs2-core/smt/size.mjs",
+      "find": " || Object.is(value, -0)",
+      "replace": "",
+      "note": "negative zero is accepted as a size"
+    },
+    {
+      "id": "S03_index_shift",
+      "file": "packages/cs2-core/smt/size.mjs",
+      "find": "out[i] = x % 256;\n    x = Math.floor(x / 256);",
+      "replace": "out[i] = x & 255;\n    x = x >>> 8;",
+      "note": "index bytes wrap at 2^32"
+    },
+    {
+      "id": "S04_cap_lowered",
+      "file": "packages/cs2-core/smt/size.mjs",
+      "find": "export const MAX_SMT_ENTRIES = Number.MAX_SAFE_INTEGER;",
+      "replace": "export const MAX_SMT_ENTRIES = 1024;",
+      "note": "the safe-integer cap is lowered to the pad tier"
+    },
+    {
+      "id": "S05_leaf_too_high",
+      "file": "packages/cs2-core/smt/tree.mjs",
+      "find": "if (depth === DEPTH) return makeLeaf(key, value);",
+      "replace": "if (depth === DEPTH - 1) return makeLeaf(key, value);",
+      "note": "the leaf is placed one level above the bottom"
+    },
+    {
+      "id": "S06_verify_order",
+      "file": "packages/cs2-core/smt/tree.mjs",
+      "find": "hash = bit === 0 ? nodeHash(hash, sibling) : nodeHash(sibling, hash);",
+      "replace": "hash = nodeHash(hash, sibling);",
+      "note": "the key bit no longer chooses the child"
+    },
+    {
+      "id": "S07_no_compression",
+      "file": "packages/cs2-core/smt/tree.mjs",
+      "find": "if (!equalBytes(siblingHash, blank)) {",
+      "replace": "if (true) {",
+      "note": "blank siblings are kept in the proof"
+    },
+    {
+      "id": "S08_blank_sibling_ok",
+      "file": "packages/cs2-core/smt/tree.mjs",
+      "find": "if (equalBytes(sibling, blank)) return { ok: false, reason: 'bad_proof' };",
+      "replace": "if (false && equalBytes(sibling, blank)) return { ok: false, reason: 'bad_proof' };",
+      "note": "a bitmap bit may name the blank hash"
+    },
+    {
+      "id": "S09_absence_blank",
+      "file": "packages/cs2-core/smt/tree.mjs",
+      "find": "let hash = value === null ? blankBytes(0) : leafHash(key, value);",
+      "replace": "let hash = value === null ? blankBytes(1) : leafHash(key, value);",
+      "note": "an absence proof starts one level up"
+    },
+    {
+      "id": "S10_keep_old_value",
+      "file": "packages/cs2-core/smt/tree.mjs",
+      "find": "leaves.set(hex, {",
+      "replace": "if (!existed) leaves.set(hex, {",
+      "note": "a second put of a key keeps the old value"
+    },
+    {
+      "id": "S11_pad_tier",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "export const PAD_ENTRIES = 1024;",
+      "replace": "export const PAD_ENTRIES = 512;",
+      "note": "padding stops at 512 leaves"
+    },
+    {
+      "id": "S12_hour_length",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "export const HOUR_SECONDS = 3600;",
+      "replace": "export const HOUR_SECONDS = 1800;",
+      "note": "an epoch is half an hour"
+    },
+    {
+      "id": "S13_hour_alignment",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "if (spec.hourStart % HOUR_SECONDS !== 0) return fail('bad_epoch');",
+      "replace": "if (spec.hourStart % HOUR_SECONDS < 0) return fail('bad_epoch');",
+      "note": "an unaligned hourStart is accepted"
+    },
+    {
+      "id": "S14_epoch_step",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "if (spec.epoch !== tree.epoch.epoch + 1) return fail('bad_epoch');",
+      "replace": "if (spec.epoch !== tree.epoch.epoch + 2) return fail('bad_epoch');",
+      "note": "the next epoch skips one"
+    },
+    {
+      "id": "S15_hour_step",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "const nextHour = tree.epoch.hourStart + HOUR_SECONDS;",
+      "replace": "const nextHour = tree.epoch.hourStart + 1;",
+      "note": "the next hour is one second later"
+    },
+    {
+      "id": "S16_reuse_random",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "if (equalBytes(spec.randomness, tree.epoch.value)) return fail('bad_random');",
+      "replace": "if (false && equalBytes(spec.randomness, tree.epoch.value)) return fail('bad_random');",
+      "note": "the epoch slot may repeat its value"
+    },
+    {
+      "id": "S17_epoch_kind",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "const key = slotKey({ kind: KIND_EPOCH, chainId, id: new Uint8Array(0) });",
+      "replace": "const key = slotKey({ kind: KIND_PAYTO, chainId, id: new Uint8Array(0) });",
+      "note": "the epoch slot is derived as a payTo"
+    },
+    {
+      "id": "S18_dummy_seed",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "return { ok: true, bytes: sha256([domain, seed, encoded.bytes]) };",
+      "replace": "return { ok: true, bytes: sha256([domain, encoded.bytes]) };",
+      "note": "redrawing dummies ignores the new seed"
+    },
+    {
+      "id": "S19_order_from_block",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "return record.block < previousBlock;",
+      "replace": "return record.fromBlock < previousBlock;",
+      "note": "ordering uses fromBlock"
+    },
+    {
+      "id": "S20_seq_gap",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (record.seq !== BigInt(i)) return fail('rule_1');",
+      "replace": "if (false && record.seq !== BigInt(i)) return fail('rule_1');",
+      "note": "a seq that is not the index is accepted"
+    },
+    {
+      "id": "S21_trailing",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (cursor.at !== bytes.length) return fail('bad_history');",
+      "replace": "if (false && cursor.at !== bytes.length) return fail('bad_history');",
+      "note": "bytes after the declared records are ignored"
+    },
+    {
+      "id": "S22_open_as_zero",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (aTo !== 0n && aTo <= bFrom) return false;",
+      "replace": "if (aTo <= bFrom) return false;",
+      "note": "an open interval ends at block 0"
+    },
+    {
+      "id": "S23_cover_start",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (block < key.validFrom) return false;",
+      "replace": "if (block <= key.validFrom) return false;",
+      "note": "the validFrom block is not covered"
+    },
+    {
+      "id": "S24_cover_end",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (key.revokedAt !== 0n && block >= key.revokedAt) return false;",
+      "replace": "if (key.revokedAt !== 0n && block > key.revokedAt) return false;",
+      "note": "the revokedAt block is still covered"
+    },
+    {
+      "id": "S25_skip_control_sig",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (!verifyPayToControl(decoded.chainId, decoded.id, record.alg, record.key, record.validFrom, record.sig)) {",
+      "replace": "if (false && !verifyPayToControl(decoded.chainId, decoded.id, record.alg, record.key, record.validFrom, record.sig)) {",
+      "note": "a payTo registration need not be signed"
+    },
+    {
+      "id": "S26_valid_from",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (record.validFrom !== record.block) return 'rule_2';",
+      "replace": "if (false && record.validFrom !== record.block) return 'rule_2';",
+      "note": "validFrom may differ from the admission block"
+    },
+    {
+      "id": "S27_cross_or",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "return selfOk && otherOk;",
+      "replace": "return selfOk || otherOk;",
+      "note": "one payTo signature is enough for a shared key"
+    },
+    {
+      "id": "S28_skip_cross",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (othersHaveKey(ctx, decoded.id, record.key) && !crossOk(decoded, record)) return 'rule_7';",
+      "replace": "if (false && othersHaveKey(ctx, decoded.id, record.key) && !crossOk(decoded, record)) return 'rule_7';",
+      "note": "a key already in another slot is accepted"
+    },
+    {
+      "id": "S29_second_join",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (state.stopped || state.active !== null) return 'rule_2';",
+      "replace": "if (state.stopped) return 'rule_2';",
+      "note": "a wallet may have two active books"
+    },
+    {
+      "id": "S30_stop_keeps_active",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "state.stopped = true;\n    state.active = null;",
+      "replace": "state.stopped = true;",
+      "note": "STOP leaves the previous book active"
+    },
+    {
+      "id": "S31_second_book",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (state.book !== null) return 'rule_1';",
+      "replace": "if (false && state.book !== null) return 'rule_1';",
+      "note": "a second book creation is applied"
+    },
+    {
+      "id": "S32_kill_slot",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "const killed = false;",
+      "replace": "const killed = folded.faults.length > 0;",
+      "note": "one bad record kills the slot"
+    },
+    {
+      "id": "S33_fault_text",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "return `invalid record at seq ${seq} (Chit fault)`;",
+      "replace": "return `invalid record at seq ${seq}`;",
+      "note": "the fault line drops the Chit-fault mark"
+    },
+    {
+      "id": "S34_stop_walk",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "line: faultLine(record.seq),\n      });\n    } else {",
+      "replace": "line: faultLine(record.seq),\n      });\n      return { ...state, faults };\n    } else {",
+      "note": "the walk stops at the first bad record"
+    },
+    {
+      "id": "S35_transfer_to",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (!equalBytes(query.transferTo, view.id)) return unproven;",
+      "replace": "if (false && !equalBytes(query.transferTo, view.id)) return unproven;",
+      "note": "rule 3 ignores the Transfer to"
+    },
+    {
+      "id": "S36_shorter_extends",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (next.records.length < prev.records.length) return { ok: true, extends: false };",
+      "replace": "if (next.records.length < prev.records.length) return { ok: true, extends: true };",
+      "note": "a shorter history extends a longer one"
+    },
+    {
+      "id": "S37_no_equivocation",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "return { ok: true, equivocation: true, reason: 'rule_5' };",
+      "replace": "return { ok: true, equivocation: false, reason: 'rule_5' };",
+      "note": "divergent histories are not equivocation"
+    },
+    {
+      "id": "S38_revoke_one_slot",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "next.push(admitted.bytes);\n    applied += 1;",
+      "replace": "next.push(admitted.bytes);\n    applied += 1;\n    break;",
+      "note": "a keyHash revocation updates only the first slot"
+    },
+    {
+      "id": "S39_high_s",
+      "file": "packages/cs2-core/smt/sig.mjs",
+      "find": "if (s > curve.order / 2n) return null;",
+      "replace": "if (false && s > curve.order / 2n) return null;",
+      "note": "high-S signatures verify"
+    }
+  ]
+}
