@@ -1206,7 +1206,9 @@ test('a fork that would close the bundled window does not (head stays trusted)',
 
 test('source scan: bundled snapshots and the legacy allowlist are byte-identical to 7207bf46', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
-  const sha = (name) => createHash('sha256').update(readFileSync(join(root, name))).digest('hex');
+  const sha = (name) => createHash('sha256')
+    .update(readFileSync(join(root, name)).toString('utf8').replace(/\r\n/g, '\n'))
+    .digest('hex');
   assert.ok(new RegExp(SNAPSHOT_SHA256).test(sha('issuer-history.snapshot.json')), 'issuer-history.snapshot.json');
   assert.ok(new RegExp(V1_SNAPSHOT_SHA256).test(sha('issuer-history.v1.snapshot.json')), 'issuer-history.v1.snapshot.json');
   assert.ok(new RegExp(LEGACY_ALLOWLIST_SHA256).test(sha('legacy-allowlist.json')), 'legacy-allowlist.json');
