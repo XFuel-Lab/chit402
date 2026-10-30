@@ -47,6 +47,9 @@ contract DeployChitAnchor {
         codeHash = keccak256(address(deployed).code);
     }
 
+    /// @notice Broadcast path. After it lands, run the read-only check:
+    ///         BASE_SEPOLIA_RPC_URL=... CHIT_ANCHOR_CHECKPOINT=... CHIT_ANCHOR_TX=...
+    ///         node check-deploy.mjs <deployed-address>
     function run() external returns (ChitAnchor deployed) {
         require(block.chainid == 84532, "Base Sepolia only");
         address checkpoint_ = vm.envAddress("CHIT_ANCHOR_CHECKPOINT");

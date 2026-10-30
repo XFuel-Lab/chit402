@@ -34,11 +34,11 @@ if (forge.error) {
   process.stderr.write(`${forge.error.message}\n`);
   process.exit(1);
 }
-const text = `${forge.stdout || ''}\n${forge.stderr || ''}`;
-if (forge.status !== 0 && !text.includes('predicted')) {
-  process.stderr.write(text);
+if (forge.status !== 0) {
+  process.stderr.write(`${forge.stdout || ''}\n${forge.stderr || ''}`);
   process.exit(forge.status || 1);
 }
+const text = `${forge.stdout || ''}\n${forge.stderr || ''}`;
 
 // forge --json may be one object or a line-delimited log. Fall back to the
 // traced return names when the JSON shape changes.

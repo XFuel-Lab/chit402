@@ -1,10 +1,14 @@
 {
-  "about": "ChitAnchor on Base Sepolia, v0. Run from the repo root: node scripts/mutants/run-mutants.mjs . --list test/chit-simple/mutants.json --timeout-sec 180. Score is KILLED / (KILLED + SURVIVED). forge and node must be on PATH. The suite runs pretest.sh, then forge test without the invariant fuzz.",
+  "about": "ChitAnchor on Base Sepolia, v0. Run from the repo root: node scripts/mutants/run-mutants.mjs . --list test/chit-simple/mutants.json --timeout-sec 180. Score is KILLED / (KILLED + SURVIVED). forge and node must be on PATH. The suite runs pretest.sh, then forge test --force, skipping invariant fuzz and test_example_runtime_code_hash. R19 matches the inner shift at 20-space indent.",
   "timeoutSec": 180,
   "suites": {
     "anchor": {
       "cwd": "test/chit-simple",
-      "argv": ["sh", "-c", "sh pretest.sh && forge test --offline --no-match-contract Invariant"],
+      "argv": [
+        "sh",
+        "-c",
+        "sh pretest.sh >/dev/null && forge test --force --offline --no-match-contract Invariant --no-match-test test_example_runtime_code_hash"
+      ],
       "env": {
         "FOUNDRY_DISABLE_NIGHTLY_WARNING": "1"
       }
@@ -329,11 +333,91 @@
     {
       "id": "R19_inner_shift",
       "file": "contracts/chit-simple/Rfc9162.sol",
-      "find": "while \\(!_lsb\\(fn\\) && fn != 0\\) \\{\\n                        fn >>= 1;",
+      "find": "while \\(!_lsb\\(fn\\) && fn != 0\\) \\{\\n                    fn >>= 1;",
       "replace": "while (!_lsb(fn) && fn != 0) {\n                        fn >>= 2;",
       "nth": 1,
       "suite": "anchor",
       "note": "the inner skip shifts by one"
+    },
+    {
+      "id": "D1_stateRoot_not_stored",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "_head\\.stateRoot = stateRoot_;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D2_hour_not_stored",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "_head\\.hourStart = hourStart_;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D3_version_not_stored",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "checkpointVersion = version;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D4_finished_uint64_no_cast",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "uint256\\(hourStart_\\) \\+ 3600 > block\\.timestamp",
+      "replace": "uint256(hourStart_) + 3599 > block.timestamp",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D5_event_epoch_swapped",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "emit Anchored\\(epoch_, hourStart_, size_",
+      "replace": "emit Anchored(hourStart_, epoch_, size_",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D6_event_state_is_root",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "root_, stateRoot_, KIND_HOURLY",
+      "replace": "root_, root_, KIND_HOURLY",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D7_rotate_event_old_is_new",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "emit CheckpointKeyRotated\\(version, old, newAddr\\)",
+      "replace": "emit CheckpointKeyRotated(version, newAddr, newAddr)",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D8_domain_chainid_uint256",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "uint64\\(block\\.chainid\\)",
+      "replace": "block.chainid",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D9_too_long_guard_removed",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(sn == 0\\) return PROOF_TOO_LONG;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D10_sn_final_check_removed",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(sn != 0\\) return PROOF_TOO_SHORT;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
     }
   ]
 }

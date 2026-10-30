@@ -409,21 +409,119 @@ contract ChitAnchorTest is Test {
     }
 
     function test_pack_has_no_key_on_argv() public view {
-        string memory flag = string.concat("--private-", "key");
-        string memory envName = string.concat("PRIVATE_", "KEY");
         string memory root = "../../deploy/chit-simple/sepolia-pack/";
-        _noKey(string.concat(root, "README.md"), flag, envName);
-        _noKey(string.concat(root, "DeployChitAnchor.s.sol"), flag, envName);
-        _noKey(string.concat(root, "print-runtime.mjs"), flag, envName);
-        _noKey(string.concat(root, "foundry.toml"), flag, envName);
-        _noKey(string.concat(root, "constructor-args.json"), flag, envName);
-        _noKey(string.concat(root, "expected-runtime.json"), flag, envName);
+        _noKey(string.concat(root, "README.md"));
+        _noKey(string.concat(root, "DeployChitAnchor.s.sol"));
+        _noKey(string.concat(root, "print-runtime.mjs"));
+        _noKey(string.concat(root, "check-deploy.mjs"));
+        _noKey(string.concat(root, "foundry.toml"));
+        _noKey(string.concat(root, "constructor-args.json"));
+        _noKey(string.concat(root, "expected-runtime.json"));
     }
 
-    function _noKey(string memory path, string memory flag, string memory envName) private view {
-        string memory text = vm.readFile(path);
-        assertFalse(_has(text, flag), path);
-        assertFalse(_has(text, envName), path);
+    function test_pack_scan_rejects_each_pattern() public pure {
+        assertEq(_reject("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), "raw-hex", "raw-hex");
+        assertEq(_reject(string.concat("forge --", "mnemonic word")), "mnemonic", "mnemonic");
+        assertEq(_reject(string.concat("forge --", "mnemonics word")), "mnemonics", "mnemonics");
+        assertEq(_reject(string.concat("forge --", "interactive")), "interactive", "interactive");
+        assertEq(_reject(string.concat("forge --", "interactives")), "interactives", "interactives");
+        assertEq(_reject(string.concat("cast --", "password")), "password", "password");
+        assertEq(_reject(string.concat("DEPLOYER_", "PK")), "deployer-pk", "deployer-pk");
+        assertEq(_reject(string.concat("FOO_", "PK")), "pk-suffix", "pk-suffix");
+        assertEq(_reject(string.concat("ETH_", "PRIVATE_KEY")), "eth-private-key", "eth-private-key");
+        assertEq(_reject(string.concat("vm.", "envUint")), "env-uint", "env-uint");
+        assertEq(_reject(string.concat("vm.", "startBroadcast(secret)")), "broadcast-key", "broadcast-key");
+        assertEq(_reject("vm.startBroadcast();"), "", "empty broadcast");
+        assertEq(_reject(string.concat("--private-", "key")), "private-key", "private-key");
+        assertEq(_reject(string.concat("PRIVATE_", "KEY")), "private-env", "private-env");
+    }
+
+    function _noKey(string memory path) private view {
+        string memory reason = _reject(vm.readFile(path));
+        assertEq(reason, "", path);
+    }
+
+    function _reject(string memory text) private pure returns (string memory) {
+        if (_has(text, string.concat("--private-", "key"))) return "private-key";
+        if (_has(text, string.concat("ETH_", "PRIVATE_KEY"))) return "eth-private-key";
+        if (_has(text, string.concat("PRIVATE_", "KEY"))) return "private-env";
+        if (_has(text, string.concat("--", "mnemonics"))) return "mnemonics";
+        if (_has(text, string.concat("--", "mnemonic"))) return "mnemonic";
+        if (_has(text, string.concat("--", "interactives"))) return "interactives";
+        if (_has(text, string.concat("--", "interactive"))) return "interactive";
+        if (_has(text, string.concat("--", "password"))) return "password";
+        if (_has(text, string.concat("DEPLOYER_", "PK"))) return "deployer-pk";
+        if (_has(text, "_PK")) return "pk-suffix";
+        if (_has(text, string.concat("vm.", "envUint"))) return "env-uint";
+        if (_broadcastHasArg(text)) return "broadcast-key";
+        if (_rawHex(text)) return "raw-hex";
+        return "";
+    }
+
+    function _broadcastHasArg(string memory text) private pure returns (bool) {
+        bytes memory b = bytes(text);
+        bytes memory needle = bytes("startBroadcast(");
+        for (uint256 i = 0; i + needle.length < b.length; i++) {
+            bool match_ = true;
+            for (uint256 j = 0; j < needle.length; j++) {
+                if (b[i + j] != needle[j]) {
+                    match_ = false;
+                    break;
+                }
+            }
+            if (!match_) continue;
+            uint256 k = i + needle.length;
+            while (k < b.length && (b[k] == " " || b[k] == "\n" || b[k] == "\t")) k++;
+            if (k < b.length && b[k] != ")") return true;
+        }
+        return false;
+    }
+
+    function _rawHex(string memory text) private pure returns (bool) {
+        bytes memory b = bytes(text);
+        uint256 i = 0;
+        while (i < b.length) {
+            if (i + 1 < b.length && b[i] == "0" && (b[i + 1] == "x" || b[i + 1] == "X")) {
+                uint256 start = i + 2;
+                uint256 j = start;
+                while (j < b.length && _hexChar(b[j])) j++;
+                if (j - start == 64 && !_allowedHex(b, start)) return true;
+                i = j;
+                continue;
+            }
+            if (_hexChar(b[i])) {
+                uint256 start = i;
+                while (i < b.length && _hexChar(b[i])) i++;
+                if (i - start == 64 && !_allowedHex(b, start)) return true;
+            } else {
+                i++;
+            }
+        }
+        return false;
+    }
+
+    function _hexChar(bytes1 c) private pure returns (bool) {
+        return (c >= "0" && c <= "9") || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
+    }
+
+    function _allowedHex(bytes memory b, uint256 start) private pure returns (bool) {
+        bytes32 word = _parseHex(b, start);
+        return word == hex"cd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080"
+            || word == hex"bc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e"
+            || word == hex"95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3"
+            || word == hex"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            || word == hex"1ec6130d39d03ed3b8bce8139d615ffe17377a1cf2cab8f4b7bf98f45dda27b0";
+    }
+
+    function _parseHex(bytes memory b, uint256 start) private pure returns (bytes32 word) {
+        for (uint256 i = 0; i < 64; i++) {
+            uint8 d = uint8(b[start + i]);
+            uint8 v;
+            if (d >= 48 && d <= 57) v = d - 48;
+            else if (d >= 97 && d <= 102) v = d - 87;
+            else v = d - 55;
+            word = (word << 4) | bytes32(uint256(v));
+        }
     }
 
     function test_gas_anchor_genesis() public {

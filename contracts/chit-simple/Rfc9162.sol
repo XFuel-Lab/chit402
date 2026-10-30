@@ -65,11 +65,9 @@ library Rfc9162 {
             if (_lsb(fn) || fn == sn) {
                 fr = _node(c, fr);
                 sr = _node(c, sr);
-                if (!_lsb(fn)) {
-                    while (!_lsb(fn) && fn != 0) {
-                        fn >>= 1;
-                        sn >>= 1;
-                    }
+                while (!_lsb(fn) && fn != 0) {
+                    fn >>= 1;
+                    sn >>= 1;
                 }
             } else {
                 sr = _node(sr, c);

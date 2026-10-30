@@ -12,9 +12,11 @@ solc = "0.8.24"
 via_ir = true
 optimizer = true
 optimizer_runs = 200
+# cancun is deliberate; Hardhat uses paris.
 evm_version = "cancun"
 bytecode_hash = "none"
 cbor_metadata = false
+allow_paths = ["../../contracts/chit-simple"]
 remappings = ["chit-simple/=../../contracts/chit-simple/"]
 fs_permissions = [
   { access = "read", path = "../../contracts/chit-simple" },
