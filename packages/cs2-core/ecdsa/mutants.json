@@ -1,0 +1,306 @@
+{
+  "about": "P0-3 KMS secp256k1 checkpoint signer. Run from the repo root: node scripts/mutants/run-mutants.mjs . --list packages/cs2-core/ecdsa/mutants.json. Score is KILLED / (KILLED + SURVIVED). Every mutant here is a behavior change.",
+  "timeoutSec": 180,
+  "suites": {
+    "ecdsa": {
+      "cwd": ".",
+      "argv": ["node", "--test", "--test-concurrency=1", "packages/cs2-core/ecdsa/ecdsa.test.mjs"],
+      "env": { "NODE_ENV": "test" }
+    },
+    "sealer": {
+      "cwd": ".",
+      "argv": ["node", "--test", "--test-concurrency=1", "services/chit-sealer/kms-secp256k1.test.mjs"],
+      "env": { "NODE_ENV": "test" }
+    }
+  },
+  "mutants": [
+    {
+      "id": "K1_keccak_sha3_pad",
+      "file": "packages/cs2-core/ecdsa/keccak.js",
+      "find": "block\\[msg.length - offset\\] \\^= 0x01;",
+      "replace": "block[msg.length - offset] ^= 0x06;",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "Keccak padding is 0x01, not SHA3's 0x06"
+    },
+    {
+      "id": "K2_keccak_no_suffix",
+      "file": "packages/cs2-core/ecdsa/keccak.js",
+      "find": "block\\[RATE - 1\\] \\^= 0x80;",
+      "replace": "block[RATE - 1] ^= 0x00;",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "the rate block ends with the 0x80 domain bit"
+    },
+    {
+      "id": "K3_lows_boundary",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "if \\(s <= half\\) return new Uint8Array\\(sig\\);",
+      "replace": "if (s < half) return new Uint8Array(sig);",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "s == order/2 is already low"
+    },
+    {
+      "id": "K4_lows_skipped",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "if \\(s <= half\\) return new Uint8Array\\(sig\\);",
+      "replace": "return new Uint8Array(sig);",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "high S must be replaced with order - s"
+    },
+    {
+      "id": "K5_lows_half_shift",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "const half = order >> 1n;",
+      "replace": "const half = order >> 2n;",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "the low-S bound is order/2"
+    },
+    {
+      "id": "K6_lows_p256_order",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "const order = curve.order;",
+      "replace": "const order = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551n;",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "low-S must use the curve argument, not the P-256 order"
+    },
+    {
+      "id": "K7_lows_add",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "out.set\\(bigToBytes\\(order - s, 32\\), 32\\);",
+      "replace": "out.set(bigToBytes(s, 32), 32);",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "the replacement scalar is order - s"
+    },
+    {
+      "id": "K8_der_order_inclusive",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "if \\(value === 0n \\|\\| value >= order\\) throw derError\\(\\);",
+      "replace": "if (value === 0n || value > order) throw derError();",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "s == order is rejected"
+    },
+    {
+      "id": "K9_der_nonminimal_int",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "if \\(buf\\[start\\] === 0x00\\) \\{\\n    if \\(length === 1 \\|\\| \\(buf\\[start \\+ 1\\] & 0x80\\) === 0\\) throw derError\\(\\);\\n  \\}",
+      "replace": "if (false && buf[start] === 0x00) {\n    if (length === 1 || (buf[start + 1] & 0x80) === 0) throw derError();\n  }",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "a leading 0x00 is only the sign byte"
+    },
+    {
+      "id": "K10_der_trailing",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "if \\(s.next !== buf.length\\) throw derError\\(\\);",
+      "replace": "if (false && s.next !== buf.length) throw derError();",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "trailing bytes are rejected"
+    },
+    {
+      "id": "K11_der_long_form",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "if \\(length < 0x80\\) throw derError\\(\\);",
+      "replace": "if (false && length < 0x80) throw derError();",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "a long-form length of a short value is rejected"
+    },
+    {
+      "id": "K12_parity_only_zero",
+      "file": "packages/cs2-core/ecdsa/recover.js",
+      "find": "for \\(const bit of \\[0, 1\\]\\)",
+      "replace": "for (const bit of [0])",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "trial recovery tries both parities"
+    },
+    {
+      "id": "K13_parity_only_one",
+      "file": "packages/cs2-core/ecdsa/recover.js",
+      "find": "for \\(const bit of \\[0, 1\\]\\)",
+      "replace": "for (const bit of [1])",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "trial recovery tries both parities"
+    },
+    {
+      "id": "K14_parity_accept_none",
+      "file": "packages/cs2-core/ecdsa/recover.js",
+      "find": "if \\(hits.length !== 1\\)",
+      "replace": "if (hits.length > 1)",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "zero matches is not a parity"
+    },
+    {
+      "id": "K15_domain_tag",
+      "file": "packages/cs2-core/ecdsa/domain.js",
+      "find": "const TAG = new TextEncoder\\(\\)\\.encode\\('chit402-checkpoint-v1'\\);",
+      "replace": "const TAG = new TextEncoder().encode('chit402-checkpoint-v2');",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "DS-65 domain tag is chit402-checkpoint-v1"
+    },
+    {
+      "id": "K16_domain_endian",
+      "file": "packages/cs2-core/ecdsa/domain.js",
+      "find": "chain.writeBigUInt64BE\\(id\\);",
+      "replace": "chain.writeBigUInt64LE(id);",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "chain id is 8 bytes big-endian"
+    },
+    {
+      "id": "K17_rlp_zero",
+      "file": "packages/cs2-core/ecdsa/rlp.js",
+      "find": "if \\(v === 0n\\) return Uint8Array.of\\(0x80\\);",
+      "replace": "if (v === 0n) return Uint8Array.of(0x00);",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "RLP integer 0 is 0x80"
+    },
+    {
+      "id": "K18_eip1559_unsigned_type",
+      "file": "packages/cs2-core/ecdsa/eip1559.js",
+      "find": "return concat\\(\\[Uint8Array.of\\(0x02\\), rlpList\\(eip1559Body\\(tx\\)\\)\\]\\);",
+      "replace": "return concat([Uint8Array.of(0x01), rlpList(eip1559Body(tx))]);",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "the signing payload is a type-2 transaction"
+    },
+    {
+      "id": "K19_eip1559_signed_type",
+      "file": "packages/cs2-core/ecdsa/eip1559.js",
+      "find": "return concat\\(\\[Uint8Array.of\\(0x02\\), rlpList\\(fields\\)\\]\\);",
+      "replace": "return concat([Uint8Array.of(0x01), rlpList(fields)]);",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "the signed bytes keep the type-2 prefix"
+    },
+    {
+      "id": "S1_message_type_raw",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "const MESSAGE_TYPE = 'DIGEST';",
+      "replace": "const MESSAGE_TYPE = 'RAW';",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "KMS Sign uses MessageType DIGEST"
+    },
+    {
+      "id": "S2_env_key_fallback",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "throw unavailable\\(\\);",
+      "replace": "return env.CHECKPOINT_PRIVATE_KEY;",
+      "nth": 2,
+      "suite": "sealer",
+      "note": "a KMS failure must not return an env key"
+    },
+    {
+      "id": "S3_nonce_conflict_off",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(conflict\\) throw coded\\('nonce already bound to a different epoch', 'nonce_payload_conflict'\\);",
+      "replace": "if (false && conflict) throw coded('nonce already bound to a different epoch', 'nonce_payload_conflict');",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "a used nonce cannot carry a different epoch"
+    },
+    {
+      "id": "S4_hour_not_in_fingerprint",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "`hourStart=\\$\\{hourStart\\}`,",
+      "replace": "`hourStart=0`,",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "hourStart is part of the committed payload"
+    },
+    {
+      "id": "S5_domain_not_required",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(!calldata.includes\\(domain\\) \\|\\| !calldata.includes\\(root\\) \\|\\| !calldata.includes\\(stateRoot\\)\\)",
+      "replace": "if (!calldata.includes(root) || !calldata.includes(stateRoot))",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the committed domain must sit in the calldata"
+    },
+    {
+      "id": "S6_broadcast_before_commit",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "commitAnchorIntent\\(log, anchor, signer.address\\);",
+      "replace": "void anchor;",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the intent is written before sign and broadcast"
+    },
+    {
+      "id": "S7_no_fsync",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "io.fsyncSync\\(fd\\);",
+      "replace": "void fd;",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the intent line is fsynced before return"
+    },
+    {
+      "id": "S8_fee_bump_100",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "\\(BigInt\\(value\\) \\* 110n\\) / 100n \\+ 1n",
+      "replace": "(BigInt(value) * 100n) / 100n + 1n",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "per-gas quotes move to 110% + 1"
+    },
+    {
+      "id": "S9_fee_bump_gas",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "gasLimit: BigInt\\(fees.gasLimit\\),",
+      "replace": "gasLimit: bump(fees.gasLimit),",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the gas limit is not bumped"
+    },
+    {
+      "id": "S10_empty_calldata",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "data: hexToBytes\\(intent.calldata\\),",
+      "replace": "data: new Uint8Array(),",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the signed tx carries the committed calldata"
+    },
+    {
+      "id": "S11_broadcast_without_intent",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(!rows.some\\(\\(row\\) => row.status === 'intent' && row.fingerprint === signed.fingerprint\\)\\)",
+      "replace": "if (false && !rows.some((row) => row.status === 'intent' && row.fingerprint === signed.fingerprint))",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "broadcast requires the committed intent row"
+    },
+    {
+      "id": "S12_short_digest",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(message.length !== 32\\) throw invalid\\(\\);",
+      "replace": "if (false && message.length !== 32) throw invalid();",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "KMS DIGEST is the 32-byte transaction hash"
+    },
+    {
+      "id": "S13_accept_p256_key",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(out\\?\\.KeySpec !== 'ECC_SECG_P256K1'\\)",
+      "replace": "if (out?.KeySpec !== 'ECC_NIST_P256')",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the checkpoint key spec is ECC_SECG_P256K1"
+    }
+  ]
+}
