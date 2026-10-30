@@ -80,6 +80,12 @@ export interface VerifyVerdict {
     as_of: string | null;
   };
   log: VerdictLog | null;
+  /** v13 only. Present until the anchor contract is audited. */
+  notes?: string[];
+  /** v13 only. The lines check 4 prints on a verified receipt. */
+  prints?: string[];
+  /** v13 only. Set when a live issuer-history document was refused. */
+  live_extension?: string | null;
   verifier: {
     name: 'chit402-verify';
     version: string;
@@ -735,6 +741,8 @@ export function humanVerdictLines(verdict: VerifyVerdict): string[] {
   const couldNotCheck = headline === 'COULD_NOT_CHECK';
   const lines = [headline];
   if (verdict.message) lines.push(verdict.message);
+  for (const note of verdict.notes ?? []) lines.push(note);
+  for (const printed of verdict.prints ?? []) lines.push(printed);
   if (couldNotCheck && !/could not be checked/i.test(verdict.message)) {
     lines.push('The receipt could not be checked.');
   }

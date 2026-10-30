@@ -1,0 +1,27 @@
+{
+  "suite": {
+    "argv": ["npx", "tsc", "--pretty", "false", "--incremental", "false"]
+  },
+  "test": ["node", "--test", "--test-concurrency=1", "test/v13-path.test.mjs"],
+  "mutants": [
+    { "id": "trust_rotation", "file": "packages/verify/src/v13/core/decide.ts", "find": "return pin.checkpoint;", "replace": "return rotatedTo || pin.checkpoint;" },
+    { "id": "cap_inclusive", "file": "packages/verify/src/v13/core/decide.ts", "find": "size > BigInt(MAX_TREE_SIZE)", "replace": "size >= BigInt(MAX_TREE_SIZE)" },
+    { "id": "hourly_kind", "file": "packages/verify/src/v13/core/decide.ts", "find": "event.kind === KIND_HOURLY", "replace": "event.kind !== KIND_HOURLY" },
+    { "id": "accept_leaf", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (LEAF_KEYS.has(key))", "replace": "if (false && LEAF_KEYS.has(key))" },
+    { "id": "accept_size", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (SIZE_KEYS.has(key))", "replace": "if (false && SIZE_KEYS.has(key))" },
+    { "id": "version_twelve", "file": "packages/verify/src/v13/core/decide.ts", "find": "value.v !== 13", "replace": "value.v !== 12" },
+    { "id": "sniff_payload_version", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (hasOwn(value, 'payload_version')) return false;", "replace": "if (false) return false;" },
+    { "id": "sniff_issuer_jws", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (hasOwn(value, 'issuer_signature')) return false;", "replace": "if (false) return false;" },
+    { "id": "ignore_block_hash", "file": "packages/verify/src/v13/core/decide.ts", "find": "payment.blockHash.toLowerCase() !== line.blockHash.toLowerCase()", "replace": "false" },
+    { "id": "pending_is_final", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!proven && !hourly)", "replace": "if (false && !proven && !hourly)" },
+    { "id": "ignore_revoke", "file": "packages/verify/src/v13/core/decide.ts", "find": "parsed.receipt.epoch > revoke", "replace": "parsed.receipt.epoch < revoke" },
+    { "id": "ignore_genesis", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (hourStart < pin.genesisHourStart) return false;", "replace": "if (false) return false;" },
+    { "id": "unpinned_passes", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!pin) return fail(2, 'contract_not_pinned'", "replace": "if (!pin) return fail(0, 'contract_not_pinned'" },
+    { "id": "pre_anchor_passes", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!head) return fail(2, 'pre_anchor'", "replace": "if (!head) return fail(0, 'pre_anchor'" },
+    { "id": "missing_leaf_passes", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!included.ok) return fail(1, 'not_in_log'", "replace": "if (!included.ok) return fail(0, 'not_in_log'" },
+    { "id": "ignore_sender", "file": "packages/verify/src/v13/core/decide.ts", "find": "world.anchorFrom.toLowerCase() !== sender.toLowerCase()", "replace": "false" },
+    { "id": "tampered_snapshot_ok", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!world.snapshotSigned)", "replace": "if (false && !world.snapshotSigned)" },
+    { "id": "missing_rpc_passes", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!world.rpcConfigured) return fail(2, 'rpc_unconfigured'", "replace": "if (!world.rpcConfigured) return fail(0, 'rpc_unconfigured'" },
+    { "id": "drop_epoch_topic", "file": "packages/verify/src/v13/verify.ts", "find": "topics: [ANCHORED_TOPIC0, topic]", "replace": "topics: [ANCHORED_TOPIC0]" }
+  ]
+}
