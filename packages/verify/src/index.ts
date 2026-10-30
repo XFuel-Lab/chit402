@@ -65,6 +65,7 @@ import {
   type PayerRail,
 } from './payer.js';
 import { verifyV11Receipt, verifyReceiptUpToV10 as verifyReceiptUpToV10Impl, rejectReceiptVersion } from './v11-receipt.js';
+import { isExactV13Receipt, verifyV13Document } from './v13/verify.js';
 import { classifyReceiptDocument, classifySignedClaims, legacyIdentityErrors, unversionedOuterVersion } from './receipt-version.js';
 import {
   resolvePinnedIssuerJwk,
@@ -1872,10 +1873,58 @@ function signedReceiptBindingErrors(
  * could_not_check; use `checkReceiptInput` from `chit402-verify/check-input`
  * for the full CLI verdict.
  */
+function libraryFromV13(verdict: VerifyVerdict): ReceiptVerification {
+  const exit = verdict.exit_code;
+  return {
+    receipt_id: null,
+    binding: { verified: exit === 0, expected: null, recomputed: null, matches: exit === 0, covers: [] },
+    issuer_signature: { checked: true, valid: exit === 0, reason: verdict.reason ?? undefined },
+    payer: { checked: exit === 0, valid: exit === 0, outcome: exit === 0 ? 'pass' : exit === 1 ? 'fail' : 'unchecked' },
+    nullifier: { verified: false, nullifier: null, anchored: null },
+    output_hash: null,
+    hub: null,
+    model: null,
+    amount_usdc: null,
+    tx: null,
+    claim_mismatches: [],
+    unsigned_fields: [],
+    verified_scope: 'signed_claims',
+    claim_id: 'not_present_legacy',
+    head_binding: null,
+    receipt_lane: {} as ReceiptVerification['receipt_lane'],
+    preimages: { checked: false, ok: true, errors: [], fields: [] },
+    issuer_history: {
+      checked: verdict.history.source != null,
+      ok: exit === 0,
+      unreachable: exit === 2,
+      warning: null,
+      reason: verdict.reason,
+      kid: null,
+      document: null,
+      loaded: verdict.history.source != null,
+    },
+    warnings: [],
+    overall: exit === 0 ? 'verified' : exit === 1 ? 'failed' : 'partial',
+    verdict: {
+      result: verdict.result,
+      exit_code: verdict.exit_code,
+      reason: verdict.reason,
+      checks: verdict.checks,
+    },
+    errors: verdict.reason ? [verdict.reason] : [],
+    receipt_version: 13,
+    version_source: 'signed',
+  };
+}
+
 export async function verifyReceipt(
   receipt: XFuelReceipt,
   options: VerifyReceiptOptions = {},
 ): Promise<ReceiptVerification> {
+  if (isExactV13Receipt(receipt)) {
+    const verdict = await verifyV13Document(receipt, options);
+    return libraryFromV13(verdict);
+  }
   const result = await verifyReceiptChecks(receipt, options);
   attachPayerBinding(receipt, result, options);
   return withLibraryVerdict(receipt, result);
