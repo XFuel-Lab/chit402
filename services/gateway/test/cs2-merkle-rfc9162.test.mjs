@@ -17,6 +17,7 @@ import {
   verifyConsistency,
   verifyInclusion,
 } from '../../../packages/cs2-core/merkle/index.js';
+import { renderRfc9162Json } from '../../../packages/cs2-core/vectors/build-rfc9162.mjs';
 
 const EMPTY_ROOT = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
 const LIVE_EMPTY_ROOT = '6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d';
@@ -69,37 +70,40 @@ test('cs2 rfc9162 vectors verify (gateway CI hook)', () => {
     assert.equal(hex(got.hash), RFC6962_ROOTS[n - 1], `n=${n}`);
   }
 
-  const doc = JSON.parse(readFileSync(
-    new URL('../../../packages/cs2-core/vectors/rfc9162.json', import.meta.url),
-    'utf8',
-  ));
+  const vectorUrl = new URL('../../../packages/cs2-core/vectors/rfc9162.json', import.meta.url);
+  const committed = readFileSync(vectorUrl, 'utf8');
+  assert.equal(renderRfc9162Json(), committed);
+  const doc = JSON.parse(committed);
   assert.equal(doc.schema, 'chit402.cs2.rfc9162.v1');
   assert.equal(doc.empty_root, EMPTY_ROOT);
-  for (const row of doc.roots) {
-    const entries = [];
-    for (let i = 0; i < row.n; i += 1) {
-      const idx = Buffer.alloc(4);
-      idx.writeUInt32BE(i);
-      entries.push(new Uint8Array(createHash('sha256').update(doc.vector_leaf_domain, 'utf8').update(idx).digest()));
+  assert.match(doc.implementation_limits.note, /Not part of the RFC 9162 wire format/);
+  const bySize = new Map();
+  const entriesFor = (n) => {
+    if (!bySize.has(n)) {
+      const entries = [];
+      for (let i = 0; i < n; i += 1) {
+        const idx = Buffer.alloc(4);
+        idx.writeUInt32BE(i);
+        entries.push(new Uint8Array(createHash('sha256').update(doc.vector_leaf_domain, 'utf8').update(idx).digest()));
+      }
+      bySize.set(n, entries);
     }
-    assert.equal(hex(mth(entries).hash), row.root, `root ${row.n}`);
+    return bySize.get(n);
+  };
+  for (const row of doc.roots) {
+    assert.equal(hex(mth(entriesFor(row.n)).hash), row.root, `root ${row.n}`);
   }
   for (const row of doc.inclusion) {
     const verdict = verifyInclusion(row.leaf_hash, row.index, row.n, row.root, row.proof);
     assert.equal(verdict.ok, true, `incl ${row.n}:${row.index}`);
-    const again = inclusionProof(
-      Array.from({ length: row.n }, (_, i) => {
-        const idx = Buffer.alloc(4);
-        idx.writeUInt32BE(i);
-        return new Uint8Array(createHash('sha256').update(doc.vector_leaf_domain, 'utf8').update(idx).digest());
-      }),
-      row.index,
-    );
+    const again = inclusionProof(entriesFor(row.n), row.index);
     assert.deepEqual(again.proof, row.proof, `incl proof ${row.n}:${row.index}`);
   }
   for (const row of doc.consistency) {
     const verdict = verifyConsistency(row.m, row.n, row.old_root, row.new_root, row.proof);
     assert.equal(verdict.ok, true, `cons ${row.m},${row.n}`);
+    const again = consistencyProof(entriesFor(row.n), row.m, row.n);
+    assert.deepEqual(again.proof, row.proof, `cons proof ${row.m},${row.n}`);
   }
   for (const row of doc.negative) {
     const verdict = row.op === 'verifyInclusion'

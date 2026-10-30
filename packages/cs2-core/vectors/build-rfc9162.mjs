@@ -275,6 +275,36 @@ function build() {
       new_root: baseRoot,
       proof: [flipHex(cons.proof[0]), ...cons.proof.slice(1)],
     },
+    {
+      id: 'incl-proof-cap',
+      op: 'verifyInclusion',
+      reason: 'proof_too_long',
+      leaf: baseLeaf,
+      index: 0,
+      tree_size: 1,
+      root: baseLeaf,
+      proof: Array.from({ length: MAX_PROOF_HASHES + 1 }, () => baseLeaf),
+    },
+    {
+      id: 'cons-proof-cap',
+      op: 'verifyConsistency',
+      reason: 'proof_too_long',
+      m: 1,
+      n: 2,
+      old_root: baseLeaf,
+      new_root: baseRoot,
+      proof: Array.from({ length: MAX_PROOF_HASHES + 1 }, () => baseLeaf),
+    },
+    {
+      id: 'cons-genesis-n0-wrong-new-root',
+      op: 'verifyConsistency',
+      reason: 'root_mismatch',
+      m: 0,
+      n: 0,
+      old_root: EMPTY_ROOT_HEX,
+      new_root: baseRoot,
+      proof: [],
+    },
   ];
 
   for (const row of negative) {
@@ -297,8 +327,11 @@ function build() {
     hash_encoding: 'lowercase-hex-64',
     vector_leaf_domain: VECTOR_LEAF_DOMAIN,
     vector_leaf_rule: 'd_i = SHA-256(domain || uint32be(i))',
-    max_tree_size: MAX_TREE_SIZE,
-    max_proof_hashes: MAX_PROOF_HASHES,
+    implementation_limits: {
+      note: 'Not part of the RFC 9162 wire format. This JS implementation refuses a tree size that is not a safe integer (above 2^53-1) and a proof longer than 64 hashes.',
+      max_tree_size: MAX_TREE_SIZE,
+      max_proof_hashes: MAX_PROOF_HASHES,
+    },
     genesis: 'm = 0 yields an empty proof; the old root is the empty root',
     equal_size: 'm = n yields an empty proof; the roots must be equal',
     rfc6962_reference: {

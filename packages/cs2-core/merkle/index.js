@@ -7,23 +7,23 @@ import { createHash } from 'node:crypto';
  * SUBPROOF (§2.1.4), plus the v13 genesis rule (old size 0).
  * Wire hashes are lowercase 64-hex with no prefix. Bad input returns
  * { ok: false, reason } and never throws. This is not the live receipt log.
+ *
+ * Tree size uses safe-integer arithmetic and stops at 2^53-1. That cap is an
+ * implementation limit of this module, not an RFC 9162 wire field. Shifts are
+ * division, not bitwise ops, so sizes at and above 2^31 stay exact.
  */
 
 const LEAF_PREFIX = 0x00;
 const NODE_PREFIX = 0x01;
 
-/** Fail closed above this many leaves. */
-export const MAX_TREE_SIZE = 1048576;
+/** Implementation limit: largest tree size this module will accept. Not a wire field. */
+export const MAX_TREE_SIZE = Number.MAX_SAFE_INTEGER;
 
-/** Fail closed above this many proof hashes. */
+/** Implementation limit: longest proof this module will accept. Not a wire field. */
 export const MAX_PROOF_HASHES = 64;
 
 const EMPTY_ROOT = sha256(new Uint8Array(0));
 export const EMPTY_ROOT_HEX = toHex(EMPTY_ROOT);
-
-// Production never retries a refused proof. Setting legacyRetry accepts a
-// proof the RFC check already refused (format-pin anchor).
-const anchors = { legacyRetry: false };
 
 function sha256(bytes) {
   return new Uint8Array(createHash('sha256').update(bytes).digest());
@@ -67,17 +67,22 @@ function largestPowerOfTwoLessThan(n) {
 }
 
 function isPowerOfTwo(m) {
-  return m > 0 && (m & (m - 1)) === 0;
+  if (m <= 0) return false;
+  let x = m;
+  while (x % 2 === 0) x = Math.floor(x / 2);
+  return x === 1;
 }
 
-function refuseConsistency(reason) {
-  if (anchors.legacyRetry) return { ok: true };
-  return { ok: false, reason };
+function lsb(x) {
+  return x % 2 === 1;
+}
+
+function shr(x) {
+  return Math.floor(x / 2);
 }
 
 function checkEntries(entries) {
   if (!Array.isArray(entries)) return { ok: false, reason: 'bad_type' };
-  if (entries.length > MAX_TREE_SIZE) return { ok: false, reason: 'tree_too_large' };
   for (let i = 0; i < entries.length; i += 1) {
     if (!(entries[i] instanceof Uint8Array)) return { ok: false, reason: 'bad_leaf' };
   }
@@ -85,15 +90,16 @@ function checkEntries(entries) {
 }
 
 function checkSize(value) {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+  // -0 is a safe integer and compares equal to 0; refuse it anyway.
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || Object.is(value, -0)) {
     return { ok: false, reason: 'bad_size' };
   }
-  if (value > MAX_TREE_SIZE) return { ok: false, reason: 'tree_too_large' };
+  if (value > MAX_TREE_SIZE) return { ok: false, reason: 'bad_size' };
   return { ok: true, size: value };
 }
 
 function checkIndex(value) {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || Object.is(value, -0)) {
     return { ok: false, reason: 'bad_index' };
   }
   return { ok: true, index: value };
@@ -219,19 +225,19 @@ export function verifyInclusion(leaf, index, treeSize, root, proof) {
   for (let i = 0; i < parsed.nodes.length; i += 1) {
     if (sn === 0) return { ok: false, reason: 'proof_too_long' };
     const p = parsed.nodes[i];
-    if ((fn & 1) === 1 || fn === sn) {
+    if (lsb(fn) || fn === sn) {
       r = hashPair(p, r);
-      if ((fn & 1) === 0) {
-        while ((fn & 1) === 0 && fn !== 0) {
-          fn >>= 1;
-          sn >>= 1;
+      if (!lsb(fn)) {
+        while (!lsb(fn) && fn !== 0) {
+          fn = shr(fn);
+          sn = shr(sn);
         }
       }
     } else {
       r = hashPair(r, p);
     }
-    fn >>= 1;
-    sn >>= 1;
+    fn = shr(fn);
+    sn = shr(sn);
   }
   if (sn !== 0) return { ok: false, reason: 'proof_too_short' };
   if (!bytesEqual(r, rootH.hash)) return { ok: false, reason: 'root_mismatch' };
@@ -298,49 +304,49 @@ export function verifyConsistency(m, n, oldRoot, newRoot, proof) {
   if (!newH.ok) return newH;
   const parsed = parseProof(proof);
   if (!parsed.ok) return parsed;
-  if (ms.size > ns.size) return refuseConsistency('m_gt_n');
-  if (ms.size === 0) {
-    if (ms.size === 0 && parsed.nodes.length !== 0) return refuseConsistency('proof_not_empty');
-    if (!bytesEqual(oldH.hash, EMPTY_ROOT)) return refuseConsistency('root_mismatch');
-    if (ns.size === 0 && !bytesEqual(newH.hash, EMPTY_ROOT)) return refuseConsistency('root_mismatch');
+  if (m > n) return { ok: false, reason: 'm_gt_n' };
+  if (m === 0) {
+    if (parsed.nodes.length !== 0) return { ok: false, reason: 'proof_not_empty' };
+    if (!bytesEqual(oldH.hash, EMPTY_ROOT)) return { ok: false, reason: 'root_mismatch' };
+    if (n === 0 && !bytesEqual(newH.hash, EMPTY_ROOT)) return { ok: false, reason: 'root_mismatch' };
     return { ok: true };
   }
-  if (ms.size === ns.size) {
-    if (ms.size === ns.size && parsed.nodes.length !== 0) return refuseConsistency('proof_not_empty');
-    if (!bytesEqual(oldH.hash, newH.hash)) return refuseConsistency('root_mismatch');
+  if (m === n) {
+    if (parsed.nodes.length !== 0) return { ok: false, reason: 'proof_not_empty' };
+    if (!bytesEqual(oldH.hash, newH.hash)) return { ok: false, reason: 'root_mismatch' };
     return { ok: true };
   }
-  if (parsed.nodes.length === 0) return refuseConsistency('proof_too_short');
+  if (parsed.nodes.length === 0) return { ok: false, reason: 'proof_too_short' };
   const nodes = parsed.nodes.slice();
-  if (isPowerOfTwo(ms.size)) nodes.unshift(oldH.hash);
-  let fn = ms.size - 1;
-  let sn = ns.size - 1;
-  while ((fn & 1) === 1) {
-    fn >>= 1;
-    sn >>= 1;
+  if (isPowerOfTwo(m)) nodes.unshift(oldH.hash);
+  let fn = m - 1;
+  let sn = n - 1;
+  while (lsb(fn)) {
+    fn = shr(fn);
+    sn = shr(sn);
   }
   let fr = nodes[0];
   let sr = nodes[0];
   for (let i = 1; i < nodes.length; i += 1) {
-    if (sn === 0) return refuseConsistency('proof_too_long');
+    if (sn === 0) return { ok: false, reason: 'proof_too_long' }; // past the new root
     const c = nodes[i];
-    if ((fn & 1) === 1 || fn === sn) {
+    if (lsb(fn) || fn === sn) {
       fr = hashPair(c, fr);
       sr = hashPair(c, sr);
-      if ((fn & 1) === 0) {
-        while ((fn & 1) === 0 && fn !== 0) {
-          fn >>= 1;
-          sn >>= 1;
+      if (!lsb(fn)) {
+        while (!lsb(fn) && fn !== 0) {
+          fn = shr(fn);
+          sn = shr(sn);
         }
       }
     } else {
       sr = hashPair(sr, c);
     }
-    fn >>= 1;
-    sn >>= 1;
+    fn = shr(fn);
+    sn = shr(sn);
   }
-  if (sn !== 0) return refuseConsistency('proof_too_short');
-  if (!bytesEqual(fr, oldH.hash)) return refuseConsistency('root_mismatch');
-  if (!bytesEqual(sr, newH.hash)) return refuseConsistency('root_mismatch');
+  if (sn !== 0) return { ok: false, reason: 'proof_too_short' };
+  if (!bytesEqual(fr, oldH.hash)) return { ok: false, reason: 'root_mismatch' };
+  if (!bytesEqual(sr, newH.hash)) return { ok: false, reason: 'root_mismatch' };
   return { ok: true };
 }

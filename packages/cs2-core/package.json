@@ -2,7 +2,7 @@
   "name": "cs2-core",
   "private": true,
   "version": "0.0.0",
-  "description": "Chit402 v13 core. RFC 9162 Merkle wire format. Not published.",
+  "description": "Chit402 v13 core. RFC 9162 Merkle wire format. Not published. The test suite imports the live gateway Merkle module, so services/gateway/node_modules must be installed. Tree size stops at 2^53-1, an implementation limit, not a wire field.",
   "type": "module",
   "engines": {
     "node": ">=20"

@@ -68,8 +68,8 @@
     {
       "id": "MK7_incl_lsb_cond",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "if \\(\\(fn & 1\\) === 1 \\|\\| fn === sn\\) \\{",
-      "replace": "if ((fn & 1) === 1) {",
+      "find": "if \\(lsb\\(fn\\) \\|\\| fn === sn\\) \\{",
+      "replace": "if (lsb(fn)) {",
       "nth": 1,
       "suite": "cs2",
       "note": "sibling side uses LSB(fn) or fn == sn"
@@ -77,8 +77,8 @@
     {
       "id": "MK8_incl_no_shift_loop",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "while \\(\\(fn & 1\\) === 0 && fn !== 0\\)",
-      "replace": "while (false && (fn & 1) === 0 && fn !== 0)",
+      "find": "while \\(!lsb\\(fn\\) && fn !== 0\\)",
+      "replace": "while (false && !lsb(fn) && fn !== 0)",
       "nth": 1,
       "suite": "cs2",
       "note": "inner right-shift until LSB(fn) or fn == 0"
@@ -86,8 +86,8 @@
     {
       "id": "MK9_cons_no_pow2_prepend",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "if \\(isPowerOfTwo\\(ms\\.size\\)\\) nodes\\.unshift\\(oldH\\.hash\\);",
-      "replace": "if (false && isPowerOfTwo(ms.size)) nodes.unshift(oldH.hash);",
+      "find": "if \\(isPowerOfTwo\\(m\\)\\) nodes\\.unshift\\(oldH\\.hash\\);",
+      "replace": "if (false && isPowerOfTwo(m)) nodes.unshift(oldH.hash);",
       "nth": 1,
       "suite": "cs2",
       "note": "power-of-two m prepends the old root"
@@ -95,8 +95,8 @@
     {
       "id": "MK10_cons_skip_old_root",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "if \\(!bytesEqual\\(fr, oldH\\.hash\\)\\) return refuseConsistency\\('root_mismatch'\\);",
-      "replace": "if (false && !bytesEqual(fr, oldH.hash)) return refuseConsistency('root_mismatch');",
+      "find": "if \\(!bytesEqual\\(fr, oldH\\.hash\\)\\) return \\{ ok: false, reason: 'root_mismatch' \\};",
+      "replace": "if (false && !bytesEqual(fr, oldH.hash)) return { ok: false, reason: 'root_mismatch' };",
       "nth": 1,
       "suite": "cs2",
       "note": "rebuilt old root must match"
@@ -104,8 +104,8 @@
     {
       "id": "MK11_cons_skip_new_root",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "if \\(!bytesEqual\\(sr, newH\\.hash\\)\\) return refuseConsistency\\('root_mismatch'\\);",
-      "replace": "if (false && !bytesEqual(sr, newH.hash)) return refuseConsistency('root_mismatch');",
+      "find": "if \\(!bytesEqual\\(sr, newH\\.hash\\)\\) return \\{ ok: false, reason: 'root_mismatch' \\};",
+      "replace": "if (false && !bytesEqual(sr, newH.hash)) return { ok: false, reason: 'root_mismatch' };",
       "nth": 1,
       "suite": "cs2",
       "note": "rebuilt new root must match"
@@ -113,8 +113,8 @@
     {
       "id": "MK12_cons_m_gt_n",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "if \\(ms\\.size > ns\\.size\\) return refuseConsistency\\('m_gt_n'\\);",
-      "replace": "if (false && ms.size > ns.size) return refuseConsistency('m_gt_n');",
+      "find": "if \\(m > n\\) return \\{ ok: false, reason: 'm_gt_n' \\};",
+      "replace": "if (false && m > n) return { ok: false, reason: 'm_gt_n' };",
       "nth": 1,
       "suite": "cs2",
       "note": "m > n is refused"
@@ -122,8 +122,8 @@
     {
       "id": "MK13_cons_genesis_nonempty",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "if \\(ms\\.size === 0 && parsed\\.nodes\\.length !== 0\\) return refuseConsistency\\('proof_not_empty'\\);",
-      "replace": "if (false && ms.size === 0 && parsed.nodes.length !== 0) return refuseConsistency('proof_not_empty');",
+      "find": "if \\(parsed\\.nodes\\.length !== 0\\) return \\{ ok: false, reason: 'proof_not_empty' \\};",
+      "replace": "if (false && parsed.nodes.length !== 0) return { ok: false, reason: 'proof_not_empty' };",
       "nth": 1,
       "suite": "cs2",
       "note": "genesis accepts only an empty proof"
@@ -131,17 +131,17 @@
     {
       "id": "MK14_cons_equal_nonempty",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "if \\(ms\\.size === ns\\.size && parsed\\.nodes\\.length !== 0\\) return refuseConsistency\\('proof_not_empty'\\);",
-      "replace": "if (false && ms.size === ns.size && parsed.nodes.length !== 0) return refuseConsistency('proof_not_empty');",
-      "nth": 1,
+      "find": "if \\(parsed\\.nodes\\.length !== 0\\) return \\{ ok: false, reason: 'proof_not_empty' \\};",
+      "replace": "if (false && parsed.nodes.length !== 0) return { ok: false, reason: 'proof_not_empty' };",
+      "nth": 2,
       "suite": "cs2",
       "note": "m = n accepts only an empty proof"
     },
     {
       "id": "MK15_cons_extra_elems",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "if \\(sn === 0\\) return refuseConsistency\\('proof_too_long'\\);",
-      "replace": "if (false && sn === 0) return refuseConsistency('proof_too_long');",
+      "find": "if \\(sn === 0\\) return \\{ ok: false, reason: 'proof_too_long' \\}; // past the new root",
+      "replace": "if (false && sn === 0) return { ok: false, reason: 'proof_too_long' }; // past the new root",
       "nth": 1,
       "suite": "cs2",
       "note": "trailing consistency hashes are refused"
@@ -185,11 +185,11 @@
     {
       "id": "MK20_main_format_fallback",
       "file": "packages/cs2-core/merkle/index.js",
-      "find": "legacyRetry: false",
-      "replace": "legacyRetry: true",
+      "find": "if \\(!bytesEqual\\(fr, oldH\\.hash\\)\\) return \\{ ok: false, reason: 'root_mismatch' \\};\n  if \\(!bytesEqual\\(sr, newH\\.hash\\)\\) return \\{ ok: false, reason: 'root_mismatch' \\};",
+      "replace": "if (!bytesEqual(fr, oldH.hash) || !bytesEqual(sr, newH.hash)) {\n    let legacyIndex = 0;\n    const takeLegacy = () => (legacyIndex < parsed.nodes.length ? parsed.nodes[legacyIndex++] : null);\n    const legacyCheck = (start, end, oldEnd) => {\n      if (end <= oldEnd) {\n        const hash = takeLegacy();\n        return hash ? { hash, old: hash } : null;\n      }\n      if (start >= oldEnd) {\n        const hash = takeLegacy();\n        return hash ? { hash, old: null } : null;\n      }\n      const k = largestPowerOfTwoLessThan(end - start);\n      const left = legacyCheck(start, start + k, oldEnd);\n      const right = legacyCheck(start + k, end, oldEnd);\n      if (!left || !right) return null;\n      const hash = hashPair(left.hash, right.hash);\n      let old = null;\n      if (left.old && right.old) old = hashPair(left.old, right.old);\n      else if (left.old && start + k >= oldEnd) old = left.old;\n      return { hash, old };\n    };\n    const rebuilt = legacyCheck(0, n, m);\n    if (rebuilt && rebuilt.old && legacyIndex === parsed.nodes.length && bytesEqual(rebuilt.hash, newH.hash) && bytesEqual(rebuilt.old, oldH.hash)) {\n      return { ok: true };\n    }\n    return { ok: false, reason: 'root_mismatch' };\n  }",
       "nth": 1,
       "suite": "cs2",
-      "note": "a refused proof is not accepted by a legacy retry"
+      "note": "on root_mismatch, retry with the live log's proof order"
     }
   ]
 }

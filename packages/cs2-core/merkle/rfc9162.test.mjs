@@ -173,6 +173,10 @@ test('vectors: every MTH, inclusion and consistency case in rfc9162.json verifie
   const doc = loadVectors();
   assert.equal(doc.schema, 'chit402.cs2.rfc9162.v1');
   assert.equal(doc.empty_root, EMPTY_ROOT);
+  assert.equal(doc.implementation_limits.max_tree_size, Number.MAX_SAFE_INTEGER);
+  assert.equal(doc.implementation_limits.max_proof_hashes, 64);
+  assert.match(doc.implementation_limits.note, /Not part of the RFC 9162 wire format/);
+  assert.equal(MAX_TREE_SIZE, Number.MAX_SAFE_INTEGER);
   assert.equal(doc.roots.length, 301);
   for (const row of doc.roots) {
     const entries = [];
@@ -252,6 +256,11 @@ test('inclusion: index >= size, short proof, long proof, flipped bit and wrong r
   const wrong = verifyInclusion(leaf, index, 7, flipHex(root), proof);
   assert.equal(wrong.ok, false);
   assert.equal(wrong.reason, 'root_mismatch');
+
+  const overCap = Array.from({ length: 65 }, () => leaf);
+  const capped = verifyInclusion(leaf, 0, 1, leaf, overCap);
+  assert.equal(capped.ok, false);
+  assert.equal(capped.reason, 'proof_too_long');
 });
 
 test('consistency: every (m, n) with 0 <= m <= n <= 64 matches the reference SUBPROOF and verifies', () => {
@@ -286,6 +295,11 @@ test('consistency: genesis m=0 takes an empty proof for any n; a non-empty proof
   const wrongOld = verifyConsistency(0, 4, LIVE_EMPTY_ROOT, EMPTY_ROOT, []);
   assert.equal(wrongOld.ok, false);
   assert.equal(wrongOld.reason, 'root_mismatch');
+  const wrongNew = verifyConsistency(0, 0, EMPTY_ROOT, LIVE_EMPTY_ROOT, []);
+  assert.equal(wrongNew.ok, false);
+  assert.equal(wrongNew.reason, 'root_mismatch');
+  const bothEmpty = verifyConsistency(0, 0, EMPTY_ROOT, EMPTY_ROOT, []);
+  assert.equal(bothEmpty.ok, true);
 });
 
 test('consistency: m=n takes an empty proof with equal roots; a non-empty proof or unequal roots are refused', () => {
@@ -346,6 +360,11 @@ test('consistency: m > n, truncated, extended, reordered and bit-flipped proofs 
   const wrongNew = verifyConsistency(3, 7, oldRoot, EMPTY_ROOT, proof.proof);
   assert.equal(wrongNew.ok, false);
   assert.equal(wrongNew.reason, 'root_mismatch');
+
+  const overCap = Array.from({ length: 65 }, () => oldRoot);
+  const capped = verifyConsistency(1, 2, oldRoot, newRoot, overCap);
+  assert.equal(capped.ok, false);
+  assert.equal(capped.reason, 'proof_too_long');
 });
 
 test('consistency: power-of-two m prepends the old root (RFC 2.1.4.2) — cases m in {1,2,4,8,16,32}', () => {
@@ -466,9 +485,42 @@ test('input: uppercase, 0x-prefixed, 63/65-char and non-hex hashes are refused; 
   assert.equal(verifyConsistency(1.5, 2, root, root, []).reason, 'bad_size');
   assert.equal(verifyConsistency(-1, 2, root, root, []).reason, 'bad_size');
   assert.equal(verifyConsistency(Number.MAX_SAFE_INTEGER + 1, 2, root, root, []).reason, 'bad_size');
-  assert.equal(verifyConsistency(MAX_TREE_SIZE + 1, MAX_TREE_SIZE + 1, EMPTY_ROOT, EMPTY_ROOT, []).reason, 'tree_too_large');
+  const cap = Number.MAX_SAFE_INTEGER;
+  assert.equal(verifyInclusion(leaf, 0, cap, root, []).reason, 'proof_too_short');
+  assert.equal(verifyInclusion(leaf, 0, cap + 1, root, []).reason, 'bad_size');
+  assert.equal(verifyConsistency(cap, cap, EMPTY_ROOT, EMPTY_ROOT, []).ok, true);
+  assert.equal(verifyConsistency(1, cap, EMPTY_ROOT, root, []).reason, 'proof_too_short');
+  assert.equal(verifyConsistency(cap + 1, cap + 1, EMPTY_ROOT, EMPTY_ROOT, []).reason, 'bad_size');
+  assert.equal(verifyInclusion(leaf, -0, 2, root, proof).reason, 'bad_index');
+  assert.equal(verifyConsistency(-0, 2, root, root, []).reason, 'bad_size');
   assert.equal(mth('nope').reason, 'bad_type');
   assert.equal(leafHash('nope').reason, 'bad_leaf');
+});
+
+test('vectors: every row matches the in-test reference on the vector leaves', () => {
+  const doc = loadVectors();
+  const pool = [];
+  for (let i = 0; i < 300; i += 1) {
+    const idx = Buffer.alloc(4);
+    idx.writeUInt32BE(i);
+    pool.push(new Uint8Array(createHash('sha256').update(doc.vector_leaf_domain, 'utf8').update(idx).digest()));
+  }
+  for (const row of doc.roots) {
+    assert.equal(refHex(refMth(pool.slice(0, row.n))), row.root, `root ${row.n}`);
+  }
+  for (const row of doc.inclusion) {
+    const entries = pool.slice(0, row.n);
+    assert.equal(refHex(refLeaf(entries[row.index])), row.leaf_hash, `leaf ${row.n}:${row.index}`);
+    assert.deepEqual(refPath(entries, row.index), row.proof, `incl ${row.n}:${row.index}`);
+    assert.equal(refHex(refMth(entries)), row.root, `incl root ${row.n}:${row.index}`);
+  }
+  for (const row of doc.consistency) {
+    const entries = pool.slice(0, row.n);
+    const expected = (row.m === 0 || row.m === row.n) ? [] : refSubproof(entries, row.m, true);
+    assert.deepEqual(expected, row.proof, `cons ${row.m},${row.n}`);
+    assert.equal(refHex(refMth(entries.slice(0, row.m))), row.old_root, `old ${row.m},${row.n}`);
+    assert.equal(refHex(refMth(entries)), row.new_root, `new ${row.m},${row.n}`);
+  }
 });
 
 test('source scan: merkle module imports only node:crypto and its own files', () => {
