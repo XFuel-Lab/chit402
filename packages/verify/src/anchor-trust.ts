@@ -347,7 +347,7 @@ export function verifyTreeHeadTrust(
       : { ok: false as const };
     const trustDoc = (extendsBundle && bundleChecked.ok)
       ? issuerHistory
-      : callerHistoryForTrust(issuerHistory, bundled);
+      : callerHistoryForTrust(issuerHistory, bundled, options.trustedKids);
     const keyRows = trustDoc.entries || [];
     windowDoc = trustDoc;
     if (!payload) {

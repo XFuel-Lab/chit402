@@ -635,7 +635,7 @@ export async function checkReceiptIssuerHistory(
   }
   {
     // A fork that rewrites a bundled kid keeps that kid's bundled window.
-    const doc = callerHistoryForTrust(usable, bundleDocument ?? loadBundledIssuerHistory().document);
+    const doc = callerHistoryForTrust(usable, bundleDocument ?? loadBundledIssuerHistory().document, trustedKids);
     const window = issuerKeyWindow(doc, kid, issuedAt);
     if (!window.ok) {
       return { ...base, checked: true, ok: false, reason: window.reason, document: doc, loaded: true };
@@ -866,13 +866,23 @@ function pinnedHistoryTrust(
  * the key is in the caller's own JWKS. Fetched JWKS and a missing list do
  * not qualify. The CLI never sets either argument.
  */
+/** RFC 7638 SHA-256 thumbprints are 43 unpadded base64url characters. */
+const THUMBPRINT_KID = /^[A-Za-z0-9_-]{43}$/;
+
+function callerPinKey(key: Es256Jwk | undefined, allow: Set<string>): boolean {
+  if (!key || typeof key.kid !== 'string' || !allow.has(key.kid) || !isEs256PublicJwk(key)) return false;
+  // A thumbprint pin is that key. A shorter label the caller listed is not one.
+  if (jwkThumbprint(key) === key.kid) return true;
+  return !THUMBPRINT_KID.test(key.kid);
+}
+
 export function historySignerJwks(
   trustedKids: readonly string[] | undefined,
   callerJwks: { keys?: Es256Jwk[] } | undefined,
 ): HistoryJwks | undefined {
   if (!trustedKids?.length || !callerJwks?.keys?.length) return undefined;
   const allow = new Set(trustedKids);
-  const keys = callerJwks.keys.filter((key) => typeof key?.kid === 'string' && allow.has(key.kid));
+  const keys = callerJwks.keys.filter((key) => callerPinKey(key, allow));
   return keys.length ? { keys } : undefined;
 }
 
@@ -893,12 +903,17 @@ function sealedHistoryDocument(doc: IssuerHistoryDocument): boolean {
   return sameHistoryDocument(doc, bundled.document);
 }
 
-function touchesBundledKid(supplied: IssuerHistoryDocument, bundle: IssuerHistoryDocument): boolean {
+function bundledKeyIds(bundle: IssuerHistoryDocument): Set<string> {
   const ids = new Set<string>();
   for (const entry of bundle.entries || []) {
     if (entry?.kid) ids.add(entry.kid);
     if (entry?.jwk && isEs256PublicJwk(entry.jwk)) ids.add(jwkThumbprint(entry.jwk));
   }
+  return ids;
+}
+
+function touchesBundledKid(supplied: IssuerHistoryDocument, bundle: IssuerHistoryDocument): boolean {
+  const ids = bundledKeyIds(bundle);
   for (const entry of supplied.entries || []) {
     if (entry?.kid && ids.has(entry.kid)) return true;
     if (entry?.jwk && isEs256PublicJwk(entry.jwk) && ids.has(jwkThumbprint(entry.jwk))) return true;
@@ -906,19 +921,54 @@ function touchesBundledKid(supplied: IssuerHistoryDocument, bundle: IssuerHistor
   return false;
 }
 
+/** The signing kid, or the embedded key's thumbprint, is a bundled kid. */
+function signerTouchesBundle(supplied: IssuerHistoryDocument, bundle: IssuerHistoryDocument): boolean {
+  const ids = bundledKeyIds(bundle);
+  const kid = signerKidOf(supplied);
+  if (kid && ids.has(kid)) return true;
+  const embedded = supplied.issuer_signature?.issuer_jwk;
+  return !!(embedded && isEs256PublicJwk(embedded) && ids.has(jwkThumbprint(embedded)));
+}
+
 /**
- * Rows a caller history may contribute. A document that rewrites a bundled
- * kid is ignored unless it is that snapshot (or a sealed one) or a strict
- * narrowing of it. A history that names only other kids is the caller's own.
+ * A signed fork may supply rows only when its signer is an explicit caller
+ * pin and that kid is not in the bundle. An unsigned document is a fixture,
+ * not that fork.
+ */
+function ownHistoryAllowed(
+  supplied: IssuerHistoryDocument,
+  bundle: IssuerHistoryDocument,
+  trustedKids: readonly string[] | undefined,
+): boolean {
+  const kid = signerKidOf(supplied);
+  if (!kid) return true;
+  if (trustedKids && !trustedKids.includes(kid)) return false;
+  return !signerTouchesBundle(supplied, bundle);
+}
+
+/**
+ * Rows a caller history may contribute. A document that is the bundled
+ * snapshot, a sealed snapshot, or a strict narrowing of the bundle is used.
+ * A bundled signer, including a revoked one, cannot author any other fork:
+ * that document goes through the narrowing rules and `signerInactiveReason`.
+ * Anything else is the caller's own history only when its signer is a caller
+ * pin outside the bundle.
  */
 export function callerHistoryForTrust(
   supplied: IssuerHistoryDocument | null | undefined,
   bundle: IssuerHistoryDocument,
+  trustedKids?: readonly string[],
 ): IssuerHistoryDocument {
   if (!supplied) return bundle;
   if (sameHistoryDocument(supplied, bundle) || sealedHistoryDocument(supplied)) return supplied;
-  if (historyPrefixExtends(bundle, supplied) && extensionNarrowsBundle(bundle, supplied).ok) return supplied;
-  if (touchesBundledKid(supplied, bundle)) return bundle;
+  const extendsBundle = historyPrefixExtends(bundle, supplied);
+  if (extendsBundle && extensionNarrowsBundle(bundle, supplied).ok) return supplied;
+  if (touchesBundledKid(supplied, bundle) || signerTouchesBundle(supplied, bundle)) {
+    if (signerInactiveReason(bundle, supplied)) return bundle;
+    if (!(extendsBundle && extensionNarrowsBundle(bundle, supplied).ok)) return bundle;
+    return supplied;
+  }
+  if (!ownHistoryAllowed(supplied, bundle, trustedKids)) return bundle;
   return supplied;
 }
 

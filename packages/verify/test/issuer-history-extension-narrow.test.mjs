@@ -20,6 +20,8 @@ const {
   issuerKeyWindow,
   resolveIssuerHistory,
   loadBundledIssuerHistory,
+  callerHistoryForTrust,
+  checkReceiptIssuerHistory,
 } = await import('../dist/issuer-history.js');
 const { verifyTreeHeadTrust, PINNED_BASE_ANCHOR_WALLET } = await import('../dist/anchor-trust.js');
 const { verifyReceipt, legacyReceiptFingerprint, canonicalIssuerPayload } = await import('../dist/index.js');
@@ -1202,6 +1204,257 @@ test('a fork that would close the bundled window does not (head stays trusted)',
   });
   assert.equal(trusted.ok, true, trusted.reason || trusted.message);
   assert.notEqual(trusted.reason, 'head_kid_window');
+});
+
+function k2Only(signer, k2) {
+  return historyOf([entryFor(k2, { notBefore: '2026-10-01T00:00:00Z' })], signer, 9, 9);
+}
+
+function revokedBundle(k1) {
+  const row = entryFor(k1, {
+    notBefore: '2026-09-04T08:52:05Z',
+    status: 'revoked',
+    revokedAt: '2026-09-05T00:00:00Z',
+  });
+  return historyOf([row], k1, 2, 2);
+}
+
+function headForKey(key) {
+  return sealHead({
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 5,
+    published_at: '2026-10-31T00:00:00.000Z',
+    anchors: { base: { status: 'pending' }, solana: { status: 'pending' } },
+  }, key, { embed: false });
+}
+
+test('a K2-only history signed by bundled K1 does not supply that key (head_key_untrusted)', () => {
+  const { k1, bundled } = bundlePair();
+  const k2 = issuerKey();
+  const fork = k2Only(k1, k2);
+  const snap = { [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } } };
+  const trusted = verifyTreeHeadTrust(headForKey(k2), {
+    trustedKids: [k1.kid],
+    issuerHistory: fork.doc,
+    ...snap,
+  });
+  assert.equal(trusted.ok, false);
+  assert.equal(trusted.reason, 'head_key_untrusted');
+});
+
+test('a K2-only history signed by revoked bundled K1 does not supply that key (head_key_untrusted)', () => {
+  const k1 = issuerKey();
+  const bundle = revokedBundle(k1);
+  const k2 = issuerKey();
+  const fork = k2Only(k1, k2);
+  const snap = { [TEST_SNAPSHOT]: { issuerHistory: { document: bundle.doc, bytes: bundle.bytes } } };
+  const trusted = verifyTreeHeadTrust(headForKey(k2), {
+    trustedKids: [k1.kid],
+    issuerHistory: fork.doc,
+    ...snap,
+  });
+  assert.equal(trusted.ok, false);
+  assert.equal(trusted.reason, 'head_key_untrusted');
+});
+
+test('a K2-only history signed by bundled K1 does not supply a fixed-head key (key)', () => {
+  const { k1, bundled } = bundlePair();
+  const k2 = issuerKey();
+  const fork = k2Only(k1, k2);
+  const snap = { [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } } };
+  const body = {
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 5,
+    epoch: 2,
+    published_at: '2026-10-31T00:00:00.000Z',
+    anchors: { base: { status: 'pending' }, solana: { status: 'pending' } },
+  };
+  const head = sealHead(body, k2, { embed: false });
+  head.fixed_head = fixedHeadFor(body, k2);
+  const outcome = fixedHeadOutcome(head, fork.doc, [k1.kid], snap);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.reason, 'key');
+});
+
+test('a K2-only history signed by revoked bundled K1 does not supply a fixed-head key (key)', () => {
+  const k1 = issuerKey();
+  const bundle = revokedBundle(k1);
+  const k2 = issuerKey();
+  const fork = k2Only(k1, k2);
+  const snap = { [TEST_SNAPSHOT]: { issuerHistory: { document: bundle.doc, bytes: bundle.bytes } } };
+  const body = {
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 5,
+    epoch: 2,
+    published_at: '2026-10-31T00:00:00.000Z',
+    anchors: { base: { status: 'pending' }, solana: { status: 'pending' } },
+  };
+  const head = sealHead(body, k2, { embed: false });
+  head.fixed_head = fixedHeadFor(body, k2);
+  const outcome = fixedHeadOutcome(head, fork.doc, [k1.kid], snap);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.reason, 'key');
+});
+
+test('a K2-only history signed by bundled K1 does not supply an epoch-record key', () => {
+  const { k1, bundled } = bundlePair();
+  const k2 = issuerKey();
+  const fork = k2Only(k1, k2);
+  const claims = { schema: 'chit402.tree_epoch.v1', payload_version: 1, epochs: [{ epoch: 1 }], orphans: [], unlogged: null };
+  const jws = signClaims(claims, k2, 'chit402-tree-epoch+jwt');
+  const record = { ...claims, issuer_signature: { jws, kid: k2.kid } };
+  const ok = epochRecordSignatureOk(record, jws, fork.doc, '2026-10-31T00:00:00.000Z', {
+    trustedKids: [k1.kid],
+    [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } },
+  });
+  assert.equal(ok, false);
+});
+
+test('a K2-only history signed by revoked bundled K1 does not supply an epoch-record key', () => {
+  const k1 = issuerKey();
+  const bundle = revokedBundle(k1);
+  const k2 = issuerKey();
+  const fork = k2Only(k1, k2);
+  const claims = { schema: 'chit402.tree_epoch.v1', payload_version: 1, epochs: [{ epoch: 1 }], orphans: [], unlogged: null };
+  const jws = signClaims(claims, k2, 'chit402-tree-epoch+jwt');
+  const record = { ...claims, issuer_signature: { jws, kid: k2.kid } };
+  const ok = epochRecordSignatureOk(record, jws, fork.doc, '2026-10-31T00:00:00.000Z', {
+    trustedKids: [k1.kid],
+    [TEST_SNAPSHOT]: { issuerHistory: { document: bundle.doc, bytes: bundle.bytes } },
+  });
+  assert.equal(ok, false);
+});
+
+test('a K2-only history signed by a caller pin outside the bundle supplies that key', () => {
+  const { k1, bundled } = bundlePair();
+  const k2 = issuerKey();
+  const k3 = issuerKey();
+  const fork = k2Only(k3, k2);
+  const snap = { [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } } };
+  const trusted = verifyTreeHeadTrust(headForKey(k2), {
+    trustedKids: [k3.kid],
+    issuerHistory: fork.doc,
+    ...snap,
+  });
+  assert.equal(trusted.ok, true, trusted.reason || trusted.message);
+  assert.equal(trusted.trust, 'issuer_history');
+});
+
+test('a caller JWKS key labelled with a pinned thumbprint is not that pin (issuer_history_invalid)', () => {
+  const k1 = issuerKey();
+  const k3 = issuerKey();
+  const labelled = { ...k3, kid: k1.kid, publicJwk: { ...k3.publicJwk, kid: k1.kid } };
+  const row = entryFor(k3, { notBefore: '2026-10-01T00:00:00Z' });
+  const history = historyOf([row], labelled, 1, 1);
+  delete history.doc.issuer_signature.issuer_jwk;
+  const head = headForKey(k3);
+  head.issuer_signature.kid = k1.kid;
+  const trusted = verifyTreeHeadTrust(head, {
+    trustedKids: [k1.kid],
+    callerJwks: { keys: [labelled.publicJwk] },
+    issuerHistory: history.doc,
+  });
+  assert.equal(trusted.ok, false);
+  assert.equal(trusted.reason, 'issuer_history_invalid');
+});
+
+test('head history trust uses the caller JWKS, not a fetched key under the same kid', () => {
+  const k1 = issuerKey();
+  const k2 = issuerKey();
+  const k3 = issuerKey();
+  const history = historyOf([entryFor(k2, { notBefore: '2026-10-01T00:00:00Z' })], k1, 1, 1);
+  delete history.doc.issuer_signature.issuer_jwk;
+  const fake = { ...k3.publicJwk, kid: k1.kid };
+  const trusted = verifyTreeHeadTrust(headForKey(k2), {
+    trustedKids: [k1.kid],
+    callerJwks: { keys: [k1.publicJwk] },
+    jwks: { keys: [fake] },
+    issuerHistory: history.doc,
+  });
+  assert.equal(trusted.ok, true, trusted.reason || trusted.message);
+  assert.equal(trusted.trust, 'issuer_history');
+});
+
+test('a fetched JWKS key does not sign receipt history (key untrusted)', async () => {
+  const k1 = issuerKey();
+  const decoy = issuerKey();
+  const history = historyOf([entryFor(k1, { notBefore: '2026-10-01T00:00:00Z' })], k1, 1, 1);
+  delete history.doc.issuer_signature.issuer_jwk;
+  const receipt = signedReceipt(k1, receiptClaims(k1));
+  const result = await verifyReceipt(receipt, {
+    jwks: { keys: [decoy.publicJwk] },
+    trustedKids: [k1.kid],
+    issuerHistory: history.doc,
+    fetchJwks: true,
+    jwksUri: 'https://api.chit402.com/.well-known/jwks.json',
+    fetchImpl: async () => new Response(JSON.stringify({ keys: [k1.publicJwk] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+    requirePreimages: false,
+    checkPayer: false,
+  });
+  assert.equal(result.issuer_history.ok, false, result.issuer_history.reason);
+  assert.equal(result.issuer_history.reason, 'key untrusted');
+});
+
+test('a bundled JWK relabelled under a new kid does not supply a tree-head key (head_key_untrusted)', () => {
+  const { k1, bundled } = bundlePair();
+  const k3 = issuerKey();
+  const relabelled = entryFor(k1, {
+    notBefore: '2026-10-01T00:00:00Z',
+    kid: 'relabelled-kid',
+    jwk: { ...k1.publicJwk, kid: 'relabelled-kid' },
+  });
+  const fork = historyOf([relabelled], k3, 9, 9);
+  const head = sealHead({
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 5,
+    published_at: '2026-10-31T00:00:00.000Z',
+    anchors: { base: { status: 'pending' }, solana: { status: 'pending' } },
+  }, { ...k1, kid: 'relabelled-kid' }, { embed: false });
+  const trusted = verifyTreeHeadTrust(head, {
+    trustedKids: [k3.kid],
+    issuerHistory: fork.doc,
+    [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } },
+  });
+  assert.equal(trusted.ok, false);
+  assert.equal(trusted.reason, 'head_key_untrusted');
+});
+
+test('a sealed v1 snapshot stays the caller history for the head, fixed head, and epoch', async () => {
+  const v1 = JSON.parse(readFileSync(new URL('../issuer-history.v1.snapshot.json', import.meta.url), 'utf8'));
+  const bundle = loadBundledIssuerHistory().document;
+  assert.equal(callerHistoryForTrust(v1, bundle, [PRODUCTION_KID]).head_hash, v1.head_hash);
+  const checked = await checkReceiptIssuerHistory({}, {
+    document: v1,
+    kid: PRODUCTION_KID,
+    issuedAt: '2026-10-01T00:00:00Z',
+    trustedKids: [PRODUCTION_KID],
+  });
+  assert.equal(checked.ok, true, checked.reason);
+  assert.equal(checked.document?.head_hash, v1.head_hash);
+  const head = JSON.parse(readFileSync(new URL('./fixtures/public/tree-head-size3.json', import.meta.url), 'utf8'));
+  const trusted = verifyTreeHeadTrust(head, { issuerHistory: v1, trustedKids: [PRODUCTION_KID] });
+  assert.equal(trusted.ok, true, trusted.reason || trusted.message);
+  const fixed = fixedHeadOutcome(head, v1, [PRODUCTION_KID]);
+  assert.equal(fixed, null);
+  const epoch = epochRecordSignatureOk(
+    { schema: 'chit402.tree_epoch.v1', epochs: [] },
+    'a.b.c',
+    v1,
+    '2026-10-01T00:00:00.000Z',
+    { trustedKids: [PRODUCTION_KID] },
+  );
+  assert.equal(epoch, false);
 });
 
 test('source scan: bundled snapshots and the legacy allowlist are byte-identical to 7207bf46', () => {

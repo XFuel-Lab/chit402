@@ -182,6 +182,38 @@
       "replace": "windowDoc = issuerHistory;",
       "nth": 1,
       "suite": "verify"
+    },
+    {
+      "id": "W3_head_fetched_jwks",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "historySignerJwks\\(options\\.trustedKids, callerJwks\\)",
+      "replace": "historySignerJwks(options.trustedKids, jwks)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "W5_sealed_not_allowed",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "sameHistoryDocument\\(supplied, bundle\\) \\|\\| sealedHistoryDocument\\(supplied\\)",
+      "replace": "sameHistoryDocument(supplied, bundle)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "W6_thumbprint_touch_off",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(entry\\?\\.jwk && isEs256PublicJwk\\(entry\\.jwk\\) && ids\\.has\\(jwkThumbprint\\(entry\\.jwk\\)\\)\\) return true;",
+      "replace": "if (false && entry?.jwk) return true;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "W9_receipt_history_fetched_jwks",
+      "file": "packages/verify/src/index.ts",
+      "find": "jwks: historySignerJwks\\(options\\.trustedKids, options\\.jwks\\),",
+      "replace": "jwks: jwks?.keys ? { keys: jwks.keys } : undefined,",
+      "nth": 1,
+      "suite": "verify"
     }
   ]
 }
