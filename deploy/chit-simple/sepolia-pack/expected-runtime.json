@@ -1,0 +1,15 @@
+{
+  "solc": "0.8.24",
+  "viaIR": true,
+  "optimizerRuns": 200,
+  "evmVersion": "cancun",
+  "note": "Runtime bytecode embeds the domain immutable, so the hash depends on chainId and the deployed address. The example below is a local prediction for a fixed deployer, nonce and checkpoint. It is not a Sepolia deployment. Recompute for the real deployer and checkpoint before the owner broadcasts.",
+  "example": {
+    "chainId": 84532,
+    "deployer": "0x1111111111111111111111111111111111111111",
+    "nonce": 0,
+    "checkpoint": "0x2222222222222222222222222222222222222222",
+    "contract": "0x8f7a45ebde059392e46a46dcc14ab24681a961ea",
+    "runtimeCodeHash": "0xb1ba9e8e42b1f9a72a8292746c850a233359bfc30d81c8d8cdbb716ddae8bc8b"
+  }
+}
