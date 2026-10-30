@@ -6,9 +6,10 @@ import {ChitAnchor} from "chit-simple/ChitAnchor.sol";
 /// @notice Sepolia deploy for the owner. This file holds no key and no RPC URL.
 ///         Broadcast only with forge's --broadcast and the owner's own key:
 ///
-///         Run from deploy/chit-simple/sepolia-pack:
+///         Run from deploy/chit-simple/sepolia-pack. The sources are
+///         contracts/chit-simple in this repo, not a copy in the pack.
 ///         forge script DeployChitAnchor.s.sol:DeployChitAnchor \
-///           --rpc-url <base-sepolia-rpc> --private-key <testnet-key> --broadcast
+///           --rpc-url <base-sepolia-rpc> --private-key <the owner's key> --broadcast
 ///
 ///         Set CHIT_ANCHOR_CHECKPOINT to the checkpoint address first.
 ///         Chain id must be 84532. Without --broadcast nothing is sent.
