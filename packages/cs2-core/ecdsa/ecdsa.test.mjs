@@ -17,16 +17,14 @@ import {
   eip1559Digest,
   eip1559Serialize,
   ethereumAddress,
-  highSDer,
   keccak256,
   lowS,
   normalizeDer,
   pointMultiply,
-  publicPoint,
   recoverPublicKey,
-  signRawDigest,
   yParityByTrial,
 } from './index.js';
+import { highSDer, publicPoint, signRawDigest } from './sign.js';
 import { rlpBytes, rlpDecode, rlpInt, rlpList } from './rlp.js';
 
 const P256_N = 'ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551';
@@ -86,7 +84,7 @@ test('RLP matches the ethereum wiki strings and the integer 0', () => {
   assert.equal(bytesToHex(rlpDecode(hexToBytes('83646f67'))), bytesToHex(new TextEncoder().encode('dog')));
 });
 
-test('DS-65 domain for 0x33…33 on chain 8453 is the illustrative digest', () => {
+test('illustrative domain for 0x33…33 on chain 8453', () => {
   const contract = `0x${'33'.repeat(20)}`;
   assert.equal(checkpointDomainHex(8453, contract), '1ec6130d39d03ed3b8bce8139d615ffe17377a1cf2cab8f4b7bf98f45dda27b0');
   assert.notEqual(checkpointDomainHex(84532, contract), checkpointDomainHex(8453, contract));
@@ -102,6 +100,9 @@ test('strict DER rejects the same malformed shapes on both curves', () => {
     rejects(Buffer.from([0x30, 0x81, 0x06, 0x02, 0x01, 0x01, 0x02, 0x01, 0x01]));
     const good = derSeq(Buffer.from([1]), Buffer.from([2]));
     rejects(Buffer.concat([good, Buffer.from([0x00])]));
+    const declaredShort = Buffer.from(good);
+    declaredShort[1] = good[1] - 1;
+    rejects(declaredShort);
     const inside = Buffer.concat([good, Buffer.from([0x00])]);
     inside[1] = good[1] + 1;
     rejects(inside);

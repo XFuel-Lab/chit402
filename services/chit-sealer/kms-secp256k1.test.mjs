@@ -8,8 +8,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bytesToBig, hexToBytes } from '../../packages/cs2-core/ecdsa/bytes.js';
-import { P256, SECP256K1, eip1559Decode, highSDer, publicPoint, signRawDigest } from '../../packages/cs2-core/ecdsa/index.js';
+import { bytesToBig, concat, hexToBytes } from '../../packages/cs2-core/ecdsa/bytes.js';
+import { P256, SECP256K1, eip1559Decode, eip1559Serialize } from '../../packages/cs2-core/ecdsa/index.js';
+import { highSDer, publicPoint, signRawDigest } from '../../packages/cs2-core/ecdsa/sign.js';
+import { rlpBytes, rlpInt, rlpList } from '../../packages/cs2-core/ecdsa/rlp.js';
 import {
   broadcastAnchor,
   broadcastCommittedAnchor,
@@ -27,6 +29,8 @@ function env(extra = {}) {
   return {
     CHIT_CHECKPOINT_KMS_KEY_ID: 'alias/chit-checkpoint-test',
     CHIT_CHECKPOINT_KMS_REGION: 'us-east-1',
+    CHIT_CHECKPOINT_ADDRESS: q14.address,
+    CHIT_CHECKPOINT_MAX_FEE_PER_GAS: q14.fees.maxFeePerGas,
     ...extra,
   };
 }
@@ -111,14 +115,28 @@ function liveMock(d = 0xA11CEn) {
   };
 }
 
-function memoryLog() {
+function memoryLog(hooks = {}) {
   const order = [];
   const mem = { text: '' };
   const io = {
     mkdirSync() { order.push('mkdir'); },
-    openSync() { order.push('open'); return 7; },
-    writeSync(_fd, line) { order.push('write'); mem.text += line; return line.length; },
-    fsyncSync() { order.push('fsync'); },
+    openSync(target) {
+      order.push(String(target).endsWith('.jsonl') ? 'open-file' : 'open-dir');
+      return 7;
+    },
+    writeSync(_fd, data, offset, length) {
+      order.push('write');
+      if (hooks.writeSync) return hooks.writeSync(mem, data, offset, length);
+      const buf = Buffer.isBuffer(data) ? data : Buffer.from(String(data));
+      const start = offset ?? 0;
+      const n = length == null ? buf.length - start : length;
+      mem.text += buf.subarray(start, start + n).toString('utf8');
+      return n;
+    },
+    fsyncSync() {
+      order.push('fsync');
+      if (hooks.fsyncSync) hooks.fsyncSync(order);
+    },
     closeSync() { order.push('close'); },
     existsSync() { return mem.text.length > 0; },
     readFileSync() { return mem.text; },
@@ -199,6 +217,14 @@ test('Q14 dry-run: DIGEST, high-S DER, secp256k1 low-S, y-parity, intent before 
     env: env({ CHIT_CHECKPOINT_ADDRESS: q14.address.toUpperCase().replace('0X', '0x') }),
   });
   const { log, order } = memoryLog();
+  const rawSend = client.send.bind(client);
+  client.send = async (command, options) => {
+    if (command?.name === 'Sign') {
+      assert.ok(order.includes('fsync'), 'the intent is fsynced before Sign');
+      assert.ok(order.includes('open-dir'), 'the directory is fsynced when the log is created');
+    }
+    return rawSend(command, options);
+  };
   let sawIntent = false;
   let sawSigned = false;
   const sent = [];
@@ -315,7 +341,9 @@ test('a rebuilt epoch at a used nonce is refused before another signature', asyn
     send() { return '0x' + '33'.repeat(32); },
   });
   const signs = client.calls.filter((call) => call.name === 'Sign').length;
-  const rebuilt = { ...q14Anchor(), epoch: 2 };
+  const bytes = Buffer.from(q14.calldata, 'hex');
+  bytes.writeBigUInt64BE(2n, 32);
+  const rebuilt = { ...q14Anchor(), epoch: 2, calldata: bytes.toString('hex') };
   assert.throws(
     () => commitAnchorIntent(log, rebuilt, signer.address),
     (err) => err.code === 'nonce_payload_conflict',
@@ -323,11 +351,18 @@ test('a rebuilt epoch at a used nonce is refused before another signature', asyn
   assert.equal(client.calls.filter((call) => call.name === 'Sign').length, signs);
 });
 
-test('the same nonce refuses a different hourStart even when the calldata is unchanged', async () => {
+test('a different hour at the same nonce is refused', () => {
   const { log } = memoryLog();
   commitAnchorIntent(log, q14Anchor(), q14.address);
+  const hour = q14.hourStart + 3600;
   assert.throws(
-    () => commitAnchorIntent(log, { ...q14Anchor(), hourStart: q14.hourStart + 3600 }, q14.address),
+    () => commitAnchorIntent(log, { ...q14Anchor(), hourStart: hour }, q14.address),
+    (err) => err.code === 'intent_payload_mismatch',
+  );
+  const bytes = Buffer.from(q14.calldata, 'hex');
+  bytes.writeBigUInt64BE(BigInt(hour), 40);
+  assert.throws(
+    () => commitAnchorIntent(log, { ...q14Anchor(), hourStart: hour, calldata: bytes.toString('hex') }, q14.address),
     (err) => err.code === 'nonce_payload_conflict',
   );
 });
@@ -370,8 +405,12 @@ test('broadcast without a committed intent does not send', async () => {
 });
 
 test('a fee bump keeps the nonce and the calldata and writes the new raw before send', async () => {
+  const quote = bumpFeeQuote(q14.fees);
   const client = liveMock();
-  const signer = await createCheckpointSigner({ client, env: env() });
+  const signer = await createCheckpointSigner({
+    client,
+    env: env({ CHIT_CHECKPOINT_MAX_FEE_PER_GAS: quote.maxFeePerGas.toString() }),
+  });
   const dir = mkdtempSync(join(tmpdir(), 'chit-intent-'));
   const log = openAnchorIntentLog(dir);
   const first = await broadcastAnchor({
@@ -381,7 +420,6 @@ test('a fee bump keeps the nonce and the calldata and writes the new raw before 
     fees: q14.fees,
     send() { return '0x' + '55'.repeat(32); },
   });
-  const quote = bumpFeeQuote(q14.fees);
   assert.equal(quote.gasLimit, BigInt(q14.fees.gasLimit));
   assert.equal(quote.maxFeePerGas, (BigInt(q14.fees.maxFeePerGas) * 110n) / 100n + 1n);
   assert.equal(quote.maxPriorityFeePerGas, (BigInt(q14.fees.maxPriorityFeePerGas) * 110n) / 100n + 1n);
@@ -407,6 +445,13 @@ test('a fee bump keeps the nonce and the calldata and writes the new raw before 
   assert.equal(client.calls.filter((call) => call.name === 'Sign').length, 2);
   assert.equal(b.s.length, 64);
   assert.ok(BigInt(`0x${b.s}`) <= (SECP256K1.order >> 1n));
+  let resent = null;
+  await broadcastCommittedAnchor(log, { nonce: q14.nonce, fees: q14.fees }, (raw) => {
+    resent = raw;
+    return `0x${'77'.repeat(32)}`;
+  });
+  assert.equal(resent, `0x${first.raw}`);
+  assert.equal(client.calls.filter((call) => call.name === 'Sign').length, 2);
 });
 
 test('sign without an intent does not call KMS', async () => {
@@ -445,5 +490,262 @@ test('GetPublicKey failure is unavailable and does not sign', async () => {
   await assert.rejects(
     () => createCheckpointSigner({ client, env: env({ CHECKPOINT_PRIVATE_KEY: '0xabc' }) }),
     (err) => err.code === 'checkpoint_sign_unavailable',
+  );
+});
+
+test('an empty address pin is refused before any KMS call', async () => {
+  const client = mockKms();
+  await assert.rejects(
+    () => createCheckpointSigner({ client, env: env({ CHIT_CHECKPOINT_ADDRESS: '  ' }) }),
+    (err) => err.code === 'checkpoint_address_mismatch',
+  );
+  assert.equal(client.calls.length, 0);
+  await assert.rejects(
+    () => createCheckpointSigner({ client, env: env({ CHIT_CHECKPOINT_MAX_FEE_PER_GAS: '' }) }),
+    (err) => err.code === 'fee_ceiling',
+  );
+});
+
+test('calldata is checked at fixed offsets, including epoch, hour and size', () => {
+  const flipped = Buffer.from(q14.calldata, 'hex');
+  flipped[0] ^= 0xff;
+  assert.throws(
+    () => commitAnchorIntent(memoryLog().log, { ...q14Anchor(), calldata: flipped.toString('hex') }, q14.address),
+    (err) => err.code === 'intent_payload_mismatch',
+  );
+  const shifted = `00${q14.calldata}`;
+  assert.throws(
+    () => commitAnchorIntent(memoryLog().log, { ...q14Anchor(), calldata: shifted }, q14.address),
+    (err) => err.code === 'intent_payload_mismatch',
+  );
+  assert.throws(
+    () => commitAnchorIntent(memoryLog().log, { ...q14Anchor(), epoch: 7 }, q14.address),
+    (err) => err.code === 'intent_payload_mismatch',
+  );
+  assert.throws(
+    () => commitAnchorIntent(memoryLog().log, { ...q14Anchor(), hourStart: q14.hourStart + 3600 }, q14.address),
+    (err) => err.code === 'intent_payload_mismatch',
+  );
+  assert.throws(
+    () => commitAnchorIntent(memoryLog().log, { ...q14Anchor(), size: 2 }, q14.address),
+    (err) => err.code === 'intent_payload_mismatch',
+  );
+  const bytes = Buffer.from(q14.calldata, 'hex');
+  bytes.writeBigUInt64BE(7n, 32);
+  const row = commitAnchorIntent(
+    memoryLog().log,
+    { ...q14Anchor(), epoch: 7, calldata: bytes.toString('hex') },
+    q14.address,
+  );
+  assert.equal(row.epoch, '7');
+});
+
+test('the same epoch cannot be committed at a second nonce', () => {
+  const { log } = memoryLog();
+  commitAnchorIntent(log, q14Anchor(), q14.address);
+  assert.throws(
+    () => commitAnchorIntent(log, { ...q14Anchor(), nonce: 1 }, q14.address),
+    (err) => err.code === 'epoch_already_open',
+  );
+});
+
+test('the same nonce and payload from another sender is refused', () => {
+  const { log } = memoryLog();
+  commitAnchorIntent(log, q14Anchor(), q14.address);
+  assert.throws(
+    () => commitAnchorIntent(log, q14Anchor(), `0x${'11'.repeat(20)}`),
+    (err) => err.code === 'nonce_payload_conflict',
+  );
+});
+
+test('an intent committed for one address is not signed by another', async () => {
+  const { log } = memoryLog();
+  commitAnchorIntent(log, q14Anchor(), q14.address);
+  let signed = 0;
+  const other = {
+    address: `0x${'22'.repeat(20)}`,
+    feeCeiling: q14.fees.maxFeePerGas,
+    async signEip1559() { signed += 1; return { raw: new Uint8Array() }; },
+  };
+  await assert.rejects(
+    () => signCommittedAnchor(other, log, { nonce: 0, fees: q14.fees }),
+    (err) => err.code === 'checkpoint_address_mismatch',
+  );
+  assert.equal(signed, 0);
+});
+
+function typedRaw(overrides) {
+  const tx = {
+    chainId: BigInt(q14.chainId),
+    nonce: 0n,
+    maxPriorityFeePerGas: 1n,
+    maxFeePerGas: 2n,
+    gasLimit: 100000n,
+    to: q14.contract,
+    value: 0n,
+    data: hexToBytes(q14.calldata),
+    ...overrides,
+  };
+  if (overrides.value != null && overrides.value !== 0n) {
+    const fields = [
+      rlpInt(tx.chainId),
+      rlpInt(tx.nonce),
+      rlpInt(tx.maxPriorityFeePerGas),
+      rlpInt(tx.maxFeePerGas),
+      rlpInt(tx.gasLimit),
+      rlpBytes(hexToBytes(tx.to)),
+      rlpInt(tx.value),
+      rlpBytes(tx.data),
+      rlpList([]),
+      rlpInt(0),
+      rlpInt(1),
+      rlpInt(1),
+    ];
+    return concat([Uint8Array.of(0x02), rlpList(fields)]);
+  }
+  return eip1559Serialize(tx, { yParity: 0, r: new Uint8Array(32).fill(1), s: new Uint8Array(32).fill(1) });
+}
+
+test('a signed transaction that drifts from the intent is refused', async () => {
+  const cases = [
+    typedRaw({ data: new Uint8Array(120) }),
+    typedRaw({ nonce: 9n }),
+    typedRaw({ chainId: 1n }),
+    typedRaw({ to: `0x${'33'.repeat(19)}44` }),
+    typedRaw({ value: 1n }),
+  ];
+  for (const raw of cases) {
+    const { log } = memoryLog();
+    commitAnchorIntent(log, q14Anchor(), q14.address);
+    const signer = {
+      address: q14.address,
+      feeCeiling: q14.fees.maxFeePerGas,
+      async signEip1559() { return { raw, hash: new Uint8Array(32), yParity: 0 }; },
+    };
+    await assert.rejects(
+      () => signCommittedAnchor(signer, log, { nonce: 0, fees: q14.fees }),
+      (err) => err.code === 'intent_payload_mismatch',
+    );
+  }
+});
+
+test('a fee bump above the ceiling does not sign', async () => {
+  const client = mockKms();
+  const signer = await createCheckpointSigner({ client, env: env() });
+  const { log } = memoryLog();
+  commitAnchorIntent(log, q14Anchor(), signer.address);
+  const quote = bumpFeeQuote(q14.fees);
+  assert.throws(() => bumpFeeQuote(q14.fees, q14.fees.maxFeePerGas), (err) => err.code === 'fee_ceiling');
+  await assert.rejects(
+    () => bumpAnchorFees({
+      signer,
+      log,
+      nonce: 0,
+      fees: quote,
+      send() { throw new Error('sent'); },
+    }),
+    (err) => err.code === 'fee_ceiling',
+  );
+  assert.equal(client.calls.some((call) => call.name === 'Sign'), false);
+});
+
+test('an fsync failure before Sign does not sign or send', async () => {
+  const client = mockKms();
+  const signer = await createCheckpointSigner({ client, env: env() });
+  const { log } = memoryLog({
+    fsyncSync() { throw new Error('disk'); },
+  });
+  let sent = 0;
+  await assert.rejects(
+    () => broadcastAnchor({
+      signer,
+      log,
+      anchor: q14Anchor(),
+      fees: q14.fees,
+      send() { sent += 1; return '0x1'; },
+    }),
+    (err) => err.message === 'disk',
+  );
+  assert.equal(client.calls.some((call) => call.name === 'Sign'), false);
+  assert.equal(sent, 0);
+});
+
+test('an fsync failure after Sign does not send', async () => {
+  const client = mockKms();
+  const signer = await createCheckpointSigner({ client, env: env() });
+  let n = 0;
+  const { log } = memoryLog({
+    fsyncSync() {
+      n += 1;
+      if (n >= 3) throw new Error('disk');
+    },
+  });
+  let sent = 0;
+  await assert.rejects(
+    () => broadcastAnchor({
+      signer,
+      log,
+      anchor: q14Anchor(),
+      fees: q14.fees,
+      send() { sent += 1; return '0x1'; },
+    }),
+    (err) => err.message === 'disk',
+  );
+  assert.equal(client.calls.filter((call) => call.name === 'Sign').length, 1);
+  assert.equal(sent, 0);
+});
+
+test('a restart after a crashed send reuses the signed raw', async () => {
+  const client = liveMock();
+  const signer = await createCheckpointSigner({ client, env: env() });
+  const dir = mkdtempSync(join(tmpdir(), 'chit-intent-'));
+  const log = openAnchorIntentLog(dir);
+  const sent = [];
+  await assert.rejects(
+    () => broadcastAnchor({
+      signer,
+      log,
+      anchor: q14Anchor(),
+      fees: q14.fees,
+      send(raw) { sent.push(raw); throw new Error('crash'); },
+    }),
+    (err) => err.message === 'crash',
+  );
+  const signs = client.calls.filter((call) => call.name === 'Sign').length;
+  const restarted = openAnchorIntentLog(dir);
+  await broadcastAnchor({
+    signer,
+    log: restarted,
+    anchor: q14Anchor(),
+    fees: q14.fees,
+    send(raw) { sent.push(raw); return `0x${'99'.repeat(32)}`; },
+  });
+  assert.equal(client.calls.filter((call) => call.name === 'Sign').length, signs);
+  assert.equal(sent[0], sent[1]);
+});
+
+test('a short write is a failure and a torn line is not a SyntaxError', () => {
+  const stopped = memoryLog({
+    writeSync() { return 0; },
+  });
+  assert.throws(
+    () => commitAnchorIntent(stopped.log, q14Anchor(), q14.address),
+    (err) => err.code === 'intent_log_short',
+  );
+  const short = memoryLog({
+    writeSync(mem, data, offset, length) {
+      const buf = Buffer.from(data);
+      const start = offset ?? 0;
+      const n = Math.min(10, length);
+      mem.text += buf.subarray(start, start + n).toString('utf8');
+      return n;
+    },
+  });
+  commitAnchorIntent(short.log, q14Anchor(), q14.address);
+  assert.equal(short.log.read()[0].status, 'intent');
+  short.mem.text = short.mem.text.slice(0, 10);
+  assert.throws(
+    () => short.log.read(),
+    (err) => err.code === 'intent_log_torn' && !(err instanceof SyntaxError),
   );
 });

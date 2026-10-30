@@ -1,8 +1,7 @@
 /**
- * DS-65. domain = SHA-256("chit402-checkpoint-v1" || chainId as 8-byte
- * big-endian || the contract address). The EIP-1559 signature covers
- * chainId, the contract (to) and this domain when the domain bytes sit
- * in the calldata.
+ * Checkpoint domain: SHA-256("chit402-checkpoint-v1" || chainId as 8-byte
+ * big-endian || the contract address). The transaction signature covers
+ * chainId, the contract and this domain when those bytes sit in the calldata.
  */
 
 import { createHash } from 'node:crypto';

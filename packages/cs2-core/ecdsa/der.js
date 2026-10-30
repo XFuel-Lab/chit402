@@ -1,7 +1,7 @@
 /**
  * Strict DER ECDSA → 64-byte r||s, then low-S.
- * The order comes from the curve argument (DS-123). This file does not
- * embed either curve's order.
+ * The order comes from the curve argument. This file does not embed
+ * either curve's order.
  */
 
 import { bigToBytes, bytesToBig } from './bytes.js';

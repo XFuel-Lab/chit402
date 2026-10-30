@@ -1,6 +1,6 @@
 /**
- * Curve orders are parameters (DS-123). The secp256k1 path receives
- * SECP256K1 and never reads P256.order. P-256's order lives only on P256.
+ * Curve orders are parameters. The secp256k1 path receives SECP256K1
+ * and never reads P256.order. P-256's order lives only on P256.
  *
  * Both primes are 3 mod 4, so a square root is a^((p+1)/4). Cofactor is 1.
  */

@@ -147,7 +147,7 @@
       "replace": "const TAG = new TextEncoder().encode('chit402-checkpoint-v2');",
       "nth": 1,
       "suite": "ecdsa",
-      "note": "DS-65 domain tag is chit402-checkpoint-v1"
+      "note": "the domain tag is chit402-checkpoint-v1"
     },
     {
       "id": "K16_domain_endian",
@@ -213,22 +213,22 @@
       "note": "a used nonce cannot carry a different epoch"
     },
     {
-      "id": "S4_hour_not_in_fingerprint",
+      "id": "S4_hour_offset",
       "file": "services/chit-sealer/kms-secp256k1.js",
-      "find": "`hourStart=\\$\\{hourStart\\}`,",
-      "replace": "`hourStart=0`,",
+      "find": "fields.hourStart !== hourStart",
+      "replace": "false && fields.hourStart !== hourStart",
       "nth": 1,
       "suite": "sealer",
-      "note": "hourStart is part of the committed payload"
+      "note": "hourStart is compared at its calldata offset"
     },
     {
-      "id": "S5_domain_not_required",
+      "id": "S5_calldata_offsets",
       "file": "services/chit-sealer/kms-secp256k1.js",
-      "find": "if \\(!calldata.includes\\(domain\\) \\|\\| !calldata.includes\\(root\\) \\|\\| !calldata.includes\\(stateRoot\\)\\)",
-      "replace": "if (!calldata.includes(root) || !calldata.includes(stateRoot))",
+      "find": "fields.domain !== domain",
+      "replace": "false && fields.domain !== domain",
       "nth": 1,
       "suite": "sealer",
-      "note": "the committed domain must sit in the calldata"
+      "note": "the domain is compared at the start of the calldata"
     },
     {
       "id": "S6_broadcast_before_commit",
@@ -301,6 +301,114 @@
       "nth": 1,
       "suite": "sealer",
       "note": "the checkpoint key spec is ECC_SECG_P256K1"
+    },
+    {
+      "id": "K20_der_sequence_length",
+      "file": "packages/cs2-core/ecdsa/der.js",
+      "find": "if \\(next \\+ length !== buf.length\\) throw derError\\(\\);",
+      "replace": "if (false && next + length !== buf.length) throw derError();",
+      "nth": 1,
+      "suite": "ecdsa",
+      "note": "the SEQUENCE length must match the buffer"
+    },
+    {
+      "id": "S14_pin_optional",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(!pinned\\) throw coded\\('checkpoint address pin is required', 'checkpoint_address_mismatch'\\);",
+      "replace": "if (false && !pinned) throw coded('checkpoint address pin is required', 'checkpoint_address_mismatch');",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "an empty address pin is refused"
+    },
+    {
+      "id": "S15_fee_ceiling",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(maxFee > cap \\|\\| tip > cap\\) throw coded\\('fee bump exceeds the ceiling', 'fee_ceiling'\\);",
+      "replace": "if (false && (maxFee > cap || tip > cap)) throw coded('fee bump exceeds the ceiling', 'fee_ceiling');",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "a quote above the configured max fee is refused"
+    },
+    {
+      "id": "S16_epoch_two_nonces",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(otherNonce\\) throw coded\\('epoch already has a live intent', 'epoch_already_open'\\);",
+      "replace": "if (false && otherNonce) throw coded('epoch already has a live intent', 'epoch_already_open');",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "one live intent per epoch"
+    },
+    {
+      "id": "S17_post_sign_chain",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "\\|\\| decoded.chainId !== BigInt\\(intent.chainId\\)",
+      "replace": "",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the signed chain id must match the intent"
+    },
+    {
+      "id": "S18_post_sign_value",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "\\|\\| decoded.value !== 0n",
+      "replace": "",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the signed value must be zero"
+    },
+    {
+      "id": "S19_signer_address",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(intent.from !== signer.address\\)",
+      "replace": "if (false && intent.from !== signer.address)",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the signer must be the address on the intent"
+    },
+    {
+      "id": "S20_nonce_sender",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "row.fingerprint !== body.fingerprint \\|\\| row.from !== sender",
+      "replace": "row.fingerprint !== body.fingerprint",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "a nonce is bound to one sender"
+    },
+    {
+      "id": "S21_broadcast_fees",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "&& row.raw && feesMatch\\(row.fees, quote\\)",
+      "replace": "&& row.raw",
+      "nth": 2,
+      "suite": "sealer",
+      "note": "broadcast sends the raw signed at the quoted fees"
+    },
+    {
+      "id": "S22_short_write",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(!Number.isInteger\\(n\\) \\|\\| n <= 0 \\|\\| offset \\+ n > buf.length\\) \\{\\n      throw coded\\('intent log write was short', 'intent_log_short'\\);\\n    \\}",
+      "replace": "if (!Number.isInteger(n) || n <= 0 || offset + n > buf.length) {\n      break;\n    }",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "a short write is a failure"
+    },
+    {
+      "id": "S23_torn_line",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(!text.endsWith\\('\\\\n'\\)\\) throw coded\\('intent log ends with a torn line', 'intent_log_torn'\\);",
+      "replace": "if (!text.endsWith('\\n')) text = text.slice(0, text.lastIndexOf('\\n') + 1);",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "a torn final line is refused, not dropped"
+    },
+    {
+      "id": "S24_dir_fsync",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "if \\(!existed\\) fsyncDirectory\\(io, dir\\);",
+      "replace": "if (false && !existed) fsyncDirectory(io, dir);",
+      "nth": 1,
+      "suite": "sealer",
+      "note": "the directory is fsynced when the log file is created"
     }
   ]
 }
