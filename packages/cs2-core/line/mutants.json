@@ -367,6 +367,20 @@
       "find": "const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;",
       "replace": "const P256_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;",
       "note": "low-S uses the secp256k1 order"
+    },
+    {
+      "id": "L53_alg_allowlist",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "export const ALGS = Object.freeze(new Set([1]));",
+      "replace": "export const ALGS = Object.freeze(new Set([0, 1, 2, 7, 255]));",
+      "note": "alg is not restricted to the allowlist"
+    },
+    {
+      "id": "L54_s_zero",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "if (s < 1n || s > P256_HALF_N) return fail('bad_sigma');",
+      "replace": "if (s > P256_HALF_N) return fail('bad_sigma');",
+      "note": "s = 0 is accepted"
     }
   ]
 }

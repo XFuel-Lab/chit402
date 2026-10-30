@@ -63,6 +63,9 @@ const STATE_EMPTY_PREFIX = 0x02;
 const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 const P256_HALF_N = P256_N >> 1n;
 
+/** The only σ algorithm. 1 is the P-256 low-S slot-entry alg. */
+export const ALGS = Object.freeze(new Set([1]));
+
 const ID_LENGTH_BY_KIND = new Map([
   [KIND_PAYTO, 20],
   [KIND_WALLET, 20],
@@ -132,6 +135,7 @@ export const REASONS = Object.freeze([
   'bad_depth',
   'bad_salt',
   'bad_sigma',
+  'bad_alg',
   'bad_uri',
   'unknown_field',
   'nonce_none',
@@ -353,6 +357,11 @@ function readUriPrefix(value) {
   return { ok: true, bytes };
 }
 
+function requireAlg(alg) {
+  if (!ALGS.has(alg)) return fail('bad_alg');
+  return { ok: true };
+}
+
 function checkSigma(sigma64) {
   if (sigma64.length !== 64) return fail('bad_length');
   const r = readBe(sigma64, 0, 32);
@@ -374,6 +383,10 @@ function readField(name, value, size) {
   if (bits) {
     const parsed = readUint(value, bits);
     if (!parsed.ok) return parsed;
+    if (name === 'alg') {
+      const allowed = requireAlg(Number(parsed.value));
+      if (!allowed.ok) return allowed;
+    }
     const encoded = new Uint8Array(size);
     writeBe(encoded, 0, parsed.value, size);
     return { ok: true, bytes: encoded };
@@ -440,6 +453,8 @@ export function encodeLine(parts) {
   if (!content.ok) return content;
   const sigma = writeFields(line, LAYOUT.sigma, SIGMA_FIELDS, parts.sigma);
   if (!sigma.ok) return sigma;
+  const algOk = requireAlg(line[LAYOUT.sigma]);
+  if (!algOk.ok) return algOk;
   const salts = checkSalts(
     fieldSlice(line, LAYOUT.payment, PAYMENT_FIELDS, 'saltP'),
     fieldSlice(line, LAYOUT.content, CONTENT_FIELDS, 'saltC'),
@@ -474,6 +489,8 @@ export function decodeLine(value) {
   if (!salts.ok) return salts;
   const prefix = fieldSlice(line, LAYOUT.content, CONTENT_FIELDS, 'uriPrefix');
   if (!uriPrefixOk(prefix)) return fail('bad_uri');
+  const algOk = requireAlg(line[LAYOUT.sigma]);
+  if (!algOk.ok) return algOk;
   const sigmaOk = checkSigma(fieldSlice(line, LAYOUT.sigma, SIGMA_FIELDS, 'sigma'));
   if (!sigmaOk.ok) return sigmaOk;
   return {
@@ -503,7 +520,7 @@ function dedupBytes(chainId, txHash, localLogIndex) {
 
 /**
  * Canonical payment id (chainId, blockHash, txIndex, local log index).
- * A missing blockHash is rejected. Thirty-two zero bytes are present.
+ * A missing or all-zero blockHash is rejected.
  * @param {object} input payment fields, or a full payment half
  */
 export function canonicalPaymentId(input) {
@@ -577,6 +594,8 @@ export function commitments(input) {
     if (!encoded.ok) return encoded;
     line = encoded.line;
   }
+  const algOk = requireAlg(line[LAYOUT.sigma]);
+  if (!algOk.ok) return algOk;
   const { p, k, c, sigmaDigest } = commitmentBytes(line);
   return {
     ok: true,
@@ -601,6 +620,8 @@ export function sigmaDigest(payment, k, alg) {
   if (!key.ok) return key;
   const algByte = readUint(alg, 8);
   if (!algByte.ok) return algByte;
+  const allowed = requireAlg(Number(algByte.value));
+  if (!allowed.ok) return allowed;
   const algBytes = new Uint8Array(1);
   writeBe(algBytes, 0, algByte.value, 1);
   const bytes = sha256(ascii(DOMAIN_SIG), id.bytes, key.bytes, algBytes);

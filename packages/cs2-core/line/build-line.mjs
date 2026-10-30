@@ -147,6 +147,7 @@ export function vectorDocument() {
       local_log_index: 'Receipt-local index of the Transfer log inside the transaction, not the RPC block logIndex. The sample uses txIndex 7 and localLogIndex 4: the Transfer is the fifth log in that receipt.',
       salts: 'salt_p and salt_c must each be non-zero and must differ. The codec does not prove they came from a CSPRNG.',
       y_dedup: 'The dedup key does not include blockHash, so one Transfer under two block hashes counts once.',
+      C_not_dedup: 'C is not a dedup key. One payment can carry two valid signatures and therefore two C values. The only identities are the canonical payment id, the Y dedup key, and the authorization key.',
       empty_depth: 'max_empty_depth is an implementation limit, not a wire field.',
     },
     implementation_limits: {
@@ -257,11 +258,17 @@ function negativeRows(line) {
   const zeroHash = Uint8Array.from(line);
   zeroHash.fill(0, HEADER_BYTES + 8, HEADER_BYTES + 40);
   const short = line.slice(0, LINE_BYTES - 1);
+  const alg0 = Uint8Array.from(line);
+  alg0[HEADER_BYTES + PAYMENT_BYTES + CONTENT_BYTES] = 0;
+  const alg2 = Uint8Array.from(line);
+  alg2[HEADER_BYTES + PAYMENT_BYTES + CONTENT_BYTES] = 2;
   const rows = [
     ['bad-padding', pad],
     ['bad-header', header],
     ['zero-block-hash', zeroHash],
     ['short-line', short],
+    ['alg-0', alg0],
+    ['alg-2', alg2],
   ];
   return rows.map(([id, bytes]) => {
     const got = decodeLine(bytes);

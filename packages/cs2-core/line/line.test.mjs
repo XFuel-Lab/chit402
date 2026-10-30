@@ -388,15 +388,15 @@ test('changing one half changes only its commitment', () => {
   assert.equal(sig.hex.P, base.hex.P);
   assert.equal(sig.hex.K, base.hex.K);
   assert.notEqual(sig.hex.C, base.hex.C);
-  const alg = commitments({
-    ...SAMPLE,
-    sigma: { ...SAMPLE.sigma, alg: 2 },
-  });
-  assert.equal(alg.hex.P, base.hex.P);
-  assert.equal(alg.hex.K, base.hex.K);
-  assert.notEqual(alg.hex.C, base.hex.C);
-  assert.notEqual(alg.hex.sigmaDigest, base.hex.sigmaDigest);
-  assert.notEqual(hex(encodeLine({ ...SAMPLE, sigma: { ...SAMPLE.sigma, alg: 2 } }).line), hex(encodeLine(SAMPLE).line));
+  for (const alg of [0, 2, 7, 255]) {
+    assertFail(encodeLine({ ...SAMPLE, sigma: { ...SAMPLE.sigma, alg } }), 'bad_alg');
+    assertFail(commitments({ ...SAMPLE, sigma: { ...SAMPLE.sigma, alg } }), 'bad_alg');
+    assertFail(sigmaDigest(SAMPLE.payment, base.K, alg), 'bad_alg');
+    const patched = Uint8Array.from(encodeLine(SAMPLE).line);
+    patched[738] = alg;
+    assertFail(decodeLine(patched), 'bad_alg');
+    assertFail(commitments(patched), 'bad_alg');
+  }
 });
 
 test('a payment id missing blockHash is rejected', () => {
@@ -461,7 +461,7 @@ test('non-zero padding is rejected and data bytes still decode', () => {
     if (i < 2) assertFail(result, 'bad_header');
     else if (i >= 803) assertFail(result, 'bad_padding');
     else if (!result.ok) {
-      assert.ok(['missing_block_hash', 'bad_salt', 'bad_uri', 'bad_sigma'].includes(result.reason), `${i} ${result.reason}`);
+      assert.ok(['missing_block_hash', 'bad_salt', 'bad_uri', 'bad_sigma', 'bad_alg'].includes(result.reason), `${i} ${result.reason}`);
     } else {
       assert.deepEqual(Buffer.from(encodeLine(partsOf(result)).line), Buffer.from(next));
     }
@@ -621,6 +621,7 @@ test('salts, URI prefix, low-S, canonical integers, and the authorization key', 
     return raw.toString('hex');
   }
   assert.equal(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(1n, half) } }).ok, true);
+  assertFail(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(1n, 0n) } }), 'bad_sigma');
   assertFail(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(1n, half + 1n) } }), 'bad_sigma');
   assertFail(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(0n, 1n) } }), 'bad_sigma');
   assertFail(encodeLine({ ...SAMPLE, sigma: { alg: 1, sigma: sigmaOf(P256_N, 1n) } }), 'bad_sigma');
@@ -709,7 +710,10 @@ test('the committed vector file matches the spec and the codec', () => {
     'bad-header': 'bad_header',
     'zero-block-hash': 'missing_block_hash',
     'short-line': 'bad_length',
+    'alg-0': 'bad_alg',
+    'alg-2': 'bad_alg',
   };
+  assert.match(vector.notes.C_not_dedup, /C is not a dedup key/);
   for (const row of vector.negatives) {
     assert.equal(row.reason, expectReason[row.id]);
     assert.equal(decodeLine(Uint8Array.from(Buffer.from(row.line_hex, 'hex'))).reason, row.reason);
