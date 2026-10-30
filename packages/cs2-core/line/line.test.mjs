@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderLineJson, VECTOR_PATH } from './build-line.mjs';
+import * as codec from './index.mjs';
 import {
   CONTENT_BYTES,
   HEADER_BYTES,
@@ -668,6 +669,18 @@ test('salts, URI prefix, low-S, canonical integers, and the authorization key', 
     nonce: '45'.repeat(32),
   });
   assert.notEqual(otherNonce.hex, auth.hex);
+});
+
+test('an importer cannot widen the alg allowlist', () => {
+  assert.deepEqual([...codec.ALLOWED_ALGS], [1]);
+  assert.equal(Object.isFrozen(codec.ALLOWED_ALGS), true);
+  assert.throws(() => { codec.ALLOWED_ALGS.push(2); }, TypeError);
+  for (const value of Object.values(codec)) {
+    if (value instanceof Set) value.add(2);
+  }
+  assert.equal(codec.isAllowedAlg(1), true);
+  assert.equal(codec.isAllowedAlg(2), false);
+  assert.equal(encodeLine({ ...SAMPLE, sigma: { ...SAMPLE.sigma, alg: 2 } }).reason, 'bad_alg');
 });
 
 test('the committed vector file matches the spec and the codec', () => {

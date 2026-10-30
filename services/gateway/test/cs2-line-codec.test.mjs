@@ -16,11 +16,15 @@ test('cs2 line suite (gateway CI hook)', () => {
   delete env.NODE_TEST_CONTEXT;
   const run = spawnSync(process.execPath, [
     '--test',
+    '--test-reporter=tap',
     '--test-concurrency=1',
     'packages/cs2-core/line/line.test.mjs',
   ], { cwd: repo, encoding: 'utf8', env, timeout: 120_000 });
   const out = `${run.stdout || ''}\n${run.stderr || ''}`;
   assert.equal(run.status, 0, out.slice(-4000));
-  assert.match(out, /# pass 16/);
-  assert.match(out, /# fail 0/);
+  const passed = out.match(/^# pass (\d+)$/m);
+  const failed = out.match(/^# fail (\d+)$/m);
+  assert.ok(passed, out.slice(-2000));
+  assert.equal(passed[1], '17');
+  assert.equal(failed && failed[1], '0');
 });

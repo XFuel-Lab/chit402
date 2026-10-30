@@ -371,9 +371,16 @@
     {
       "id": "L53_alg_allowlist",
       "file": "packages/cs2-core/line/index.mjs",
-      "find": "export const ALGS = Object.freeze(new Set([1]));",
-      "replace": "export const ALGS = Object.freeze(new Set([0, 1, 2, 7, 255]));",
+      "find": "const ALG_SET = new Set([1]);",
+      "replace": "const ALG_SET = new Set([0, 1, 2, 7, 255]);",
       "note": "alg is not restricted to the allowlist"
+    },
+    {
+      "id": "L55_export_mutable_set",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "const ALG_SET = new Set([1]);",
+      "replace": "export const ALG_SET = new Set([1]);",
+      "note": "the mutable alg Set is exported"
     },
     {
       "id": "L54_s_zero",

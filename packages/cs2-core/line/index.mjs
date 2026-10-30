@@ -50,6 +50,9 @@ export const MAX_EMPTY_DEPTH = 64;
 
 const DOMAIN_PAY = 'pay';
 const DOMAIN_CNT = 'cnt';
+// "cs2" is a byte prefix of "cs2-sig". The preimages stay apart because
+// their lengths are fixed (101 and 86) and byte 3 differs: the header's
+// "c" versus "-". Do not append a variable-length field to either.
 const DOMAIN_LINE = 'cs2';
 const DOMAIN_SIG = 'cs2-sig';
 const DOMAIN_STATE = 'chit402-state-v1';
@@ -63,8 +66,14 @@ const STATE_EMPTY_PREFIX = 0x02;
 const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
 const P256_HALF_N = P256_N >> 1n;
 
-/** The only σ algorithm. 1 is the P-256 low-S slot-entry alg. */
-export const ALGS = Object.freeze(new Set([1]));
+const ALG_SET = new Set([1]);
+
+/** Algorithms this codec accepts. A frozen array, not a live Set. */
+export const ALLOWED_ALGS = Object.freeze([1]);
+
+export function isAllowedAlg(alg) {
+  return ALG_SET.has(alg);
+}
 
 const ID_LENGTH_BY_KIND = new Map([
   [KIND_PAYTO, 20],
@@ -358,7 +367,7 @@ function readUriPrefix(value) {
 }
 
 function requireAlg(alg) {
-  if (!ALGS.has(alg)) return fail('bad_alg');
+  if (!isAllowedAlg(alg)) return fail('bad_alg');
   return { ok: true };
 }
 
