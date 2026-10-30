@@ -1,0 +1,11 @@
+{
+  "schema": "chit402.cs2.seal.vendor-pins.v1",
+  "alg": "sha256",
+  "note": "SHA-256 of the vendored file bytes. A change to the AEAD or X25519 must update this pin and still pass the RFC vectors.",
+  "files": {
+    "chacha20poly1305.js": "bd3093afe2bd3631c7f9adf24cd2c2e49116afad8f60ea71c2f302c085168a19",
+    "hkdf.js": "6b076c3560915aa02c88c17ffee1d074d907fc02eb0551546ffe4e80149e72dc",
+    "sha256.js": "55cb9ba825920592b90506fca7f210a9ddb4f3e1d1825546de89cf73144e7474",
+    "x25519.js": "fa7eba74ca8e391a713a07e85862f5872d3bb74673d191b747ee803ccf147858"
+  }
+}
