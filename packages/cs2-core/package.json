@@ -1,0 +1,13 @@
+{
+  "name": "cs2-core",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Chit402 v13 core. RFC 9162 Merkle wire format. Not published.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
