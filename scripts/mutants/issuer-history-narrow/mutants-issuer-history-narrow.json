@@ -114,8 +114,8 @@
     {
       "id": "JW1_head_history_jwks",
       "file": "packages/verify/src/anchor-trust.ts",
-      "find": "verifyIssuerHistoryDocument\\(issuerHistory, \\{ trustedKids: pins \\}\\)",
-      "replace": "verifyIssuerHistoryDocument(issuerHistory, { jwks: jwks?.keys ? { keys: jwks.keys } : undefined, trustedKids: pins })",
+      "find": "jwks: historySignerJwks\\(options\\.trustedKids, callerJwks\\),",
+      "replace": "jwks: jwks?.keys ? { keys: jwks.keys } : undefined,",
       "nth": 1,
       "suite": "verify"
     },
@@ -140,6 +140,46 @@
       "file": "packages/verify/src/issuer-history.ts",
       "find": "const fileNarrow = extensionNarrowsBundle\\(bundled\\.document, doc\\);",
       "replace": "const fileNarrow = { ok: true as const };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y1_non_narrowing_row_ok",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(!appendedRowNarrows\\(prior, row\\)\\) return \\{ ok: false, reason: 'extension_not_narrowing' \\};",
+      "replace": "if (false) return { ok: false, reason: 'extension_not_narrowing' };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y2_later_not_after_narrows",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "if \\(earliest == null \\|\\| next < earliest\\) return true;",
+      "replace": "if (earliest == null || next > earliest) return true;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y3_legacy_self_compare",
+      "file": "packages/verify/src/index.ts",
+      "find": "const legacyNarrow = extensionNarrowsBundle\\(bundled, supplied\\);",
+      "replace": "const legacyNarrow = extensionNarrowsBundle(supplied, supplied);",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y5_wallets_history_jwks",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "const verified = verifyIssuerHistoryDocument\\(doc, \\{ trustedKids \\}\\);",
+      "replace": "const verified = verifyIssuerHistoryDocument(doc, { jwks: jwks?.keys ? { keys: jwks.keys } : undefined, trustedKids });",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "Y8_signer_window_doc",
+      "file": "packages/verify/src/anchor-trust.ts",
+      "find": "windowDoc = trustDoc;",
+      "replace": "windowDoc = issuerHistory;",
       "nth": 1,
       "suite": "verify"
     }

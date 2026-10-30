@@ -185,12 +185,20 @@ function listen(server) {
   });
 }
 
+function assertLoopback(url) {
+  const host = new URL(String(url)).hostname;
+  if (host !== '127.0.0.1' && host !== 'localhost') {
+    throw new Error(`refusing non-loopback host ${host}`);
+  }
+}
+
 function loopbackFetch(port, realFetch) {
   return async (url, init) => {
     const local = new URL(String(url));
     local.protocol = 'http:';
     local.hostname = '127.0.0.1';
     local.port = String(port);
+    assertLoopback(local);
     return realFetch(local, init);
   };
 }
@@ -973,6 +981,227 @@ test('source scan: CLI accepts only --issuer-history, --json and the existing he
   assert.ok(/'--no-issuer-history': 'removed in 0\.4: the history check is always on'/.test(src), 'history check stays on');
   assert.ok(/else if \(arg === '--issuer-history' && argv\[i \+ 1\]\) \{\n\s+parsed\.issuerHistoryFile = argv\[\+\+i\];\n\s+\} else if \(!arg\.startsWith\('-'\) \|\| arg === '-'\)/.test(src), 'parser consumes only --issuer-history before positionals');
   assert.ok(/if \(arg === '--json' \|\| arg === '--help' \|\| arg === '-h' \|\| arg === '--version' \|\| arg === '-V'\) continue;/.test(src), 'removed-flag scan allows only json, help and version');
+});
+
+test('a non-loopback host is refused before any request', () => {
+  assert.throws(() => assertLoopback('https://api.chit402.com/receipt/x'), /non-loopback/);
+  assert.doesNotThrow(() => assertLoopback('http://127.0.0.1:9/receipt/x'));
+});
+
+test('an appended active row for a bundled kid is refused (extension_not_narrowing)', async () => {
+  const { k1, genesis, bundled } = bundlePair();
+  const again = entryFor(k1, { notBefore: '2026-09-04T08:52:05Z', prev: genesis.entry_hash, status: 'active' });
+  const extension = withEntry(bundled, again, k1, 3, 3);
+  const resolved = await resolveIssuerHistory({
+    bundledOverride: asBundle(bundled),
+    fileBytes: extension.bytes,
+    trustedKids: [k1.kid],
+  });
+  assert.equal(resolved.invalid, true);
+  assert.equal(resolved.reason, 'extension_not_narrowing');
+  assert.equal(resolved.source, 'file');
+});
+
+test('a later not_after on an active row is refused (extension_not_narrowing)', async () => {
+  const k1 = issuerKey();
+  const first = entryFor(k1, { notBefore: '2026-09-04T08:52:05Z', notAfter: '2026-11-01T00:00:00Z' });
+  const bundled = historyOf([first], k1, 2, 2);
+  const later = entryFor(k1, {
+    notBefore: '2026-09-04T08:52:05Z',
+    notAfter: '2027-01-01T00:00:00Z',
+    prev: first.entry_hash,
+    status: 'active',
+  });
+  const extension = historyOf([first, later], k1, 3, 3);
+  const resolved = await resolveIssuerHistory({
+    bundledOverride: asBundle(bundled),
+    fileBytes: extension.bytes,
+    trustedKids: [k1.kid],
+  });
+  assert.equal(resolved.invalid, true);
+  assert.equal(resolved.reason, 'extension_not_narrowing');
+});
+
+test('a legacy history is not accepted by comparing the document to itself', async () => {
+  const { k1, genesis, bundled } = bundlePair();
+  const k2 = issuerKey();
+  const added = entryFor(k2, { notBefore: '2026-10-30T00:00:00Z', prev: genesis.entry_hash });
+  const extension = withEntry(bundled, added, k1, 3, 3);
+  const { pinnedLegacyHistory } = await import('../dist/index.js');
+  const picked = pinnedLegacyHistory({
+    issuerHistory: extension.doc,
+    trustedKids: [k1.kid],
+    [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } },
+  });
+  assert.equal(picked?.head_hash, bundled.doc.head_hash);
+  assert.equal((picked?.entries || []).some((entry) => entry.kid === k2.kid), false);
+});
+
+test('anchor wallets ignore a history signed only by a caller JWKS key', async () => {
+  const { compileAnchorWallets } = await import('../dist/anchor-trust.js');
+  const signer = issuerKey();
+  signer.publicJwk = { ...signer.publicJwk, kid: 'label-not-a-pin' };
+  const wallet = `0x${'ab'.repeat(20)}`;
+  const body = {
+    kid: 'label-not-a-pin',
+    jwk: signer.publicJwk,
+    alg: 'ES256',
+    not_before: '2026-09-04T08:52:05Z',
+    not_after: null,
+    status: 'active',
+    revoked_at: null,
+    reason: null,
+    prev_hash: null,
+  };
+  const entry = { ...body, entry_hash: issuerHistoryEntryHash(body) };
+  const claims = {
+    schema: 'chit402.issuer_history.v1',
+    payload_version: 1,
+    entry_count: 1,
+    head_hash: entry.entry_hash,
+    version: 1,
+    seq: 1,
+    anchor_wallets: { base: [wallet], solana: [] },
+  };
+  const doc = {
+    schema: 'chit402.issuer_history.v1',
+    payload_version: 1,
+    version: 1,
+    seq: 1,
+    entries: [entry],
+    head_hash: entry.entry_hash,
+    issuer_signature: {
+      alg: 'ES256',
+      typ: 'chit402-issuer-history+jwt',
+      payload_version: 1,
+      jws: signClaims(claims, { ...signer, kid: 'label-not-a-pin' }, 'chit402-issuer-history+jwt'),
+      kid: 'label-not-a-pin',
+      issuer_jwk: signer.publicJwk,
+    },
+  };
+  const compiled = compileAnchorWallets({
+    jwks: { keys: [signer.publicJwk] },
+    trustedKids: [PRODUCTION_KID],
+    issuerHistory: doc,
+  });
+  assert.equal(compiled.sources.includes('issuer_history'), false);
+  assert.equal(compiled.base.includes(wallet), false);
+});
+
+function forkOf(base, k1, k2) {
+  const rewritten = entryFor(k1, { notBefore: '2026-12-01T00:00:00Z' });
+  const added = entryFor(k2, { notBefore: '2026-12-15T00:00:00Z', prev: rewritten.entry_hash });
+  return historyOf([rewritten, added], k1, 9, 9);
+}
+
+test('a fork history does not supply a tree-head key (head_key_untrusted)', () => {
+  const { k1, bundled } = bundlePair();
+  const k2 = issuerKey();
+  const fork = forkOf(bundled, k1, k2);
+  const head = sealHead({
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 5,
+    published_at: '2026-10-31T00:00:00.000Z',
+    anchors: { base: { status: 'pending' }, solana: { status: 'pending' } },
+  }, k2, { embed: false });
+  const trusted = verifyTreeHeadTrust(head, {
+    trustedKids: [k1.kid],
+    issuerHistory: fork.doc,
+    [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } },
+  });
+  assert.equal(trusted.ok, false);
+  assert.equal(trusted.reason, 'head_key_untrusted');
+  assert.equal(trusted.trust, null);
+});
+
+test('a fork history does not supply a fixed-head key (key)', () => {
+  const prod = productionDoc();
+  const k1 = { kid: prod.entries[0].kid, publicJwk: prod.entries[0].jwk, privateKey: null };
+  const signer = issuerKey();
+  const k2 = issuerKey();
+  const rewritten = entryFor(k2, { notBefore: '2026-01-01T00:00:00Z', kid: prod.entries[0].kid, jwk: prod.entries[0].jwk });
+  const added = entryFor(k2, { notBefore: '2026-10-30T00:00:00Z', prev: rewritten.entry_hash });
+  const fork = historyOf([rewritten, added], signer, 9, 9);
+  const headBody = {
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 5,
+    epoch: 2,
+    published_at: '2026-10-31T00:00:00.000Z',
+    anchors: { base: { status: 'pending' }, solana: { status: 'pending' } },
+  };
+  const head = sealHead(headBody, k2, { embed: false });
+  head.fixed_head = fixedHeadFor(headBody, k2);
+  const outcome = fixedHeadOutcome(head, fork.doc, [signer.kid, PRODUCTION_KID]);
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.reason, 'key');
+  void k1;
+});
+
+test('a fork history does not supply an epoch-record key', () => {
+  const prod = productionDoc();
+  const signer = issuerKey();
+  const k2 = issuerKey();
+  const rewritten = entryFor(k2, { notBefore: '2026-01-01T00:00:00Z', kid: prod.entries[0].kid, jwk: prod.entries[0].jwk });
+  const added = entryFor(k2, { notBefore: '2026-10-30T00:00:00Z', prev: rewritten.entry_hash });
+  const fork = historyOf([rewritten, added], signer, 9, 9);
+  const claims = { schema: 'chit402.tree_epoch.v1', payload_version: 1, epochs: [{ epoch: 1 }], orphans: [], unlogged: null };
+  const jws = signClaims(claims, k2, 'chit402-tree-epoch+jwt');
+  const record = { ...claims, issuer_signature: { jws, kid: k2.kid } };
+  assert.equal(epochRecordSignatureOk(record, jws, fork.doc, '2026-10-31T00:00:00.000Z'), false);
+});
+
+test('verifyReceipt ignores a fork window and a fork tree-head key', async () => {
+  const { k1, bundled } = bundlePair();
+  const k2 = issuerKey();
+  const fork = forkOf(bundled, k1, k2);
+  const claims = receiptClaims(k1);
+  const receipt = signedReceipt(k1, claims);
+  const head = sealHead({
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 5,
+    published_at: '2026-10-31T00:00:00.000Z',
+    anchors: { base: { status: 'pending' }, solana: { status: 'pending' } },
+  }, k2, { embed: false });
+  const result = await verifyReceipt(receipt, {
+    issuerHistory: fork.doc,
+    trustedKids: [k1.kid],
+    requirePreimages: false,
+    checkPayer: false,
+    head,
+    [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } },
+  });
+  assert.equal(result.issuer_history.ok, true, result.issuer_history.reason);
+  assert.notEqual(result.issuer_history.reason, 'issued_before_not_before');
+  assert.equal(result.errors.includes('head_key_untrusted'), true, result.errors.join('; '));
+  assert.equal(result.verdict?.checks?.key_window, 'pass');
+  assert.equal(result.verdict?.exit_code, 1);
+});
+
+test('a fork that would close the bundled window does not (head stays trusted)', () => {
+  const { k1, bundled } = bundlePair();
+  const closed = entryFor(k1, { notBefore: '2026-09-04T08:52:05Z', notAfter: '2026-09-05T00:00:00Z', status: 'retired' });
+  const fork = historyOf([closed], k1, 9, 9);
+  const head = sealHead({
+    schema: 'chit402.tree_head.v1',
+    payload_version: 1,
+    root: 'ab'.repeat(32),
+    tree_size: 5,
+    published_at: '2026-10-01T00:00:00.000Z',
+    anchors: { base: { status: 'pending' }, solana: { status: 'pending' } },
+  }, k1);
+  const trusted = verifyTreeHeadTrust(head, {
+    trustedKids: [k1.kid],
+    issuerHistory: fork.doc,
+    [TEST_SNAPSHOT]: { issuerHistory: { document: bundled.doc, bytes: bundled.bytes } },
+  });
+  assert.equal(trusted.ok, true, trusted.reason || trusted.message);
+  assert.notEqual(trusted.reason, 'head_kid_window');
 });
 
 test('source scan: bundled snapshots and the legacy allowlist are byte-identical to 7207bf46', () => {

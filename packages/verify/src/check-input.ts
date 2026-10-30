@@ -26,9 +26,8 @@ import {
 } from './anchor-witness.js';
 import { isReceiptShell } from './shell.js';
 import {
+  callerHistoryForTrust,
   epochHistoryKeyAllowed,
-  extensionNarrowsBundle,
-  historyPrefixExtends,
   loadBundledIssuerHistory,
   resolveIssuerHistory,
   type IssuerHistoryDocument,
@@ -177,10 +176,8 @@ export function fixedHeadOutcome(
   const fixed = (head as { fixed_head?: unknown }).fixed_head;
   if (fixed === undefined || fixed === null) return null;
   const bundledDoc = loadBundledIssuerHistory().document;
-  const fixedKeyEntries: IssuerHistoryEntry[] = history && historyPrefixExtends(bundledDoc, history)
-    && !extensionNarrowsBundle(bundledDoc, history).ok
-    ? (bundledDoc.entries || [])
-    : (history?.entries || []);
+  const fixedTrustDoc = history ? callerHistoryForTrust(history, bundledDoc) : null;
+  const fixedKeyEntries: IssuerHistoryEntry[] = fixedTrustDoc?.entries || [];
   const headerKid = (head as { issuer_signature?: { kid?: string; jws?: string } }).issuer_signature?.kid
     || kidFromJws((head as { issuer_signature?: { jws?: string } }).issuer_signature?.jws);
   const embedded = (head as { issuer_signature?: { issuer_jwk?: unknown } }).issuer_signature?.issuer_jwk;
@@ -326,10 +323,8 @@ export function epochRecordSignatureOk(
     : null;
   if (pin) keys.push(pin);
   const bundledDoc = loadBundledIssuerHistory().document;
-  const epochKeyEntries = history && historyPrefixExtends(bundledDoc, history)
-    && !extensionNarrowsBundle(bundledDoc, history).ok
-    ? (bundledDoc.entries || [])
-    : (history?.entries || []);
+  const epochTrustDoc = history ? callerHistoryForTrust(history, bundledDoc) : null;
+  const epochKeyEntries = epochTrustDoc?.entries || [];
   for (const entry of epochKeyEntries) {
     const jwk = entry?.jwk as Es256Jwk | undefined;
     if (!jwk) continue;

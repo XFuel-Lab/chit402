@@ -31,9 +31,11 @@ import {
   type Es256Jwk,
 } from './jws.js';
 import {
+  callerHistoryForTrust,
   extensionNarrowsBundle,
   historyPrefixExtends,
   historyRowMatchesKid,
+  historySignerJwks,
   issuerKeyWindow,
   loadBundledIssuerHistory,
   verifyIssuerHistoryDocument,
@@ -306,6 +308,8 @@ export function verifyTreeHeadTrust(
     trustedKids?: readonly string[];
     issuerHistory?: IssuerHistoryDocument | null;
     strictIssuerHistory?: boolean;
+    /** Caller's own JWKS. Fetched keys are not passed here. */
+    callerJwks?: { keys?: Es256Jwk[] };
   } = {},
 ): HeadTrustResult {
   const {
@@ -313,6 +317,7 @@ export function verifyTreeHeadTrust(
     trustedKids,
     issuerHistory = null,
     strictIssuerHistory = false,
+    callerJwks,
   } = options;
   const jws = head?.issuer_signature?.jws;
   if (!jws) return fail('head_signature_missing');
@@ -326,7 +331,10 @@ export function verifyTreeHeadTrust(
   let historyOk = false;
   let windowDoc: IssuerHistoryDocument | null = issuerHistory;
   if (issuerHistory) {
-    const verified = verifyIssuerHistoryDocument(issuerHistory, { trustedKids: pins });
+    const verified = verifyIssuerHistoryDocument(issuerHistory, {
+      jwks: historySignerJwks(options.trustedKids, callerJwks),
+      trustedKids: pins,
+    });
     if (!verified.valid) {
       return { ...fail('issuer_history_invalid', verified.reason), kid };
     }
@@ -336,11 +344,12 @@ export function verifyTreeHeadTrust(
     const extendsBundle = historyPrefixExtends(bundled, issuerHistory);
     const bundleChecked = extendsBundle
       ? extensionNarrowsBundle(bundled, issuerHistory)
-      : { ok: true as const };
-    const keyRows = !extendsBundle
-      ? (issuerHistory.entries || [])
-      : (bundleChecked.ok ? (issuerHistory.entries || []) : (bundled.entries || []));
-    windowDoc = !extendsBundle || bundleChecked.ok ? issuerHistory : bundled;
+      : { ok: false as const };
+    const trustDoc = (extendsBundle && bundleChecked.ok)
+      ? issuerHistory
+      : callerHistoryForTrust(issuerHistory, bundled);
+    const keyRows = trustDoc.entries || [];
+    windowDoc = trustDoc;
     if (!payload) {
       const headerKid = readJwsHeader(jws)?.kid || head?.issuer_signature?.kid || null;
       const entryKey = historyEntryKey(issuerHistory, headerKid, keyRows);

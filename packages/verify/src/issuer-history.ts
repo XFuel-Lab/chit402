@@ -533,6 +533,7 @@ export async function checkReceiptIssuerHistory(
     pin = null,
     requirePin = false,
     documentBytes = null,
+    bundleDocument = null,
   }: {
     document?: IssuerHistoryDocument | null;
     fetchHistory?: boolean;
@@ -550,6 +551,8 @@ export async function checkReceiptIssuerHistory(
     requirePin?: boolean;
     /** Exact response or file bytes. SHA-256 of these must equal the pin. */
     documentBytes?: string | null;
+    /** Active bundle for this call. Tests pass the snapshot; the CLI omits it. */
+    bundleDocument?: IssuerHistoryDocument | null;
   } = {},
 ): Promise<IssuerHistoryCheck> {
   const base: IssuerHistoryCheck = {
@@ -590,10 +593,10 @@ export async function checkReceiptIssuerHistory(
     ? sealedSnapshotForPin(pin, doc, { jwks, trustedKids })
     : null;
   const pinOk = exactPin || sealed != null;
-  // The receipt window still accepts a caller JWKS for a kid whose label is
-  // not its thumbprint. File, live and tree-head history do not.
+  // Caller-configured pin only: kid listed in trustedKids and present in the
+  // caller's own JWKS. Fetched keys are not passed in.
   const signed = doc && pinOk
-    ? verifyIssuerHistoryDocument(doc, { jwks, trustedKids })
+    ? verifyIssuerHistoryDocument(doc, { jwks: historySignerJwks(trustedKids, jwks), trustedKids })
     : null;
   const usable = doc && pinOk && signed?.valid ? doc : null;
   const loaded = doc != null;
@@ -630,17 +633,21 @@ export async function checkReceiptIssuerHistory(
       loaded: true,
     };
   }
-  const window = issuerKeyWindow(doc, kid, issuedAt);
-  if (!window.ok) {
-    return { ...base, checked: true, ok: false, reason: window.reason, document: usable, loaded: true };
-  }
-  if (sealed) {
-    const pinnedWindow = issuerKeyWindow(sealed, kid, issuedAt);
-    if (!pinnedWindow.ok) {
-      return { ...base, checked: true, ok: false, reason: pinnedWindow.reason, document: usable, loaded: true };
+  {
+    // A fork that rewrites a bundled kid keeps that kid's bundled window.
+    const doc = callerHistoryForTrust(usable, bundleDocument ?? loadBundledIssuerHistory().document);
+    const window = issuerKeyWindow(doc, kid, issuedAt);
+    if (!window.ok) {
+      return { ...base, checked: true, ok: false, reason: window.reason, document: doc, loaded: true };
     }
+    if (sealed) {
+      const pinnedWindow = issuerKeyWindow(sealed, kid, issuedAt);
+      if (!pinnedWindow.ok) {
+        return { ...base, checked: true, ok: false, reason: pinnedWindow.reason, document: usable, loaded: true };
+      }
+    }
+    return { ...base, checked: true, ok: true, document: doc, loaded: true };
   }
-  return { ...base, checked: true, ok: true, document: usable, loaded: true };
 }
 
 /**
@@ -843,9 +850,8 @@ function resolvedFrom(
 }
 
 /**
- * History documents are checked against pinned keys only. A caller or fetched
- * JWKS is not a history signer. `callerJwks` is accepted so a caller can pass
- * it and still be ignored.
+ * File, live, and tree-head history stay on pinned keys. `callerJwks` is
+ * accepted and ignored here. The receipt key window uses `historySignerJwks`.
  */
 function pinnedHistoryTrust(
   trustedKids?: readonly string[],
@@ -853,6 +859,67 @@ function pinnedHistoryTrust(
 ): { jwks?: HistoryJwks; trustedKids?: readonly string[] } {
   void callerJwks;
   return { trustedKids, jwks: undefined };
+}
+
+/**
+ * A caller-configured pin: the kid is in the explicit `trustedKids` list and
+ * the key is in the caller's own JWKS. Fetched JWKS and a missing list do
+ * not qualify. The CLI never sets either argument.
+ */
+export function historySignerJwks(
+  trustedKids: readonly string[] | undefined,
+  callerJwks: { keys?: Es256Jwk[] } | undefined,
+): HistoryJwks | undefined {
+  if (!trustedKids?.length || !callerJwks?.keys?.length) return undefined;
+  const allow = new Set(trustedKids);
+  const keys = callerJwks.keys.filter((key) => typeof key?.kid === 'string' && allow.has(key.kid));
+  return keys.length ? { keys } : undefined;
+}
+
+function sameHistoryDocument(left: IssuerHistoryDocument, right: IssuerHistoryDocument): boolean {
+  try {
+    return issuerHistoryDocumentHash(left) === issuerHistoryDocumentHash(right);
+  } catch {
+    return false;
+  }
+}
+
+function sealedHistoryDocument(doc: IssuerHistoryDocument): boolean {
+  for (const row of SEALED_HISTORY_SNAPSHOTS) {
+    const loaded = loadSealedSnapshot(row.file);
+    if (loaded && sameHistoryDocument(doc, loaded.document)) return true;
+  }
+  const bundled = loadBundledIssuerHistory();
+  return sameHistoryDocument(doc, bundled.document);
+}
+
+function touchesBundledKid(supplied: IssuerHistoryDocument, bundle: IssuerHistoryDocument): boolean {
+  const ids = new Set<string>();
+  for (const entry of bundle.entries || []) {
+    if (entry?.kid) ids.add(entry.kid);
+    if (entry?.jwk && isEs256PublicJwk(entry.jwk)) ids.add(jwkThumbprint(entry.jwk));
+  }
+  for (const entry of supplied.entries || []) {
+    if (entry?.kid && ids.has(entry.kid)) return true;
+    if (entry?.jwk && isEs256PublicJwk(entry.jwk) && ids.has(jwkThumbprint(entry.jwk))) return true;
+  }
+  return false;
+}
+
+/**
+ * Rows a caller history may contribute. A document that rewrites a bundled
+ * kid is ignored unless it is that snapshot (or a sealed one) or a strict
+ * narrowing of it. A history that names only other kids is the caller's own.
+ */
+export function callerHistoryForTrust(
+  supplied: IssuerHistoryDocument | null | undefined,
+  bundle: IssuerHistoryDocument,
+): IssuerHistoryDocument {
+  if (!supplied) return bundle;
+  if (sameHistoryDocument(supplied, bundle) || sealedHistoryDocument(supplied)) return supplied;
+  if (historyPrefixExtends(bundle, supplied) && extensionNarrowsBundle(bundle, supplied).ok) return supplied;
+  if (touchesBundledKid(supplied, bundle)) return bundle;
+  return supplied;
 }
 
 function signedHistoryPayload(doc: IssuerHistoryDocument): Record<string, unknown> | null {
