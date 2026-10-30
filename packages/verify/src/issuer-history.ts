@@ -591,7 +591,7 @@ export async function checkReceiptIssuerHistory(
     : null;
   const pinOk = exactPin || sealed != null;
   const signed = doc && pinOk
-    ? verifyIssuerHistoryDocument(doc, { jwks, trustedKids })
+    ? verifyIssuerHistoryDocument(doc, pinnedHistoryTrust(trustedKids, jwks))
     : null;
   const usable = doc && pinOk && signed?.valid ? doc : null;
   const loaded = doc != null;
@@ -675,11 +675,11 @@ export function sealedSnapshotForPin(
   if (!row || row.version !== pin.version || row.seq !== pin.seq) return null;
   const loaded = loadSealedSnapshot(row.file);
   if (!loaded || !historyPinMatches(loaded.document, loaded.bytes, pin)) return null;
-  if (!verifyIssuerHistoryDocument(loaded.document, { jwks, trustedKids }).valid) return null;
+  if (!verifyIssuerHistoryDocument(loaded.document, pinnedHistoryTrust(trustedKids, jwks)).valid) return null;
   // Only a later sealed version may stand in. An edited copy of the pinned
   // version is still a mismatch.
   if (!(Number(current?.version) > pin.version) || !(Number(current?.seq) > pin.seq)) return null;
-  if (!verifyIssuerHistoryDocument(current, { jwks, trustedKids }).valid) return null;
+  if (!verifyIssuerHistoryDocument(current, pinnedHistoryTrust(trustedKids, jwks)).valid) return null;
   if (!sealedSuccessorExtends(loaded.document, current, { jwks, trustedKids })) return null;
   return loaded.document;
 }
@@ -709,7 +709,7 @@ export function sealedSuccessorExtends(
     return false;
   }
   if (!grandfatheredRewrite(pinned, bundled)) return false;
-  if (!verifyIssuerHistoryDocument(bundled, trust).valid) return false;
+  if (!verifyIssuerHistoryDocument(bundled, pinnedHistoryTrust(trust?.trustedKids, trust?.jwks)).valid) return false;
   if (current.head_hash === bundled.head_hash) return notBelowBundled(bundled, current);
   if (!laterThanBundled(bundled, current)) return false;
   return entryPrefixExtends(bundled, current);
@@ -841,8 +841,160 @@ function resolvedFrom(
 }
 
 /**
+ * History documents are checked against pinned keys only. A caller or fetched
+ * JWKS is not a history signer. `callerJwks` is accepted so a caller can pass
+ * it and still be ignored.
+ */
+function pinnedHistoryTrust(
+  trustedKids?: readonly string[],
+  callerJwks?: HistoryJwks,
+): { jwks?: HistoryJwks; trustedKids?: readonly string[] } {
+  void callerJwks;
+  return { trustedKids, jwks: undefined };
+}
+
+function signedHistoryPayload(doc: IssuerHistoryDocument): Record<string, unknown> | null {
+  const jws = doc?.issuer_signature?.jws;
+  if (typeof jws !== 'string') return null;
+  const part = jws.split('.')[1];
+  if (!part) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(part, 'base64url').toString('utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function plainKeys(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  return Object.keys(value as object);
+}
+
+function hasMember(value: unknown, name: string, depth = 0): boolean {
+  if (depth > 8 || !value || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some((item) => hasMember(item, name, depth + 1));
+  if (Object.prototype.hasOwnProperty.call(value, name)) return true;
+  return Object.values(value as object).some((item) => hasMember(item, name, depth + 1));
+}
+
+function unknownKey(actual: string[], allowed: Set<string>): string | null {
+  for (const key of actual) {
+    if (!allowed.has(key)) return 'extension_unknown_field';
+  }
+  return null;
+}
+
+/**
+ * Fail closed on a `contracts` member or any field the bundled document does
+ * not already use. Checked before row meaning, so a new shape is not read as
+ * a key.
+ */
+function extensionShapeReason(
+  bundled: IssuerHistoryDocument,
+  supplied: IssuerHistoryDocument,
+): string | null {
+  const bundledPayload = signedHistoryPayload(bundled);
+  const suppliedPayload = signedHistoryPayload(supplied);
+  if (hasMember(supplied, 'contracts') || hasMember(suppliedPayload, 'contracts')) {
+    return 'extension_adds_contract';
+  }
+  const badDoc = unknownKey(plainKeys(supplied), new Set(plainKeys(bundled)));
+  if (badDoc) return badDoc;
+  const entryKeys = new Set<string>();
+  const jwkKeys = new Set<string>();
+  for (const entry of bundled.entries || []) {
+    for (const key of plainKeys(entry)) entryKeys.add(key);
+    for (const key of plainKeys(entry?.jwk)) jwkKeys.add(key);
+  }
+  for (const key of plainKeys(bundled.issuer_signature?.issuer_jwk)) jwkKeys.add(key);
+  for (const entry of supplied.entries || []) {
+    const badEntry = unknownKey(plainKeys(entry), entryKeys);
+    if (badEntry) return badEntry;
+    const badJwk = unknownKey(plainKeys(entry?.jwk), jwkKeys);
+    if (badJwk) return badJwk;
+  }
+  const badSig = unknownKey(plainKeys(supplied.issuer_signature), new Set(plainKeys(bundled.issuer_signature)));
+  if (badSig) return badSig;
+  const badSigJwk = unknownKey(plainKeys(supplied.issuer_signature?.issuer_jwk), jwkKeys);
+  if (badSigJwk) return badSigJwk;
+  if (!bundledPayload || !suppliedPayload) return 'extension_unknown_field';
+  return unknownKey(plainKeys(suppliedPayload), new Set(plainKeys(bundledPayload)));
+}
+
+function signerKidOf(doc: IssuerHistoryDocument): string | null {
+  const jws = doc.issuer_signature?.jws;
+  const fromHeader = typeof jws === 'string' ? jwsHeaderKid(jws) : null;
+  return fromHeader || doc.issuer_signature?.kid || null;
+}
+
+/**
+ * The signer must be `active` on the last bundled row for that kid. The
+ * supplied document's own retire or revoke of that kid is not consulted:
+ * that row is how a still-active signer narrows itself.
+ */
+function signerInactiveReason(bundled: IssuerHistoryDocument, supplied: IssuerHistoryDocument): string | null {
+  const kid = signerKidOf(supplied);
+  const signerRows = (bundled.entries || []).filter((entry) => (
+    entry?.kid === kid || (!!entry?.jwk && !!kid && jwkThumbprint(entry.jwk) === kid)
+  ));
+  const signerRow = signerRows[signerRows.length - 1];
+  if (!signerRow || signerRow.status !== 'active') return 'issuer_history_signer_inactive';
+  return null;
+}
+
+function appendedRowNarrows(prior: IssuerHistoryEntry[], row: IssuerHistoryEntry): boolean {
+  if (row.status === 'revoked' || row.status === 'retired') return true;
+  if (row.revoked_at != null && row.revoked_at !== '') return true;
+  if (row.not_after != null && row.not_after !== '') {
+    const next = parseTime(row.not_after);
+    if (next == null) return false;
+    let earliest: number | null = null;
+    for (const item of prior) {
+      if (item.not_after == null || item.not_after === '') continue;
+      const parsed = parseTime(item.not_after);
+      if (parsed == null) continue;
+      if (earliest == null || parsed < earliest) earliest = parsed;
+    }
+    if (earliest == null || next < earliest) return true;
+  }
+  return false;
+}
+
+/**
+ * A document past the bundled head may only narrow a kid already in the
+ * bundle. Precedence is fixed: contracts, unknown field, inactive signer,
+ * new kid, changed key, then a row that does not narrow.
+ */
+export function extensionNarrowsBundle(
+  bundled: IssuerHistoryDocument,
+  supplied: IssuerHistoryDocument,
+): { ok: true } | { ok: false; reason: string } {
+  const shape = extensionShapeReason(bundled, supplied);
+  if (shape) return { ok: false, reason: shape };
+  const inactive = signerInactiveReason(bundled, supplied);
+  if (inactive) return { ok: false, reason: inactive };
+  const base = bundled.entries || [];
+  const next = supplied.entries || [];
+  for (let i = base.length; i < next.length; i++) {
+    const row = next[i];
+    const prior = base.filter((entry) => entry?.kid === row?.kid);
+    if (prior.length === 0) return { ok: false, reason: 'extension_adds_key' };
+    const bundledJwk = prior[prior.length - 1]?.jwk;
+    if (!row?.jwk || !bundledJwk || jwkThumbprint(row.jwk) !== jwkThumbprint(bundledJwk)) {
+      return { ok: false, reason: 'extension_changes_key' };
+    }
+    if (!appendedRowNarrows(prior, row)) return { ok: false, reason: 'extension_not_narrowing' };
+  }
+  return { ok: true };
+}
+
+/**
  * File, else a live body that prefix-extends the bundled snapshot, else the
  * bundled snapshot. A file that does not verify is invalid and is not replaced.
+ * A live body that does not verify, or that does not narrow the bundle, falls
+ * through to the bundled snapshot.
  */
 export async function resolveIssuerHistory({
   bundledOverride = null,
@@ -870,7 +1022,7 @@ export async function resolveIssuerHistory({
     } catch {
       return resolvedFrom('file', null, fileBytes, null, true, 'issuer_history_unreadable');
     }
-    const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
+    const signed = verifyIssuerHistoryDocument(doc, pinnedHistoryTrust(trustedKids, jwks));
     if (!signed.valid) {
       return resolvedFrom('file', doc, fileBytes, null, true, signed.reason || 'issuer_history_invalid');
     }
@@ -878,6 +1030,10 @@ export async function resolveIssuerHistory({
     // could hide a later revocation (truncation rollback).
     if (!historyPrefixExtends(bundled.document, doc) || !laterThanBundled(bundled.document, doc)) {
       return resolvedFrom('file', doc, fileBytes, null, true, 'issuer_history_not_extension');
+    }
+    const fileNarrow = extensionNarrowsBundle(bundled.document, doc);
+    if (!fileNarrow.ok) {
+      return resolvedFrom('file', doc, fileBytes, null, true, fileNarrow.reason);
     }
     return resolvedFrom('file', doc, fileBytes, null, false, null);
   }
@@ -898,9 +1054,12 @@ export async function resolveIssuerHistory({
         if (res.ok) {
           const bytes = await res.text();
           const doc = JSON.parse(bytes) as IssuerHistoryDocument;
-          const signed = verifyIssuerHistoryDocument(doc, { jwks, trustedKids });
+          const signed = verifyIssuerHistoryDocument(doc, pinnedHistoryTrust(trustedKids, jwks));
           if (signed.valid && historyPrefixExtends(bundled.document, doc) && laterThanBundled(bundled.document, doc)) {
-            return resolvedFrom('live', doc, bytes, null, false, null);
+            const liveNarrow = extensionNarrowsBundle(bundled.document, doc);
+            if (liveNarrow.ok) {
+              return resolvedFrom('live', doc, bytes, null, false, null);
+            }
           }
         }
       } catch {
@@ -909,7 +1068,7 @@ export async function resolveIssuerHistory({
     }
   }
 
-  const signedBundle = verifyIssuerHistoryDocument(bundled.document, { jwks, trustedKids });
+  const signedBundle = verifyIssuerHistoryDocument(bundled.document, pinnedHistoryTrust(trustedKids, jwks));
   if (!signedBundle.valid) {
     return resolvedFrom('bundled', null, null, BUNDLED_HISTORY_AS_OF, false, 'kid_not_in_history');
   }

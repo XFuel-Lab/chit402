@@ -27,8 +27,12 @@ import {
 import { isReceiptShell } from './shell.js';
 import {
   epochHistoryKeyAllowed,
+  extensionNarrowsBundle,
+  historyPrefixExtends,
+  loadBundledIssuerHistory,
   resolveIssuerHistory,
   type IssuerHistoryDocument,
+  type IssuerHistoryEntry,
   type ResolvedIssuerHistory,
 } from './issuer-history.js';
 import { BASE_RPC_URL } from './base-payer.js';
@@ -172,12 +176,29 @@ export function fixedHeadOutcome(
 ): { ok: true } | { ok: false; reason: string } | null {
   const fixed = (head as { fixed_head?: unknown }).fixed_head;
   if (fixed === undefined || fixed === null) return null;
+  const bundledDoc = loadBundledIssuerHistory().document;
+  const fixedKeyEntries: IssuerHistoryEntry[] = history && historyPrefixExtends(bundledDoc, history)
+    && !extensionNarrowsBundle(bundledDoc, history).ok
+    ? (bundledDoc.entries || [])
+    : (history?.entries || []);
+  const headerKid = (head as { issuer_signature?: { kid?: string; jws?: string } }).issuer_signature?.kid
+    || kidFromJws((head as { issuer_signature?: { jws?: string } }).issuer_signature?.jws);
+  const embedded = (head as { issuer_signature?: { issuer_jwk?: unknown } }).issuer_signature?.issuer_jwk;
+  const jwk = keyForKid(headerKid, [embedded, ...fixedKeyEntries.map((entry) => entry?.jwk)]);
+  if (!jwk) return { ok: false, reason: 'key' };
   const trust = verifyTreeHeadTrust(head, { trustedKids, issuerHistory: history });
   if (!trust.ok || !trust.payload || typeof trust.kid !== 'string') return { ok: false, reason: 'head_untrusted' };
-  const embedded = (head as { issuer_signature?: { issuer_jwk?: unknown } }).issuer_signature?.issuer_jwk;
-  const jwk = keyForKid(trust.kid, [embedded, ...(history?.entries || []).map((entry) => entry?.jwk)]);
-  if (!jwk) return { ok: false, reason: 'key' };
   return verifyFixedHeadEip712(fixed, { claims: trust.payload as Record<string, unknown>, kid: trust.kid, jwk });
+}
+
+function kidFromJws(jws: string | undefined): string | null {
+  if (!jws) return null;
+  try {
+    const header = JSON.parse(Buffer.from(jws.split('.')[0] || '', 'base64url').toString('utf8')) as { kid?: unknown };
+    return typeof header.kid === 'string' ? header.kid : null;
+  } catch {
+    return null;
+  }
 }
 
 function inclusionHeadUrl(
@@ -304,7 +325,12 @@ export function epochRecordSignatureOk(
     ? embedded
     : null;
   if (pin) keys.push(pin);
-  for (const entry of history?.entries || []) {
+  const bundledDoc = loadBundledIssuerHistory().document;
+  const epochKeyEntries = history && historyPrefixExtends(bundledDoc, history)
+    && !extensionNarrowsBundle(bundledDoc, history).ok
+    ? (bundledDoc.entries || [])
+    : (history?.entries || []);
+  for (const entry of epochKeyEntries) {
     const jwk = entry?.jwk as Es256Jwk | undefined;
     if (!jwk) continue;
     if (kid && entry.kid !== kid && jwk.kid !== kid) continue;

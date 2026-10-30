@@ -31,11 +31,16 @@ import {
   type Es256Jwk,
 } from './jws.js';
 import {
+  extensionNarrowsBundle,
+  historyPrefixExtends,
   historyRowMatchesKid,
   issuerKeyWindow,
+  loadBundledIssuerHistory,
   verifyIssuerHistoryDocument,
   type IssuerHistoryDocument,
+  type IssuerHistoryEntry,
 } from './issuer-history.js';
+import { readTestSnapshot } from './internal/test-seam.js';
 
 /** Confirmed sender of Base tx 0x1d8d7ea255170c8d4b87bef9382e13555dded2072fd877ce35f995f1ab54ee09. */
 export const PINNED_BASE_ANCHOR_WALLET = '0x1844D1F5FE42aff1Cce6F776514Fd40374079582';
@@ -192,9 +197,15 @@ function trustCompactJws(
   return { ok: false, trust: null, kid, payload: null, reason: 'head_signature_invalid' };
 }
 
-function historyEntryKey(doc: IssuerHistoryDocument, kid: string | null): Es256Jwk | null {
+function historyEntryKey(
+  doc: IssuerHistoryDocument,
+  kid: string | null,
+  keyRows: readonly IssuerHistoryEntry[],
+): Es256Jwk | null {
   if (!kid) return null;
-  for (const entry of doc.entries || []) {
+  void doc;
+  const rows = keyRows;
+  for (const entry of rows) {
     if (!entry?.jwk || !isEs256PublicJwk(entry.jwk)) continue;
     if (historyRowMatchesKid(entry, kid)) return entry.jwk;
   }
@@ -290,18 +301,19 @@ function fail(reason: string, detail?: string): HeadTrustResult {
 
 export function verifyTreeHeadTrust(
   head: TreeHeadDocument | null | undefined,
-  {
-    jwks,
-    trustedKids,
-    issuerHistory = null,
-    strictIssuerHistory = false,
-  }: {
+  options: {
     jwks?: JwksLike;
     trustedKids?: readonly string[];
     issuerHistory?: IssuerHistoryDocument | null;
     strictIssuerHistory?: boolean;
   } = {},
 ): HeadTrustResult {
+  const {
+    jwks,
+    trustedKids,
+    issuerHistory = null,
+    strictIssuerHistory = false,
+  } = options;
   const jws = head?.issuer_signature?.jws;
   if (!jws) return fail('head_signature_missing');
   const pins = trustedKids ?? DEFAULT_TRUSTED_ISSUER_KIDS;
@@ -310,18 +322,28 @@ export function verifyTreeHeadTrust(
   let trust: HeadTrustResult['trust'] = direct.trust;
   let payload = direct.payload;
   let kid = direct.kid;
-  const historyKeys = jwks?.keys ? { keys: jwks.keys } : undefined;
 
   let historyOk = false;
+  let windowDoc: IssuerHistoryDocument | null = issuerHistory;
   if (issuerHistory) {
-    const verified = verifyIssuerHistoryDocument(issuerHistory, { jwks: historyKeys, trustedKids: pins });
+    const verified = verifyIssuerHistoryDocument(issuerHistory, { trustedKids: pins });
     if (!verified.valid) {
       return { ...fail('issuer_history_invalid', verified.reason), kid };
     }
     historyOk = true;
+    const bundled = readTestSnapshot(options)?.issuerHistory?.document
+      ?? loadBundledIssuerHistory().document;
+    const extendsBundle = historyPrefixExtends(bundled, issuerHistory);
+    const bundleChecked = extendsBundle
+      ? extensionNarrowsBundle(bundled, issuerHistory)
+      : { ok: true as const };
+    const keyRows = !extendsBundle
+      ? (issuerHistory.entries || [])
+      : (bundleChecked.ok ? (issuerHistory.entries || []) : (bundled.entries || []));
+    windowDoc = !extendsBundle || bundleChecked.ok ? issuerHistory : bundled;
     if (!payload) {
       const headerKid = readJwsHeader(jws)?.kid || head?.issuer_signature?.kid || null;
-      const entryKey = historyEntryKey(issuerHistory, headerKid);
+      const entryKey = historyEntryKey(issuerHistory, headerKid, keyRows);
       if (entryKey) {
         const checked = verifyIssuerJws(jws, entryKey, { expectTyp: ISSUER_JWS_TYP.treeHead });
         if (checked.valid && checked.payload) {
@@ -345,11 +367,11 @@ export function verifyTreeHeadTrust(
     return { ...fail('head_claims_mismatch', mismatch), kid, payload };
   }
 
-  if (historyOk && issuerHistory && kid) {
+  if (historyOk && windowDoc && kid) {
     const publishedAt = Object.prototype.hasOwnProperty.call(head || {}, 'published_at')
       ? head?.published_at
       : payload.published_at;
-    const window = headHistoryWindow(issuerHistory, kid, publishedAt);
+    const window = headHistoryWindow(windowDoc, kid, publishedAt);
     if (!window.ok) {
       const reason = window.reason === 'published_at_missing' ? 'published_at_missing' : 'head_kid_window';
       const detail = reason === 'head_kid_window' ? (window.reason || undefined) : undefined;
@@ -464,7 +486,7 @@ function walletsFromHistory(
   trustedKids: readonly string[] | undefined,
 ): { base: string[]; solana: string[] } | null {
   if (!doc?.issuer_signature?.jws) return null;
-  const verified = verifyIssuerHistoryDocument(doc, { jwks: jwks?.keys ? { keys: jwks.keys } : undefined, trustedKids });
+  const verified = verifyIssuerHistoryDocument(doc, { trustedKids });
   if (!verified.valid) return null;
   const payload = decodePayload(doc.issuer_signature.jws);
   const listed = payload?.anchor_wallets;

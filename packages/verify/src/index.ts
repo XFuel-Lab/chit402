@@ -95,6 +95,7 @@ import { verifyPublishedPreimages, type PreimageCheck } from './preimage.js';
 import { fetchNoRedirect } from './fetch-guard.js';
 import {
   checkReceiptIssuerHistory,
+  extensionNarrowsBundle,
   historyPrefixExtends,
   laterThanBundled,
   loadBundledIssuerHistory,
@@ -117,7 +118,7 @@ import {
   windowIdForPayloadVersion,
   type VersionWindows,
 } from './version-windows.js';
-import { readTestSnapshot } from './internal/test-seam.js';
+import { carryTestSnapshot, readTestSnapshot } from './internal/test-seam.js';
 import { keyForKid, verifyReceiptBindingEip712, type PayerBindingCheck } from './eip712.js';
 import { headTrustedFromInclusion, verifyTreeHeadTrust, type TreeHeadDocument } from './anchor-trust.js';
 import {
@@ -854,7 +855,8 @@ export function pinnedLegacyHistory(options: {
     && historyPrefixExtends(bundled, supplied)
     && laterThanBundled(bundled, supplied)
   ) {
-    return supplied;
+    const legacyNarrow = extensionNarrowsBundle(bundled, supplied);
+    if (legacyNarrow.ok) return supplied;
   }
   if (bundled && verifyIssuerHistoryDocument(bundled, { trustedKids: pins }).valid) return bundled;
   return null;
@@ -2220,12 +2222,12 @@ async function verifyReceiptChecks(
   let headTrustFailed = false;
   const suppliedHead = witnessHead;
   if (offlineHeadNeedsSignature(suppliedHead)) {
-    const trust = verifyTreeHeadTrust(suppliedHead, {
+    const trust = verifyTreeHeadTrust(suppliedHead, carryTestSnapshot(options, {
       jwks,
       trustedKids,
       issuerHistory: issuer_history.document,
       strictIssuerHistory: options.strictIssuerHistory === true,
-    });
+    }));
     if (!trust.ok) {
       headTrustFailed = true;
       errors.push(trust.reason || 'head_signature_invalid');
