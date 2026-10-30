@@ -1,0 +1,278 @@
+{
+  "about": "Book webhook and agent owner-key persistence. Run with scripts/mutants/run-mutants.mjs.",
+  "timeoutSec": 180,
+  "suites": {
+    "gwpersist": {
+      "cwd": "services/gateway",
+      "argv": [
+        "node",
+        "--test",
+        "--test-concurrency=1",
+        "test/persist-webhook-ownerkey.test.mjs",
+        "test/book-webhook.test.mjs",
+        "test/owner-view.test.mjs",
+        "test/cap-store-fail-closed.test.mjs",
+        "test/private-read-cache.test.mjs",
+        "test/identities-file-mode.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test",
+        "ISSUER_HISTORY_TEST_ROTATION": "true",
+        "ISSUER_TEST_KEY": "1",
+        "HUB_CATALOG_OFFLINE": "true"
+      }
+    }
+  },
+  "mutants": [
+    {
+      "id": "P1_drop_persist_upsert",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "this\\._save\\(\\); // upsert persist",
+      "flags": "",
+      "replace": "void 0; // upsert persist",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "upsert returns success without writing the file"
+    },
+    {
+      "id": "P2_drop_persist_bind",
+      "file": "services/gateway/src/agent-owner-key.js",
+      "find": "this\\._save\\(\\); // bind persist",
+      "flags": "",
+      "replace": "void 0; // bind persist",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "bind returns ok without writing the file"
+    },
+    {
+      "id": "P3_drop_persist_counters",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "this\\._save\\(\\); // counter persist",
+      "flags": "",
+      "replace": "void 0; // counter persist",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "delivery counters stay in memory only"
+    },
+    {
+      "id": "L1_drop_boot_load_webhook",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "this\\._load\\(\\);",
+      "flags": "",
+      "replace": "void 0;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "webhook store skips the boot load"
+    },
+    {
+      "id": "L2_drop_boot_load_ownerkey",
+      "file": "services/gateway/src/agent-owner-key.js",
+      "find": "this\\._load\\(\\);",
+      "flags": "",
+      "replace": "void 0;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "owner-key store skips the boot load"
+    },
+    {
+      "id": "L3_singleton_not_replaced",
+      "file": "services/gateway/src/server.js",
+      "find": "resetBookWebhookRegistry\\(bookWebhooks\\);",
+      "flags": "",
+      "replace": "resetBookWebhookRegistry();",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "boot clears the webhook singleton instead of installing the loaded store"
+    },
+    {
+      "id": "W1_non_atomic_write",
+      "file": "services/gateway/src/atomic-json-file.js",
+      "find": "openSync\\(tmp, 'wx', 0o600\\)",
+      "flags": "",
+      "replace": "openSync(target, 'w', 0o600)",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "writes the target in place"
+    },
+    {
+      "id": "W2_mode_644",
+      "file": "services/gateway/src/atomic-json-file.js",
+      "find": "0o600",
+      "flags": "",
+      "replace": "0o644",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "creates the file mode 644"
+    },
+    {
+      "id": "W3_no_fsync",
+      "file": "services/gateway/src/atomic-json-file.js",
+      "find": "fsImpl\\.fsyncSync\\(fd\\);\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "drops the file fsync before rename"
+    },
+    {
+      "id": "W4_tmp_left_on_error",
+      "file": "services/gateway/src/atomic-json-file.js",
+      "find": "try \\{ fsImpl\\.unlinkSync\\(tmp\\); \\} catch \\{ /\\* tmp may not exist \\*/ \\}",
+      "flags": "",
+      "replace": "/* unlink dropped */",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "leaves the temp file after a failed write"
+    },
+    {
+      "id": "W5_no_rollback",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "if \\(had\\) this\\._hooks\\.set\\(id, prior\\);\\n      else this\\._hooks\\.delete\\(id\\);",
+      "flags": "",
+      "replace": "void had; void prior;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a failed webhook write keeps the new row in memory"
+    },
+    {
+      "id": "W6_persist_error_to_400",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "if \\(err\\?\\.code === 'persist_failed'\\) throw err;",
+      "flags": "",
+      "replace": "if (false) throw err;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "persist_failed becomes invalid_webhook 400"
+    },
+    {
+      "id": "C1_corrupt_means_empty_webhook",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "snap = JSON\\.parse\\(raw\\);\\n    \\} catch \\(err\\) \\{\\n      throw persistFailed\\(err, 'book-webhook: load failed'\\);",
+      "flags": "",
+      "replace": "snap = JSON.parse(raw);\n    } catch (err) {\n      return;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "bad JSON loads as an empty webhook map"
+    },
+    {
+      "id": "C2_corrupt_means_empty_ownerkey",
+      "file": "services/gateway/src/agent-owner-key.js",
+      "find": "snap = JSON\\.parse\\(raw\\);\\n    \\} catch \\(err\\) \\{\\n      throw persistFailed\\(err, 'agent-owner-key: load failed'\\);",
+      "flags": "",
+      "replace": "snap = JSON.parse(raw);\n    } catch (err) {\n      return;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "bad JSON loads as an empty owner-key map"
+    },
+    {
+      "id": "C3_shape_check_dropped",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "const hook = validateStoredWebhook\\(key, row\\);",
+      "flags": "",
+      "replace": "const hook = row;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "webhook rows are stored without validation"
+    },
+    {
+      "id": "D1_delete_not_persisted",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "this\\._save\\(\\); // remove persist",
+      "flags": "",
+      "replace": "void 0; // remove persist",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "delete drops the hook in memory only"
+    },
+    {
+      "id": "D2_late_delivery_resurrects",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "if \\(current !== hookRef\\) return;",
+      "flags": "",
+      "replace": "if (current !== hookRef) { this._hooks.set(id, hookRef); current = hookRef; }",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a late delivery writes the old hook back"
+    },
+    {
+      "id": "S1_no_write_serialization",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "this\\._hooks\\.set\\(id, hook\\);\\n    try \\{\\n      this\\._save\\(\\); // upsert persist",
+      "flags": "",
+      "replace": "this._save(); // upsert persist\n    try {\n      this._hooks.set(id, hook);",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "the snapshot is written before the map is updated"
+    },
+    {
+      "id": "E1_events_order_lost",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "const events = new Set\\(\\);\\n  for \\(const event of row\\.events\\) \\{\\n    if \\(!VALID_EVENTS\\.has\\(event\\) \\|\\| events\\.has\\(event\\)\\) rejectWebhookRow\\(\\);\\n    events\\.add\\(event\\);\\n  \\}",
+      "flags": "",
+      "replace": "const events = new Set([...row.events].sort());",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "loaded events are sorted"
+    },
+    {
+      "id": "K1_secret_logged",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "logger\\.warn\\(\\{ agent_id: id, code: 'book_webhook_save_failed' \\}, 'book webhook save failed'\\);",
+      "flags": "",
+      "replace": "logger.warn({ agent_id: id, code: 'book_webhook_save_failed', secret: hook.secret }, 'book webhook save failed');",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a failed save logs the webhook signing secret"
+    },
+    {
+      "id": "I1_drop_identities_chmod",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "fs\\.chmodSync\\(file, 0o600\\);",
+      "flags": "",
+      "replace": "void file;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "boot leaves a looser identities.json mode unchanged"
+    },
+    {
+      "id": "I2_identities_mode_644",
+      "file": "services/gateway/src/agent-registry.js",
+      "find": "chmodSync\\(file, 0o600\\)",
+      "flags": "",
+      "replace": "chmodSync(file, 0o644)",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "boot chmod uses mode 644"
+    },
+    {
+      "id": "X14_counter_no_rollback",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "current\\.deliveries = priorDeliveries;\\n      current\\.failures = priorFailures;\\n      current\\.lastStatus = priorStatus;\\n      current\\.lastError = priorError;\\n",
+      "flags": "",
+      "replace": "",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a failed counter write keeps the new counters in memory"
+    },
+    {
+      "id": "X20_counter_error_escapes",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "} catch \\{\\n      current\\.deliveries = priorDeliveries;",
+      "flags": "",
+      "replace": "} catch (err) {\n      throw err;\n      current.deliveries = priorDeliveries;",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a failed counter write throws out of recordDelivery"
+    },
+    {
+      "id": "X21_counter_logs_secret",
+      "file": "services/gateway/src/book-webhook.js",
+      "find": "logger\\.warn\\(\\{ agent_id: id, code: 'book_webhook_counter_persist_failed' \\}, 'book webhook counter persist failed'\\);",
+      "flags": "",
+      "replace": "logger.warn({ agent_id: id, code: 'book_webhook_counter_persist_failed', secret: hookRef.secret }, 'book webhook counter persist failed');",
+      "nth": 1,
+      "suite": "gwpersist",
+      "note": "a failed counter write logs the webhook signing secret"
+    }
+  ]
+}

@@ -125,7 +125,14 @@ import { receiptLaneForEntry } from './receipt-lane.js';
 import { readAgentBook, claimFromRequest, bindBookVerifier, setAgentBudget, queryLineage, packBook, exportAgentBook, BOOK_POSSESSION_REQUIRED_BODY } from './agent-book.js';
 import { privateNoStore } from './private-read.js';
 import { coverageForLedger } from './export-coverage.js';
-import { getBookWebhookRegistry, scheduleBookWebhook, manageBookWebhook } from './book-webhook.js';
+import {
+  BookWebhookRegistry,
+  getBookWebhookRegistry,
+  resetBookWebhookRegistry,
+  scheduleBookWebhook,
+  manageBookWebhook,
+} from './book-webhook.js';
+import { AgentOwnerKeyStore } from './agent-owner-key.js';
 import { recordBookInflow, correctBookInflow } from './book-inflow.js';
 import {
   BookPolicyStore,
@@ -1111,6 +1118,15 @@ export async function createApp() {
     }));
   }
   const agentRegistry = new AgentRegistry({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
+  const bookWebhooks = new BookWebhookRegistry({
+    dir: agentsDir,
+    persist: !!config.taskStore?.persist,
+  });
+  resetBookWebhookRegistry(bookWebhooks);
+  const agentOwnerKeys = new AgentOwnerKeyStore({
     dir: agentsDir,
     persist: !!config.taskStore?.persist,
   });
@@ -5911,6 +5927,7 @@ export async function createApp() {
     store: ownerStore,
     saltStore,
     registry: agentRegistry,
+    agentKeys: agentOwnerKeys,
     loadReceipt: loadFullReceipt,
     // Read only. Present only with RECEIPT_PAYER_BINDING_EIP712=true.
     payerBinding: payerBindingOn ? (taskId, receiptJws) => payerBindingView(payerBindingStore, taskId, receiptJws) : null,

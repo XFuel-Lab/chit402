@@ -11,6 +11,45 @@ export const sectionTitles = {
   probe: 'Probe the paid door',
 };
 
+export const openrouterKeepRouteTitle = 'Already pay OpenRouter? Keep your route';
+
+const BROADCAST_WEBHOOK = 'https://api.chit402.com/v1/openrouter/broadcast';
+const BROADCAST_GUIDE = 'https://github.com/XFuel-Lab/chit402/blob/main/docs/product/openrouter-broadcast.md';
+
+export function openrouterKeepRouteParagraphs() {
+  return [
+    ["Chit's Broadcast receiver is on."],
+    ["Steps from the Broadcast guide; we haven't yet run the full flow end to end on a fresh account."],
+    [
+      'Mint a book with ',
+      { code: 'POST /v1/openrouter/books' },
+      '. No wallet and no payment. The response returns book_id plus an ingest_key that is shown once.',
+    ],
+    [
+      'In OpenRouter, enable Broadcast under Settings > Observability. Set the webhook URL to ',
+      { code: BROADCAST_WEBHOOK },
+      ' with header ',
+      { code: 'Authorization: Bearer <ingest_key>' },
+      '.',
+    ],
+    [
+      'An optional key lets Chit check each generation against OpenRouter. Without an attached OpenRouter key they are marked "Reported via OpenRouter Broadcast (unverified)".',
+    ],
+    ['It covers new calls only, with no backfill of past calls.'],
+    ['Receipts are on the reported rail.'],
+    [
+      'Reads are ',
+      { code: 'GET /v1/openrouter/books/:book_id/receipts' },
+      ', a JSON list of receipts. The cap is 200. Rows are not added to an agent\'s USDC spent total.',
+    ],
+    [
+      'Guide: ',
+      { link: { href: BROADCAST_GUIDE, label: 'docs/product/openrouter-broadcast.md', blank: true } },
+      '.',
+    ],
+  ];
+}
+
 export const docsKicker = 'Documentation';
 
 export function h1For(productName) {
@@ -331,6 +370,10 @@ export function docsStaticModel(env) {
       {
         paragraphs: [docsKicker, introParts(env.apiDomain)],
         links: navLinks(env.apiHost),
+      },
+      {
+        heading: openrouterKeepRouteTitle,
+        flow: openrouterKeepRouteParagraphs().map((p) => ({ p })),
       },
       { heading: sectionTitles.start, cards: cardsOf(startHere) },
       { heading: sectionTitles.news, items: whatsNew(env.apiHost) },
