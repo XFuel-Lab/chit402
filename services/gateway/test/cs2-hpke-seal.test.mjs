@@ -21,7 +21,8 @@ test('cs2 hpke seal suite (gateway CI hook)', () => {
     'packages/cs2-core/seal/seal.test.mjs',
   ], { cwd: repo, encoding: 'utf8', env, timeout: 120_000 });
   const out = `${run.stdout || ''}\n${run.stderr || ''}`;
-  assert.equal(run.status, 0, out.slice(-4000));
+  const failedLines = [...out.matchAll(/^not ok .+$/gm)].map((match) => match[0]).join('\n');
+  assert.equal(run.status, 0, failedLines || out.slice(-2000));
   const passed = out.match(/^# pass (\d+)$/m);
   const failed = out.match(/^# fail (\d+)$/m);
   assert.ok(passed, out.slice(-2000));
