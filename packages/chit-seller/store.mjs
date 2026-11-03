@@ -1,25 +1,9 @@
 /**
- * Process-local once-store. One successful sigma claims its payment id and
- * its authorization, and a later request for either is refused.
- * A caller can pass its own store with the same claim/release methods when
- * the refusal has to outlive this process.
+ * Store contract for one sigma per payment.
+ * Production must pass one shared durable store into every seller instance.
+ * claim(id) is atomic. release(id) undoes a claim that did not finish.
+ * has(id) reports a live claim. Two stores mean the same payment can be
+ * signed twice. The in-memory helper lives under testing/ and is not a default.
  */
 
-export function createOnceStore() {
-  const held = new Set();
-  return {
-    claim(id) {
-      if (typeof id !== 'string' || id.length === 0) return false;
-      if (held.has(id)) return false;
-      held.add(id);
-      return true;
-    },
-    release(id) {
-      if (typeof id !== 'string') return;
-      held.delete(id);
-    },
-    has(id) {
-      return held.has(id);
-    },
-  };
-}
+export const STORE_FIELDS = Object.freeze(['claim', 'release', 'has']);

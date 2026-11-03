@@ -8,18 +8,18 @@
  * for either is refused. Failures return a fixed reason and nothing else.
  */
 
-import { randomBytes } from 'node:crypto';
 import { authorizationKey, isAllowedAlg, sigmaDigest } from '../cs2-core/line/index.mjs';
-import { P256 } from '../cs2-core/ecdsa/curves.js';
+import { P256, SECP256K1 } from '../cs2-core/ecdsa/curves.js';
 import { bytesToBig, bytesToHex, hexToBytes } from '../cs2-core/ecdsa/bytes.js';
 import { publicPoint, signRawDigest } from '../cs2-core/ecdsa/sign.js';
 import { yParityByTrial } from '../cs2-core/ecdsa/recover.js';
 import { fromCodec, refuse } from './reasons.mjs';
-import { parseScalar } from './hex.mjs';
+import { addressHex, isZeroHex, parseScalar, sameAddress } from './hex.mjs';
 import { isLowS } from './low-s.mjs';
-import { createOnceStore } from './store.mjs';
 import { matchAuthorization, matchObservedSettle, requireObservedTriple } from './match.mjs';
-import { readCanonicalPayment, selectNonce } from './chain.mjs';
+import { createRpcReader, readAgreedPayment, selectNonce } from './chain.mjs';
+import { nonceFor } from './nonce-hook.mjs';
+import { BUNDLED_RPC_URLS } from './pins.mjs';
 
 function deny(reason, onRefuse) {
   const out = refuse(reason);
@@ -27,14 +27,6 @@ function deny(reason, onRefuse) {
     try { onRefuse(out.reason); } catch { /* the refusal stands */ }
   }
   return out;
-}
-
-function randomScalar(order) {
-  for (let i = 0; i < 64; i += 1) {
-    const k = bytesToBig(randomBytes(32));
-    if (k > 0n && k < order) return k;
-  }
-  return null;
 }
 
 export function compressP256(publicKey) {
@@ -49,17 +41,20 @@ export function compressP256(publicKey) {
 
 async function signInner(input) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return refuse('bad_type');
+  if (Object.hasOwn(input, 'k')) return refuse('bad_key');
   const onRefuse = input.onRefuse;
   const payment = input.payment;
   const authorization = input.authorization;
   const triple = requireObservedTriple(payment, authorization);
   if (!triple.ok) return deny(triple.reason, onRefuse);
   if (typeof input.alg !== 'number' || !isAllowedAlg(input.alg)) return deny('bad_alg', onRefuse);
-  if (!input.store || typeof input.store.claim !== 'function' || typeof input.store.release !== 'function') {
+  if (!input.store || typeof input.store.claim !== 'function' || typeof input.store.release !== 'function' || typeof input.store.has !== 'function') {
     return deny('bad_type', onRefuse);
   }
+  if (!sameAddress(authorization.token, input.pinnedToken)) return deny('token_mismatch', onRefuse);
+  if (!sameAddress(authorization.payee, input.pinnedPayee)) return deny('payee_mismatch', onRefuse);
 
-  const read = await readCanonicalPayment(input.reader, payment);
+  const read = await readAgreedPayment(input.readers, payment);
   if (!read.ok) return deny(read.reason, onRefuse);
   const bound = await selectNonce(read, authorization.nonce);
   if (!bound.ok) return deny(bound.reason, onRefuse);
@@ -96,7 +91,7 @@ async function signInner(input) {
   }
 
   const d = parseScalar(input.privateKey, P256.order);
-  const k = input.k == null ? randomScalar(P256.order) : parseScalar(input.k, P256.order);
+  const k = d == null ? null : nonceFor(digest.bytes, d, P256.order);
   if (d == null || k == null) {
     input.store.release(payClaim);
     input.store.release(authClaim);
@@ -137,7 +132,7 @@ export function verifySigma({ digest, sigma, publicKey } = {}) {
     if (!(digest instanceof Uint8Array) || digest.length !== 32) return refuse('bad_length');
     if (!(sigma instanceof Uint8Array) || sigma.length !== 64) return refuse('bad_sigma');
     const r = sigma.subarray(0, 32);
-    const s = sigma.subarray(32);
+    const s = sigma.subarray(32, 64);
     if (bytesToBig(r) <= 0n || bytesToBig(r) >= P256.order) return refuse('bad_sigma');
     if (!isLowS(s, P256)) return refuse('bad_sigma');
     const parity = yParityByTrial(digest, sigma, publicKey, P256);
@@ -148,7 +143,20 @@ export function verifySigma({ digest, sigma, publicKey } = {}) {
   }
 }
 
-export function createSeller({ privateKey, store = createOnceStore(), reader, k } = {}) {
+function bundledReaders() {
+  return BUNDLED_RPC_URLS[84532].map((url) => createRpcReader(url));
+}
+
+export function createSeller({ privateKey, store, token, payee, readers } = {}) {
+  if (arguments[0] && Object.hasOwn(arguments[0], 'k')) return refuse('bad_key');
+  if (!store || typeof store.claim !== 'function' || typeof store.release !== 'function' || typeof store.has !== 'function') {
+    return refuse('bad_type');
+  }
+  const pinnedToken = addressHex(token);
+  const pinnedPayee = addressHex(payee);
+  if (!pinnedToken || !pinnedPayee || isZeroHex(pinnedToken) || isZeroHex(pinnedPayee)) return refuse('bad_payment');
+  const useReaders = readers || bundledReaders();
+  if (!Array.isArray(useReaders) || useReaders.length < 3) return refuse('chain_unread');
   const d = parseScalar(privateKey, P256.order);
   if (d == null) return refuse('bad_key');
   let publicKey;
@@ -163,8 +171,15 @@ export function createSeller({ privateKey, store = createOnceStore(), reader, k 
     publicKey,
     compressedKey,
     sign(request) {
-      const nonceK = request && request.k != null ? request.k : k;
-      return signSigma({ ...request, privateKey: d, store, reader, k: nonceK });
+      if (request && Object.hasOwn(request, 'k')) return Promise.resolve(refuse('bad_key'));
+      return signSigma({
+        ...request,
+        privateKey: d,
+        store,
+        readers: useReaders,
+        pinnedToken,
+        pinnedPayee,
+      });
     },
   };
 }

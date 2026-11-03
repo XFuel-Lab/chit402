@@ -1,8 +1,8 @@
 /**
  * The call authorization against the payment this read observed.
- * Sigma is refused unless payer, payee, price and nonce all match (DS-82).
+ * Sigma is refused unless payer, payee, price and nonce all match.
  * An observed settle is the triple (txHash, log index, value), never the
- * transaction hash on its own (DS-92). One transaction can carry several
+ * transaction hash on its own. One transaction can carry several
  * Transfers to the same payee; the log index picks one of them.
  */
 
@@ -45,7 +45,7 @@ export function matchObservedSettle(requested, observed) {
 }
 
 /**
- * DS-92: a settle observed by transaction hash alone is ambiguous.
+ * A settle observed by transaction hash alone is ambiguous.
  * The log index and the value have to be present before any chain read.
  */
 export function requireObservedTriple(payment, authorization) {

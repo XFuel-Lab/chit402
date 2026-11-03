@@ -1,5 +1,5 @@
 /**
- * Payment read by block hash (DS-114).
+ * Payment read by block hash.
  *
  * The payment block is loaded with eth_getBlockByHash. It counts only when
  * that same hash is the canonical block at its number and the number is at
@@ -107,6 +107,7 @@ function topicAddress(topic) {
 
 function transferAt(log) {
   if (!log || log.topics[0] !== TRANSFER_TOPIC || log.topics.length < 3) return null;
+  if (log.topics.length !== 3) return null;
   const from = topicAddress(log.topics[1]);
   const to = topicAddress(log.topics[2]);
   if (!from || !to || !log.data || log.data.length !== 64) return null;
@@ -117,10 +118,11 @@ function transferAt(log) {
 
 function authUsedAt(log) {
   if (!log || log.topics[0] !== AUTH_USED_TOPIC || log.topics.length < 3) return null;
+  if (log.topics.length !== 3) return null;
   const authorizer = topicAddress(log.topics[1]);
   const nonce = log.topics[2];
   if (!authorizer || !nonce || nonce.length !== 64) return null;
-  return { authorizer, nonce };
+  return { authorizer, nonce, token: log.address };
 }
 
 /**
@@ -134,6 +136,7 @@ export async function readCanonicalPayment(reader, payment) {
     || typeof reader.getChainId !== 'function') {
     return refuse('chain_unread');
   }
+  if (typeof payment.localLogIndex === 'string') return refuse('bad_uint');
   const blockHash = normalizeHex(payment.blockHash, 32);
   if (!blockHash) return refuse('missing_block_hash');
   const id = canonicalPaymentId({
@@ -222,7 +225,7 @@ export async function selectNonce(observed, nonceHex) {
   if (!want || isZeroHex(want)) return refuse('nonce_mismatch');
   let hit = null;
   for (const auth of observed.auths) {
-    if (sameHex(auth.nonce, want)) {
+    if (sameHex(auth.nonce, want) && sameHex(auth.token, observed.token)) {
       hit = auth;
       break;
     }
@@ -245,6 +248,62 @@ export async function selectNonce(observed, nonceHex) {
     authorizer: hit.authorizer,
     paymentId: observed.paymentId,
   };
+}
+
+function paymentFingerprint(view) {
+  const auths = (view.auths || [])
+    .map((auth) => `${auth.token}:${auth.authorizer}:${auth.nonce}`)
+    .sort()
+    .join(',');
+  return [
+    view.chainId.toString(),
+    view.blockHash,
+    String(view.txIndex),
+    String(view.localLogIndex),
+    view.txHash,
+    view.token,
+    view.payer,
+    view.payee,
+    view.price.toString(),
+    auths,
+  ].join('|');
+}
+
+/**
+ * Two readers must return the same payment. Chain 84532 must be given at
+ * least three readers (the bundled list). Fewer agreements refuse the signature.
+ */
+export async function readAgreedPayment(readers, payment) {
+  if (!Array.isArray(readers)) return refuse('chain_unread');
+  const chainId = parseUint(payment && payment.chainId, 64);
+  if (chainId == null) return refuse('bad_uint');
+  if (chainId === 84532n && readers.length < 3) return refuse('chain_unread');
+  if (readers.length < 2) return refuse('chain_unread');
+  const groups = new Map();
+  const reasons = new Map();
+  for (const reader of readers) {
+    const view = await readCanonicalPayment(reader, payment);
+    if (!view.ok) {
+      reasons.set(view.reason, (reasons.get(view.reason) || 0) + 1);
+      continue;
+    }
+    const fp = paymentFingerprint(view);
+    const list = groups.get(fp);
+    if (list) list.push(view);
+    else groups.set(fp, [view]);
+  }
+  let best = null;
+  for (const list of groups.values()) {
+    if (!best || list.length > best.length) best = list;
+  }
+  if (best && best.length >= 2) return best[0];
+  let top = null;
+  let count = 0;
+  for (const [reason, n] of reasons) {
+    if (n > count) { top = reason; count = n; }
+  }
+  if (count >= 2 && top) return refuse(top);
+  return refuse('chain_unread');
 }
 
 export function createRpcReader(rpcUrl, { fetchImpl = globalThis.fetch, timeoutMs = 8000 } = {}) {

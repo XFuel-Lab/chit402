@@ -7,10 +7,11 @@
  * An hour on no pin, or on more than one, is refused.
  */
 
+import { HOUR_SECONDS } from '../cs2-core/eip712/time.mjs';
 import { refuse } from './reasons.mjs';
 import { addressHex, isZeroHex, parseUint } from './hex.mjs';
 
-export const HOUR_SECONDS = 3600n;
+export { HOUR_SECONDS };
 
 function hour(value) {
   const parsed = parseUint(value, 64);

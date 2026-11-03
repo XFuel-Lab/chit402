@@ -1,5 +1,5 @@
 /**
- * EIP-712 payTo control, revoke, and revoke-by-key (DS-44).
+ * EIP-712 payTo control, revoke, and revoke-by-key.
  *
  * Domain fields and type strings live in typed-data.mjs. The admitting
  * contract comes from the pinned list for the hour, not from config or
@@ -13,11 +13,10 @@
  * the key that signs RevokeByKey.
  */
 
-import { randomBytes } from 'node:crypto';
 import { keccak256 } from '../cs2-core/ecdsa/keccak.js';
 import { P256, SECP256K1 } from '../cs2-core/ecdsa/curves.js';
 import { publicPoint, signRawDigest } from '../cs2-core/ecdsa/sign.js';
-import { recoverPublicKey, yParityByTrial } from '../cs2-core/ecdsa/recover.js';
+import { recoverPublicKey } from '../cs2-core/ecdsa/recover.js';
 import { ethereumAddress } from '../cs2-core/ecdsa/address.js';
 import { bytesToBig, bytesToHex, concat, hexToBytes } from '../cs2-core/ecdsa/bytes.js';
 import { isAllowedAlg } from '../cs2-core/line/index.mjs';
@@ -33,7 +32,10 @@ import {
   chitDomain,
 } from './typed-data.mjs';
 import { encodeSignatureField, readSignatureField } from './signature-field.mjs';
+import { expiryAllows, keyHash, tombstoned } from '../cs2-core/eip712/index.mjs';
 import { contractForHour } from './pinned-contract.mjs';
+import { PINNED_CONTRACTS } from './pins.mjs';
+import { nonceFor } from './nonce-hook.mjs';
 import { compressP256 } from './sigma.mjs';
 
 const text = new TextEncoder();
@@ -173,13 +175,11 @@ export function hashTypedData(domain, types, primary, message) {
 
 function admitting(input) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return refuse('bad_type');
-  return contractForHour(input.pinnedContracts, input.chainId, input.hourStart);
-}
-
-export function sellerKeyHash(key) {
-  const hex = normalizeHex(key, 33);
-  if (!hex) return null;
-  return keccak256(hexToBytes(hex));
+  if (Object.hasOwn(input, 'k')) return refuse('bad_key');
+  if (Object.hasOwn(input, 'verifyingContract') || Object.hasOwn(input, 'pinnedContracts')) {
+    return refuse('bad_payment');
+  }
+  return contractForHour(PINNED_CONTRACTS, input.chainId, input.hourStart);
 }
 
 /** Revoke id is (slot, keyHash). revokedAt is not part of it. */
@@ -271,14 +271,6 @@ function digestOf(primary, parsed) {
   return hashChit(primary, parsed.message, parsed.chainId, parsed.verifyingContract);
 }
 
-function randomScalar(order) {
-  for (let i = 0; i < 64; i += 1) {
-    const k = bytesToBig(randomBytes(32));
-    if (k > 0n && k < order) return k;
-  }
-  return null;
-}
-
 function recordOf(primary, parsed, signatureField) {
   const domain = chitDomain(parsed.chainId, parsed.verifyingContract);
   const recordDomain = {};
@@ -304,9 +296,9 @@ function recordOf(primary, parsed, signatureField) {
   };
 }
 
-function signDigest(digest, privateKey, k, curve) {
+function signDigest(digest, privateKey, curve) {
   const d = parseScalar(privateKey, curve.order);
-  const nonce = k == null ? randomScalar(curve.order) : parseScalar(k, curve.order);
+  const nonce = d == null ? null : nonceFor(digest, d, curve.order);
   if (d == null || nonce == null) return refuse('bad_key');
   const sig = signRawDigest(digest, d, nonce, curve);
   const signature = encodeSignatureField(concat([sig.raw, Uint8Array.of(sig.yParity)]));
@@ -337,11 +329,24 @@ function verifyPayToSigner(digest, signatureField, payTo) {
   return { ok: true, signer };
 }
 
+function controlReady(input, parsed, admit) {
+  if (!expiryAllows(parsed.hourStart, parsed.message.expiry)) return refuse('bad_payment');
+  const hashed = keyHash(parsed.message.keyAlg, parsed.message.key);
+  if (!hashed.ok) return hashed;
+  if (tombstoned(input.tombstones, hashed.hex)) return refuse('bad_payment');
+  if (admit && input.store && (input.store.has(`tomb:${hashed.hex}`) || input.store.has(`used:${hashed.hex}`))) {
+    return refuse('bad_payment');
+  }
+  return hashed;
+}
+
 export function payToControlDigest(input) {
   const admitted = admitting(input);
   if (!admitted.ok) return admitted;
   const parsed = parsePayToControl(input, admitted);
   if (!parsed.ok) return parsed;
+  const ready = controlReady(input, parsed, false);
+  if (!ready.ok) return ready;
   return digestOf(PAYTO_CONTROL, parsed);
 }
 
@@ -351,10 +356,13 @@ export function signPayToControl(input) {
     if (!admitted.ok) return admitted;
     const parsed = parsePayToControl(input, admitted);
     if (!parsed.ok) return parsed;
+    const ready = controlReady(input, parsed, true);
+    if (!ready.ok) return ready;
     const digest = digestOf(PAYTO_CONTROL, parsed);
     if (!digest.ok) return digest;
-    const signed = signDigest(digest.bytes, input.privateKey, input.k, SECP256K1);
+    const signed = signDigest(digest.bytes, input.privateKey, SECP256K1);
     if (!signed.ok) return signed;
+    if (input.store) input.store.claim(`used:${ready.hex}`);
     return {
       ok: true,
       digest: digest.bytes,
@@ -372,6 +380,8 @@ export function verifyPayToControl(input) {
     if (!admitted.ok) return admitted;
     const parsed = parsePayToControl(input, admitted);
     if (!parsed.ok) return parsed;
+    const ready = controlReady(input, parsed, false);
+    if (!ready.ok) return ready.reason === 'bad_length' || ready.reason === 'bad_alg' ? ready : refuse('bad_payment');
     const digest = digestOf(PAYTO_CONTROL, parsed);
     if (!digest.ok) return digest;
     return verifyPayToSigner(digest.bytes, input.signature, parsed.message.payTo);
@@ -388,7 +398,7 @@ export function signRevoke(input) {
     if (!parsed.ok) return parsed;
     const digest = digestOf(REVOKE, parsed);
     if (!digest.ok) return digest;
-    const signed = signDigest(digest.bytes, input.privateKey, input.k, SECP256K1);
+    const signed = signDigest(digest.bytes, input.privateKey, SECP256K1);
     if (!signed.ok) return signed;
     return {
       ok: true,
@@ -421,14 +431,16 @@ export function signRevokeByKey(input) {
     if (!admitted.ok) return admitted;
     const parsed = parseRevokeByKey(input, admitted);
     if (!parsed.ok) return parsed;
-    const d = parseScalar(input.privateKey, P256.order);
+    const d = parseScalar(input.privateKey, SECP256K1.order);
     if (d == null) return refuse('bad_key');
-    const hash = sellerKeyHash(compressP256(publicPoint(d, P256)));
+    const hashed = keyHash(0x01, compressP256(publicPoint(d, SECP256K1)));
+    const hash = hashed.ok ? hashed.bytes : null;
     if (!hash || bytesToHex(hash) !== bytesToHex(parsed.message.keyHash)) return refuse('bad_payment');
     const digest = digestOf(REVOKE_BY_KEY, parsed);
     if (!digest.ok) return digest;
-    const signed = signDigest(digest.bytes, d, input.k, P256);
+    const signed = signDigest(digest.bytes, d, SECP256K1);
     if (!signed.ok) return signed;
+    if (input.store && hashed.ok) input.store.claim(`tomb:${hashed.hex}`);
     return {
       ok: true,
       digest: digest.bytes,
@@ -446,13 +458,14 @@ export function verifyRevokeByKey(input) {
     if (!admitted.ok) return admitted;
     const parsed = parseRevokeByKey(input, admitted);
     if (!parsed.ok) return parsed;
-    const opened = openCanonical(input.signature, P256);
+    const opened = openCanonical(input.signature, SECP256K1);
     if (!opened.ok) return opened;
     const digest = digestOf(REVOKE_BY_KEY, parsed);
     if (!digest.ok) return digest;
-    const parity = yParityByTrial(digest.bytes, concat([opened.r, opened.s]), input.publicKey, P256);
-    if (parity !== opened.yParity) return refuse('bad_signature');
-    const hash = sellerKeyHash(compressP256(input.publicKey));
+    const pub = recoverPublicKey(digest.bytes, opened.r, opened.s, opened.yParity, SECP256K1);
+    if (!pub) return refuse('bad_signature');
+    const hashed = keyHash(input.keyAlg == null ? 0x01 : input.keyAlg, input.key || compressP256(pub));
+    const hash = hashed.ok ? hashed.bytes : null;
     if (!hash || bytesToHex(hash) !== bytesToHex(parsed.message.keyHash)) return refuse('bad_signature');
     return { ok: true };
   } catch {

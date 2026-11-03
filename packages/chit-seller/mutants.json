@@ -57,8 +57,8 @@
     {
       "id": "nonce_first",
       "file": "packages/chit-seller/chain.mjs",
-      "find": "if (sameHex(auth.nonce, want)) {",
-      "replace": "if (true || sameHex(auth.nonce, want)) {",
+      "find": "if (sameHex(auth.nonce, want) && sameHex(auth.token, observed.token)) {",
+      "replace": "if (true || (sameHex(auth.nonce, want) && sameHex(auth.token, observed.token))) {",
       "note": "the first AuthorizationUsed is accepted"
     },
     {
@@ -189,14 +189,14 @@
     },
     {
       "id": "domain_version",
-      "file": "packages/chit-seller/typed-data.mjs",
+      "file": "packages/cs2-core/eip712/domain.mjs",
       "find": "export const DOMAIN_VERSION = '13';",
       "replace": "export const DOMAIN_VERSION = '1';",
       "note": "the domain version is the pre-ruling value"
     },
     {
       "id": "drop_verifying_contract",
-      "file": "packages/chit-seller/typed-data.mjs",
+      "file": "packages/cs2-core/eip712/domain.mjs",
       "find": "  Object.freeze({ name: 'verifyingContract', type: 'address' }),",
       "replace": "  Object.freeze({ name: 'salt', type: 'bytes32' }),",
       "note": "verifyingContract is replaced by salt"
@@ -232,7 +232,7 @@
     {
       "id": "payto_curve",
       "file": "packages/chit-seller/eip712.mjs",
-      "find": "const signed = signDigest(digest.bytes, input.privateKey, input.k, SECP256K1);",
+      "find": "const signed = signDigest(digest.bytes, input.privateKey, SECP256K1);",
       "nth": 1,
       "replace": "const signed = signDigest(digest.bytes, input.privateKey, input.k, P256);",
       "note": "PayToControl is signed on P-256"

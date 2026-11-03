@@ -14,7 +14,8 @@ export function normalizeHex(value, width) {
     return bytesToHex(value);
   }
   if (typeof value !== 'string') return null;
-  const body = (value.startsWith('0x') || value.startsWith('0X')) ? value.slice(2) : value;
+  if (value.startsWith('0X')) return null;
+  const body = value.startsWith('0x') ? value.slice(2) : value;
   if (body.length !== width * 2 || !/^[0-9a-fA-F]+$/.test(body)) return null;
   return body.toLowerCase();
 }

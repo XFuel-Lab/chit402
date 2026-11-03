@@ -28,8 +28,8 @@ test('cs2 seller sigma suite (gateway CI hook)', () => {
   const skipped = out.match(/^# skipped (\d+)$/m);
   const cancelled = out.match(/^# cancelled (\d+)$/m);
   assert.ok(tests, out.slice(-2000));
-  assert.equal(tests[1], '45');
-  assert.equal(passed && passed[1], '45');
+  assert.equal(tests[1], '51');
+  assert.equal(passed && passed[1], '51');
   assert.equal(failed && failed[1], '0');
   assert.equal(skipped && skipped[1], '0');
   assert.equal(cancelled && cancelled[1], '0');
