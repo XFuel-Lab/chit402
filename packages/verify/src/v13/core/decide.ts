@@ -708,7 +708,13 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (world.canonical === 'unreachable') return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
   if (world.finalizedNumber == null) return fail(2, 'finality_unavailable', world, { anchor: 'could_not_check' }, messageOf('finality_unavailable'));
   const mine = world.events.filter((event) => event.address.toLowerCase() === parsed.receipt.contract);
-  const head = firstCovering(mine, parsed.receipt.index, world.finalizedNumber);
+  const earliest = firstCovering(mine, parsed.receipt.index, world.finalizedNumber);
+  const claimed = firstCovering(
+    mine.filter((event) => event.epoch === BigInt(parsed.receipt.epoch)),
+    parsed.receipt.index,
+    world.finalizedNumber,
+  );
+  const head = claimed ?? earliest;
   if (!head) return fail(2, 'pre_anchor', world, { anchor: 'could_not_check', log_inclusion: 'could_not_check' }, messageOf('pre_anchor'));
   const sized = treeSizeFromHead(head.size);
   if (!sized.ok) return fail(1, 'tree_size_above_cap', world, { log_inclusion: 'fail' }, messageOf('tree_size_above_cap'));
@@ -726,6 +732,9 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   const prior = priors[0];
   if (head.epoch > 1n && !prior) {
     return fail(2, 'prior_epoch_missing', world, { anchor: 'could_not_check' }, messageOf('prior_epoch_missing'));
+  }
+  if (earliest && head.epoch > earliest.epoch + 1n) {
+    return fail(1, 'not_first_anchor', world, { anchor: 'fail' }, messageOf('not_first_anchor'));
   }
   if (head.epoch > 0n && prior && prior.size > BigInt(parsed.receipt.index)) {
     return fail(1, 'not_first_anchor', world, { anchor: 'fail' }, messageOf('not_first_anchor'));

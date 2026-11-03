@@ -39,6 +39,8 @@ import {
   PAYTO_CONTROL_TYPE,
   REVOKE_BY_KEY_TYPE,
   REVOKE_TYPE,
+  assessSlotValue,
+  chitDomainSeparator,
   judgePayTo,
   keyHashOf,
   revokeByKeyDigest,
@@ -965,6 +967,104 @@ test('the anchor transaction to, the receipt epoch, and a size equal to the inde
   assert.equal(bound.v.reason, 'pre_anchor');
 });
 
+test('an earlier finalized epoch that already covers the index is not the first anchor', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const payload = JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  const lineBytes = built.line;
+  const view = {
+    chainId: 84532,
+    blockHash: `0x${built.payment.blockHash}`,
+    blockNumber: 100,
+    txIndex: 0,
+    localLogIndex: 1,
+    txHash: `0x${built.payment.txHash}`,
+    token: USDC,
+    from: `0x${built.payment.from}`,
+    to: `0x${built.payment.to}`,
+    value: 1000000n,
+    method: 1,
+    authorizer: `0x${built.payment.authorizer}`,
+    nonce: `0x${built.payment.nonce}`,
+    bytes: lineBytes,
+  };
+  const payment = {
+    blockHash: view.blockHash,
+    txIndexMatch: true,
+    txTo: USDC,
+    input: '0x',
+    logs: [
+      {
+        index: 0,
+        address: USDC,
+        topics: [
+          '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5',
+          `0x${'0'.repeat(24)}${built.payment.authorizer}`,
+          `0x${built.payment.nonce}`,
+        ],
+        data: '0x',
+      },
+      {
+        index: 1,
+        address: USDC,
+        topics: [
+          '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+          `0x${'0'.repeat(24)}${built.payment.from}`,
+          `0x${'0'.repeat(24)}${built.payment.to}`,
+        ],
+        data: `0x${word(built.payment.value)}`,
+      },
+    ],
+  };
+  const event = (epoch, size) => ({
+    epoch: BigInt(epoch),
+    hourStart: BigInt(HOUR),
+    size: BigInt(size),
+    root: built.leaf,
+    stateRoot: built.stateRoot,
+    kind: 0,
+    blockNumber: 100 + epoch,
+    blockHash: `0x${'ef'.repeat(32)}`,
+    txHash: `0x${'ee'.repeat(32)}`,
+    logIndex: 0,
+    address: CONTRACT,
+  });
+  const world = (events) => ({
+    history: { ok: true, reason: null, source: 'bundled', headHash: doc.head_hash, entryCount: 1, asOf: null },
+    snapshotSigned: true,
+    bundledPayload: payload,
+    narrowing: [],
+    liveExtension: null,
+    rpcConfigured: true,
+    finalizedNumber: 110,
+    events,
+    codeHash: pinOf().codeHash,
+    anchorFrom: CHECKPOINT,
+    anchorTo: CONTRACT,
+    successor: 'not_required',
+    chainGenesis: null,
+    line: view,
+    lineReason: null,
+    rotatedTo: null,
+    payment,
+    canonical: 'ok',
+    priorStatus: 'present',
+  });
+  const hooks = {
+    leafHash,
+    verifyInclusion: () => ({ ok: true }),
+    proveKey: () => true,
+    sigmaOk: () => true,
+  };
+  const covered = runV13(v13Receipt(built, { epoch: 2 }), world([event(1, 1), event(2, 2)]), hooks);
+  assert.equal(covered.exit, 1);
+  assert.equal(covered.reason, 'not_first_anchor');
+  const open = runV13(v13Receipt(built, { epoch: 2 }), world([event(1, 0), event(2, 2)]), hooks);
+  assert.equal(open.exit, 0, open.reason);
+  assert.equal(key.kid.length > 0, true);
+});
+
 test('a retire hour, an unknown kind, and a wrong topic0 do not verify', async () => {
   const key = makeKey();
   const built = signedLine();
@@ -1192,6 +1292,53 @@ test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecke
   }).reason, 'key_hash_mismatch');
   const digest = revokeByKeyDigest(keccak256, 84532, CONTRACT.slice(2), hash);
   assert.equal(digest.length, 32);
+  const again = chitDomainSeparator(keccak256, 84532, CONTRACT.slice(2));
+  const typeHash = keccak256(Buffer.from(DOMAIN_TYPE, 'utf8'));
+  const nameHash = keccak256(Buffer.from('Chit402', 'utf8'));
+  const versionHash = keccak256(Buffer.from('13', 'utf8'));
+  const chainWord = Buffer.alloc(32);
+  chainWord.writeBigUInt64BE(84532n, 24);
+  const addrWord = Buffer.alloc(32);
+  Buffer.from(CONTRACT.slice(2), 'hex').copy(addrWord, 12);
+  const folded = keccak256(Buffer.concat([typeHash, nameHash, versionHash, chainWord, addrWord]));
+  assert.deepEqual(Buffer.from(again), Buffer.from(folded));
+  assert.equal(DOMAIN_TYPE.includes('salt'), false);
+  assert.equal(PAYTO_CONTROL_TYPE.includes('validFrom'), false);
+  assert.equal(REVOKE_TYPE.includes('revokedAt'), false);
+  const expiry = BigInt(hour + 10);
+  const tail = Buffer.concat([
+    Buffer.from(key),
+    Buffer.from([KEY_ALG_SECP256K1]),
+    Buffer.from(expiry.toString(16).padStart(16, '0'), 'hex'),
+    Buffer.from(hash),
+    Buffer.from([1]),
+    Buffer.from([KEY_ALG_SECP256K1]),
+    Buffer.from(key),
+    Buffer.from(hash),
+    Buffer.alloc(65, 1),
+  ]);
+  const tomb = assessSlotValue({
+    slotValue: tail,
+    sha256,
+    keccak: keccak256,
+    chainId: 84532,
+    admitting: CONTRACT,
+    showingHour: hour,
+    receiptHour: hour,
+    signatureOk: () => true,
+  });
+  assert.equal(tomb.reason, 'key_revoked_tombstone');
+  const unbound = assessSlotValue({
+    slotValue: tail,
+    sha256,
+    keccak: keccak256,
+    chainId: 84532,
+    admitting: CONTRACT,
+    showingHour: hour,
+    receiptHour: hour,
+    signatureOk: () => false,
+  });
+  assert.equal(unbound.ok, false);
   assert.equal(EXAMPLE_ANCHOR_CODE_HASH, '0xcd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080');
 });
 
