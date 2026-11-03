@@ -161,14 +161,39 @@ export function keySlotKey(chainId: number, keyHash: Uint8Array, sha256: Sha): U
   return sha256(body);
 }
 
+export const KEY_STATUS_SCHEMA = 'chit402.cs2.key-status.v2';
+
 export interface SlotProof {
   siblings: string[] | null;
+  root?: string | null;
 }
 
+export type KeyLeaf =
+  | 'empty'
+  | 'bare'
+  | 'zero'
+  | 'out_of_bounds'
+  | 'bad_sig'
+  | 'mismatch'
+  | 'multi'
+  | null;
+
 export interface KeyStatusInput {
+  /** Missing or any schema other than v2 is an old bundle. */
+  schema?: string | null;
   block: number;
+  /** hourStart of the receipt epoch, unix seconds. Compared with expiry. */
+  hourStart: number;
+  stateRoot?: string | null;
+  sigmaKey?: Uint8Array | null;
+  chainId?: number;
+  sha256?: Sha;
+  /** A key-slot key carried by the bundle. It must match the derived key. */
+  bundleKeySlot?: Uint8Array | null;
   payToProof: SlotProof | null;
   keyProof: SlotProof | null;
+  /** Null with a present proof means the caller did not classify the leaf. */
+  keyLeaf?: KeyLeaf;
   registration: {
     admissionBlock: number;
     expiry: bigint;
@@ -176,45 +201,100 @@ export interface KeyStatusInput {
     keySignature: Uint8Array | null;
     popOk: boolean;
   } | null;
-  /** Slot Revoke on the payTo slot. Null means the proof shows none. */
-  slotRevokeBlock: number | null;
   /**
-   * Key-slot tombstone. Null means the proof shows no tombstone.
-   * A present object with a missing, zero, or out-of-bounds block is invalid.
+   * Same-slot Revoke(payTo, keyHash). Ignored when the record is a
+   * RevokeByKey sitting outside kind 0x05.
    */
+  slotRevokeBlock: number | null;
+  revokeByKeyOutsideKeySlot?: boolean;
   tombstone: { revokedAtBlock: number | null; outOfBounds: boolean } | null;
 }
 
-/**
- * Status of key k in payTo P at block b, from two proofs under one state root.
- * A missing proof is unproven. There is no cross-payTo consent check.
- */
-export function keyStatus(input: KeyStatusInput): {
+export interface KeyStatusResult {
   proven: boolean;
-  reason: 'unproven' | 'invalid_record' | 'revoked' | 'registered_after_tombstone' | null;
-} {
-  if (!input.payToProof || input.payToProof.siblings == null) return { proven: false, reason: 'unproven' };
-  if (!input.keyProof || input.keyProof.siblings == null) return { proven: false, reason: 'unproven' };
+  exit: 0 | 1 | 2;
+  reason: string | null;
+  print: string | null;
+}
+
+const admissionCache = new Map<string, number>();
+
+/** Forget cached admission blocks. Tests start from an empty cache. */
+export function clearAdmissionCache(): void {
+  admissionCache.clear();
+}
+
+/**
+ * Accept an admission block once: absent at e−1, member at e, and the
+ * block strictly after the previous anchor and at or before this anchor.
+ * The result is cached by slot key and seq. A failed proof is not cached
+ * as a block.
+ */
+export function cachedAdmission(input: {
+  slotKey: string;
+  seq: number;
+  absentAtPrior: boolean;
+  memberAtEpoch: boolean;
+  priorAnchor: number;
+  anchor: number;
+  block: number;
+}): { ok: true; block: number; cached: boolean } | { ok: false; exit: 2; reason: 'unproven' } {
+  const id = `${input.slotKey}:${input.seq}`;
+  const prior = admissionCache.get(id);
+  if (prior != null) return { ok: true, block: prior, cached: true };
+  if (!input.absentAtPrior || !input.memberAtEpoch) return { ok: false, exit: 2, reason: 'unproven' };
+  if (!(input.priorAnchor < input.block && input.block <= input.anchor)) {
+    return { ok: false, exit: 2, reason: 'unproven' };
+  }
+  admissionCache.set(id, input.block);
+  return { ok: true, block: input.block, cached: false };
+}
+
+function status(exit: 0 | 1 | 2, reason: string | null, print: string | null = null): KeyStatusResult {
+  return { proven: exit === 0, exit, reason, print };
+}
+
+/**
+ * Status of key k in payTo P at block b. Both proofs use one state root.
+ * The key-slot key is derived from the seller key. A RevokeByKey outside
+ * kind 0x05 is ignored. There is no cross-payTo consent check.
+ */
+export function keyStatus(input: KeyStatusInput): KeyStatusResult {
+  if (input.schema !== KEY_STATUS_SCHEMA) return status(2, 'old_schema');
+  const payRoot = input.payToProof?.root;
+  const keyRoot = input.keyProof?.root;
+  if (payRoot && keyRoot && payRoot !== keyRoot) return status(2, 'two_roots');
+  if (input.stateRoot && payRoot && payRoot !== input.stateRoot) return status(2, 'two_roots');
+  if (input.stateRoot && keyRoot && keyRoot !== input.stateRoot) return status(2, 'two_roots');
+  if (input.sigmaKey && input.sha256 && input.chainId != null && input.bundleKeySlot) {
+    const derivedHash = input.sha256(concat([Uint8Array.of(0x01), input.sigmaKey]));
+    const derived = keySlotKey(input.chainId, derivedHash, input.sha256);
+    if (!derived || !equalBytes(derived, input.bundleKeySlot)) return status(2, 'key_mismatch');
+  }
+  if (!input.payToProof || input.payToProof.siblings == null) return status(2, 'unproven');
+  if (!input.keyProof || input.keyProof.siblings == null) return status(2, 'unproven');
+  if (input.keyLeaf && input.keyLeaf !== 'empty') return status(2, 'invalid_leaf');
   const reg = input.registration;
-  if (!reg || !reg.payToSignature || reg.payToSignature.length === 0) return { proven: false, reason: 'unproven' };
-  if (!reg.keySignature || reg.keySignature.length !== 64 || !reg.popOk) return { proven: false, reason: 'unproven' };
-  const tomb = input.tombstone;
+  if (!reg || !reg.payToSignature || reg.payToSignature.length === 0) return status(2, 'unproven');
+  if (!reg.keySignature || reg.keySignature.length !== 64 || !reg.popOk) return status(2, 'unproven');
+  const slotRevoke = input.revokeByKeyOutsideKeySlot ? null : input.slotRevokeBlock;
+  if (slotRevoke != null && reg.admissionBlock >= slotRevoke) {
+    return status(1, 'registered_after_slot_revoke');
+  }
+  const tomb = input.keyLeaf === 'empty' ? null : input.tombstone;
+  let laterNote: string | null = null;
   if (tomb) {
     if (tomb.revokedAtBlock == null || tomb.revokedAtBlock <= 0 || tomb.outOfBounds) {
-      return { proven: false, reason: 'invalid_record' };
+      return status(2, 'invalid_leaf');
     }
-    if (reg.admissionBlock > tomb.revokedAtBlock) {
-      return { proven: false, reason: 'registered_after_tombstone' };
-    }
-    if (tomb.revokedAtBlock <= input.block) return { proven: false, reason: 'revoked' };
+    if (reg.admissionBlock >= tomb.revokedAtBlock) return status(1, 'registered_after_tombstone');
+    if (tomb.revokedAtBlock <= input.block) return status(1, 'revoked');
+    laterNote = `seller key revoked at block ${tomb.revokedAtBlock} (by key)`;
   }
-  if (input.slotRevokeBlock != null && input.slotRevokeBlock <= input.block) {
-    return { proven: false, reason: 'revoked' };
-  }
-  if (!(reg.admissionBlock <= input.block && BigInt(input.block) < reg.expiry)) {
-    return { proven: false, reason: 'unproven' };
-  }
-  return { proven: true, reason: null };
+  if (slotRevoke != null && slotRevoke <= input.block) return status(1, 'revoked');
+  if (!(reg.admissionBlock <= input.block)) return status(2, 'unproven');
+  if (!(input.hourStart < reg.expiry)) return status(1, 'expired');
+  return status(0, null, laterNote);
 }
 
 export function keyHashOf(

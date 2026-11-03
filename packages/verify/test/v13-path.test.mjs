@@ -43,6 +43,9 @@ import {
   judgePayTo,
   keyHashOf,
   keySlotKey,
+  KEY_STATUS_SCHEMA,
+  cachedAdmission,
+  clearAdmissionCache,
   keyStatus,
   lowS,
   parseKeyHash,
@@ -60,6 +63,7 @@ const { encodeLine, commitments, slotKey, stateLeaf, isAllowedAlg } = await impo
 const { keccak256 } = await import(new URL('ecdsa/keccak.js', CORE));
 const { sha256 } = await import(new URL('sha256.js', CORE));
 const { P256 } = await import(new URL('ecdsa/curves.js', CORE));
+const { yParityByTrial } = await import(new URL('ecdsa/recover.js', CORE));
 const { signRawDigest } = await import(new URL('ecdsa/sign.js', CORE));
 const { bytesToBig } = await import(new URL('ecdsa/bytes.js', CORE));
 const { issuerHistoryEntryHash } = await import('../dist/issuer-history.js');
@@ -1391,39 +1395,132 @@ test('key status needs both proofs, and a tombstone applies only forward', () =>
   assert.equal(slot.length, 32);
   const registration = {
     admissionBlock: 90,
-    expiry: 200n,
+    expiry: 2_000_000_000n,
     payToSignature: new Uint8Array([1]),
     keySignature: new Uint8Array(64),
     popOk: true,
   };
   const base = {
+    schema: KEY_STATUS_SCHEMA,
     block: 100,
-    payToProof: { siblings: [] },
-    keyProof: { siblings: [] },
+    hourStart: 1_700_000_000,
+    payToProof: { siblings: [], root: 'aa' },
+    keyProof: { siblings: [], root: 'aa' },
+    keyLeaf: 'empty',
     registration,
     slotRevokeBlock: null,
     tombstone: null,
   };
-  assert.equal(keyStatus(base).proven, true);
+  assert.equal(keyStatus(base).exit, 0);
+  assert.equal(keyStatus({ ...base, schema: 'chit402.cs2.key-status.v1' }).exit, 2);
+  assert.equal(keyStatus({ ...base, schema: null }).reason, 'old_schema');
   assert.equal(keyStatus({ ...base, payToProof: null }).reason, 'unproven');
   assert.equal(keyStatus({ ...base, keyProof: { siblings: null } }).reason, 'unproven');
   assert.equal(keyStatus({ ...base, registration: { ...registration, payToSignature: null } }).reason, 'unproven');
   assert.equal(keyStatus({ ...base, registration: { ...registration, keySignature: null } }).reason, 'unproven');
   assert.equal(keyStatus({ ...base, registration: { ...registration, popOk: false } }).reason, 'unproven');
-  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: 100, outOfBounds: false } }).reason, 'revoked');
-  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: 150, outOfBounds: false } }).proven, true);
-  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: null, outOfBounds: false } }).reason, 'invalid_record');
-  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: 0, outOfBounds: false } }).reason, 'invalid_record');
-  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: 80, outOfBounds: true } }).reason, 'invalid_record');
+  assert.equal(keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: 100, outOfBounds: false } }).reason, 'revoked');
+  const early = keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: 150, outOfBounds: false } });
+  assert.equal(early.exit, 0);
+  assert.equal(early.print, 'seller key revoked at block 150 (by key)');
+  assert.equal(keyStatus({ ...base, keyLeaf: 'bare' }).exit, 2);
+  assert.equal(keyStatus({ ...base, keyLeaf: 'zero' }).reason, 'invalid_leaf');
+  assert.equal(keyStatus({ ...base, keyLeaf: 'out_of_bounds' }).exit, 2);
+  assert.equal(keyStatus({ ...base, keyLeaf: 'bad_sig' }).exit, 2);
+  assert.equal(keyStatus({ ...base, keyLeaf: 'multi' }).exit, 2);
+  assert.equal(keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: null, outOfBounds: false } }).exit, 2);
+  assert.equal(keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: 0, outOfBounds: false } }).exit, 2);
+  assert.equal(keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: 80, outOfBounds: true } }).exit, 2);
   assert.equal(keyStatus({
     ...base,
     block: 50,
+    keyLeaf: null,
     registration: { ...registration, admissionBlock: 120 },
     tombstone: { revokedAtBlock: 100, outOfBounds: false },
   }).reason, 'registered_after_tombstone');
   assert.equal(keyStatus({ ...base, slotRevokeBlock: 100 }).reason, 'revoked');
-  assert.equal(keyStatus({ ...base, slotRevokeBlock: 150 }).proven, true);
+  assert.equal(keyStatus({ ...base, slotRevokeBlock: 150 }).exit, 0);
+  assert.equal(keyStatus({
+    ...base,
+    block: 130,
+    registration: { ...registration, admissionBlock: 120 },
+    slotRevokeBlock: 100,
+  }).reason, 'registered_after_slot_revoke');
+  assert.equal(keyStatus({
+    ...base,
+    block: 130,
+    slotRevokeBlock: 100,
+    revokeByKeyOutsideKeySlot: true,
+  }).exit, 0);
+  assert.equal(keyStatus({ ...base, hourStart: 200, registration: { ...registration, expiry: 200n } }).reason, 'expired');
+  assert.equal(keyStatus({ ...base, block: 22_000_000, hourStart: 1_700_000_000, registration: { ...registration, expiry: 1_800_000_000n, admissionBlock: 90 } }).exit, 0);
+  assert.equal(keyStatus({ ...base, payToProof: { siblings: [], root: 'aa' }, keyProof: { siblings: [], root: 'bb' } }).reason, 'two_roots');
+  const sigmaKey = new Uint8Array(33);
+  sigmaKey[0] = 2;
+  const derived = keySlotKey(84532, sha256(Buffer.concat([Buffer.from([1]), Buffer.from(sigmaKey)])), sha256);
+  assert.equal(keyStatus({
+    ...base,
+    sigmaKey,
+    chainId: 84532,
+    sha256,
+    bundleKeySlot: derived,
+  }).exit, 0);
+  assert.equal(keyStatus({
+    ...base,
+    sigmaKey,
+    chainId: 84532,
+    sha256,
+    bundleKeySlot: new Uint8Array(32),
+  }).reason, 'key_mismatch');
+  clearAdmissionCache();
+  const first = cachedAdmission({
+    slotKey: 'slot', seq: 1, absentAtPrior: true, memberAtEpoch: true, priorAnchor: 10, anchor: 20, block: 15,
+  });
+  const second = cachedAdmission({
+    slotKey: 'slot', seq: 1, absentAtPrior: false, memberAtEpoch: false, priorAnchor: 0, anchor: 1, block: 99,
+  });
+  assert.equal(first.ok, true);
+  assert.equal(first.cached, false);
+  assert.equal(second.ok, true);
+  assert.equal(second.block, 15);
+  assert.equal(second.cached, true);
+  assert.equal(cachedAdmission({
+    slotKey: 'other', seq: 1, absentAtPrior: false, memberAtEpoch: true, priorAnchor: 10, anchor: 20, block: 15,
+  }).ok, false);
   assert.equal(Object.hasOwn(base, 'otherPayTo'), false);
+});
+
+test('T4 the published PoP vector verifies low-S and rejects high-S', () => {
+  const key = Buffer.from('0268739255d9bc5e2b747847d240b349248c6bd1d91dd63ef3c0c2ef7fba5fb8d3', 'hex');
+  const hash = sha256(Buffer.concat([Buffer.from([0x01]), key]));
+  assert.equal(Buffer.from(hash).toString('hex'), '70703a0707c1ba660d772d3b613966bf84599afa8059b29636a613fefbfa9390');
+  const d = Buffer.from('44'.repeat(32), 'hex');
+  const input = sha256(d);
+  assert.equal(Buffer.from(input).toString('hex'), 'bb391415c05e39d77ca17381d3be3f7d0cd5e5332e5a579311adaa0aa62106e9');
+  const sig = Buffer.from('2e238cb3c5b55330c113777a6695d5f94e5e4c3f2298dcdd397eb503c5c5c88938f10d7bce3aa35340558528143104c1f9c02ccba0be6026133ad4d15d7dc038', 'hex');
+  assert.equal(lowS(sig, P256.order), true);
+  assert.equal(pointOnCurve(key, P256), true);
+  const x = BigInt(`0x${key.subarray(1).toString('hex')}`);
+  const p = P256.p;
+  const rhs = (((((x * x) % p) * x) % p) + ((P256.a * x) % p) + P256.b) % p;
+  let y = 1n;
+  let base = rhs % p;
+  let exp = (p + 1n) / 4n;
+  while (exp > 0n) {
+    if ((exp & 1n) === 1n) y = (y * base) % p;
+    base = (base * base) % p;
+    exp >>= 1n;
+  }
+  if (((y & 1n) === 1n) !== (key[0] === 3)) y = (p - y) % p;
+  const point = Buffer.alloc(65);
+  point[0] = 4;
+  point.set(key.subarray(1), 1);
+  point.set(Buffer.from(y.toString(16).padStart(64, '0'), 'hex'), 33);
+  yParityByTrial(input, sig, point, P256);
+  const s = BigInt(`0x${sig.subarray(32).toString('hex')}`);
+  const highS = (P256.order - s).toString(16).padStart(64, '0');
+  const high = Buffer.concat([sig.subarray(0, 32), Buffer.from(highS, 'hex')]);
+  assert.equal(lowS(high, P256.order), false);
 });
 
 test('D23 the CLI refuses a bad shape and an unpinned contract', () => {
