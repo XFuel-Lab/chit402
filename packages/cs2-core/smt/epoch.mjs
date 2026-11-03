@@ -1,5 +1,5 @@
 /**
- * Epoch slot (DS-32) and padding to 1,024 entries (DS-21).
+ * Epoch slot and padding to 1,024 entries.
  *
  * The epoch slot is kind 0x04. Its key is slotKey from the line module.
  * Every hourly epoch stores a fresh 32-byte value, so the state root moves

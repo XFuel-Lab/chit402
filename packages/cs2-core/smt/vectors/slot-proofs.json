@@ -8,7 +8,9 @@
     "max_bytes": [
       448,
       480
-    ]
+    ],
+    "observed_tail_bytes": 544,
+    "verifier_cap": false
   },
   "measured_1024": {
     "entries": 1024,

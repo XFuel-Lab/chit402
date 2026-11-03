@@ -133,6 +133,8 @@ export function renderSlotProofs() {
       entries: CITED_PROOF_BYTES.entries,
       mean_bytes: CITED_PROOF_BYTES.mean,
       max_bytes: [CITED_PROOF_BYTES.maxLow, CITED_PROOF_BYTES.maxHigh],
+      observed_tail_bytes: CITED_PROOF_BYTES.observedTail,
+      verifier_cap: false,
     },
     measured_1024: measured,
     slot_keys: {

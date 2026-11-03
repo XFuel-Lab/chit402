@@ -120,7 +120,7 @@
       "id": "S17_epoch_kind",
       "file": "packages/cs2-core/smt/epoch.mjs",
       "find": "const key = slotKey({ kind: KIND_EPOCH, chainId, id: new Uint8Array(0) });",
-      "replace": "const key = slotKey({ kind: KIND_PAYTO, chainId, id: new Uint8Array(0) });",
+      "replace": "const key = slotKey({ kind: 3, chainId, id: new Uint8Array(32) });",
       "note": "the epoch slot is derived as a payTo"
     },
     {
@@ -175,16 +175,16 @@
     {
       "id": "S25_skip_control_sig",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (!verifyPayToControl(decoded.chainId, decoded.id, record.alg, record.key, record.validFrom, record.sig)) {",
-      "replace": "if (false && !verifyPayToControl(decoded.chainId, decoded.id, record.alg, record.key, record.validFrom, record.sig)) {",
+      "find": "if (!verifyPayToControl(",
+      "replace": "if (false && !verifyPayToControl(",
       "note": "a payTo registration need not be signed"
     },
     {
       "id": "S26_valid_from",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (record.validFrom !== record.block) return 'rule_2';",
-      "replace": "if (false && record.validFrom !== record.block) return 'rule_2';",
-      "note": "validFrom may differ from the admission block"
+      "find": "const byShow = block <= epoch.showAnchorBlock;",
+      "replace": "const byShow = true;",
+      "note": "an admission block may fall after the showing anchor"
     },
     {
       "id": "S27_cross_or",
@@ -196,8 +196,8 @@
     {
       "id": "S28_skip_cross",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (othersHaveKey(ctx, decoded.id, record.key) && !crossOk(decoded, record)) return 'rule_7';",
-      "replace": "if (false && othersHaveKey(ctx, decoded.id, record.key) && !crossOk(decoded, record)) return 'rule_7';",
+      "find": "if (holders.length > 0 && !holderConsent(decoded, record, holders[0], placed.contract)) {",
+      "replace": "if (false && holders.length > 0 && !holderConsent(decoded, record, holders[0], placed.contract)) {",
       "note": "a key already in another slot is accepted"
     },
     {

@@ -43,6 +43,8 @@ import {
   createTree,
   decodeHistory,
   detectEquivocation,
+  DOMAIN_TYPE,
+  DOMAIN_VERSION,
   drawEpoch,
   emptyHistory,
   emptyRoot,
@@ -51,7 +53,13 @@ import {
   extendsHistory,
   faultLine,
   getLeaf,
+  MAX_RECORDS,
+  PAYTO_CONTROL_TYPE,
+  REVOKE_BY_KEY_TYPE,
+  REVOKE_TYPE,
+  contractForHour,
   indexBytes,
+  sellerKeyHash,
   keyStatus,
   padTo1024,
   payToEntryBytes,
@@ -62,6 +70,7 @@ import {
   revokeAcross,
   rootBytes,
   verifyProof,
+  verifySlot,
 } from './index.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -100,17 +109,44 @@ function structHash(typeString, fields) {
   return keccak256(concat([keccak256(ascii(typeString)), ...fields]));
 }
 
-function domainSeparator(chainId) {
-  return structHash('EIP712Domain(string name,string version,uint256 chainId)', [
+const CONTRACT = new Uint8Array(20).fill(0x33);
+const OTHER_CONTRACT = new Uint8Array(20).fill(0x44);
+const EXPIRY = 100n;
+const EPOCH = {
+  prevAnchorBlock: 0n,
+  showAnchorBlock: 1n << 40n,
+  hourStart: 0n,
+  contract: CONTRACT,
+};
+
+function domainSeparator(chainId, contract) {
+  return structHash('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)', [
     keccak256(ascii('Chit402')),
-    keccak256(ascii('1')),
+    keccak256(ascii('13')),
     padUint(chainId),
+    padAddress(contract),
   ]);
 }
 
-function typedDigest(chainId, typeString, fields) {
+function typedDigest(chainId, contract, typeString, fields) {
   const struct = structHash(typeString, fields);
-  return keccak256(concat([Uint8Array.of(0x19, 0x01), domainSeparator(chainId), struct]));
+  return keccak256(concat([Uint8Array.of(0x19, 0x01), domainSeparator(chainId, contract), struct]));
+}
+
+function seal(bytes, record, ctx) {
+  return admit(bytes, record, { epochs: [EPOCH], ...(ctx || {}) });
+}
+
+function status(bytes, query) {
+  return keyStatus(bytes, {
+    chainId: CHAIN,
+    ...query,
+    ctx: { epochs: [EPOCH], ...(query?.ctx || {}) },
+  });
+}
+
+function viewOf(bytes, ctx) {
+  return assess(bytes, { epochs: [EPOCH], ...(ctx || {}) });
 }
 
 function sign(digest, scalar, curve) {
@@ -151,60 +187,65 @@ const identityScalar = 11n;
 const payTo = addressOf(payToScalar);
 const otherPayTo = addressOf(otherScalar);
 const wallet = addressOf(walletScalar);
-const sellerKey = compress(publicPoint(sellerScalar, P256));
-const otherSeller = compress(publicPoint(13n, P256));
+const sellerKey = compress(publicPoint(sellerScalar, SECP256K1));
+const otherSeller = compress(publicPoint(13n, SECP256K1));
 const identityKey = compress(publicPoint(identityScalar, P256));
-const sellerHash = sha256(sellerKey);
 
-function controlDigest(addr, key, validFrom) {
-  return typedDigest(CHAIN, 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 validFrom)', [
+function keyHashOf(alg, key) {
+  const preimage = new Uint8Array(1 + key.length);
+  preimage[0] = alg;
+  preimage.set(key, 1);
+  return sha256(preimage);
+}
+
+const sellerHash = keyHashOf(1, sellerKey);
+
+function controlDigest(addr, key, expiry, contract = CONTRACT) {
+  return typedDigest(CHAIN, contract, 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)', [
     padAddress(addr),
     padUint(1n),
     keccak256(key),
-    padUint(validFrom),
+    padUint(expiry),
   ]);
 }
 
-function controlSig(addr, scalar, key, validFrom) {
-  return sign(controlDigest(addr, key, validFrom), scalar, SECP256K1);
+function controlSig(addr, scalar, key, expiry = EXPIRY, contract = CONTRACT) {
+  return sign(controlDigest(addr, key, expiry, contract), scalar, SECP256K1);
 }
 
 function register(bytes, addr, scalar, key, block, extra = {}) {
   const decoded = decodeHistory(bytes);
+  const expiry = extra.expiry === undefined ? EXPIRY : extra.expiry;
   return {
     seq: BigInt(decoded.records.length),
     block,
     fromBlock: extra.fromBlock === undefined ? null : extra.fromBlock,
     id: extra.id || freshId(),
     type: REC_REGISTER,
-    sig: extra.sig || controlSig(addr, scalar, key, block),
-    alg: 1,
+    sig: extra.sig || controlSig(addr, scalar, key, expiry, extra.contract || CONTRACT),
+    alg: extra.alg || 1,
     key,
-    validFrom: block,
+    expiry,
     cross: extra.cross || null,
   };
 }
 
-function keyRevokeSig(keyHash, revokedAt) {
-  const digest = typedDigest(CHAIN, 'RevokeByKey(bytes32 keyHash,uint64 revokedAt)', [
-    keyHash,
-    padUint(revokedAt),
-  ]);
-  return sign(digest, sellerScalar, P256);
+function keyRevokeSig(keyHash, contract = CONTRACT, scalar = sellerScalar) {
+  const digest = typedDigest(CHAIN, contract, 'RevokeByKey(bytes32 keyHash)', [keyHash]);
+  return sign(digest, scalar, SECP256K1);
 }
 
-function payToRevokeSig(addr, scalar, keyHash, revokedAt) {
-  const digest = typedDigest(CHAIN, 'Revoke(address payTo,bytes32 keyHash,uint64 revokedAt)', [
+function payToRevokeSig(addr, scalar, keyHash, contract = CONTRACT) {
+  const digest = typedDigest(CHAIN, contract, 'Revoke(address payTo,bytes32 keyHash)', [
     padAddress(addr),
     keyHash,
-    padUint(revokedAt),
   ]);
   return sign(digest, scalar, SECP256K1);
 }
 
-function revoke(bytes, keyHash, revokedAt, block, sig, by = 'key') {
+function revoke(bytes, keyHash, block, sig, by = 'key', key = sellerKey) {
   const decoded = decodeHistory(bytes);
-  return {
+  const record = {
     seq: BigInt(decoded.records.length),
     block,
     fromBlock: null,
@@ -212,13 +253,17 @@ function revoke(bytes, keyHash, revokedAt, block, sig, by = 'key') {
     type: REC_REVOKE,
     sig,
     keyHash,
-    revokedAt,
     by,
   };
+  if (by === 'key') {
+    record.alg = 1;
+    record.key = key;
+  }
+  return record;
 }
 
 function walletSig(typeString, fields, scalar) {
-  return sign(typedDigest(CHAIN, typeString, fields), scalar, SECP256K1);
+  return sign(typedDigest(CHAIN, CONTRACT, typeString, fields), scalar, SECP256K1);
 }
 
 function keyBit(key, depth) {
@@ -370,7 +415,7 @@ test('rule 1 orders by admission block, and fromBlock is not that block', () => 
     ], walletScalar),
     commitment,
   };
-  const first = admit(bytes, join);
+  const first = seal(bytes, join);
   assert.equal(first.ok, true, first.reason);
   const leave = {
     seq: 1n,
@@ -382,7 +427,7 @@ test('rule 1 orders by admission block, and fromBlock is not that block', () => 
       padAddress(wallet), padUint(10n),
     ], walletScalar),
   };
-  const second = admit(first.bytes, leave);
+  const second = seal(first.bytes, leave);
   assert.equal(second.ok, true, second.reason);
   const early = {
     ...leave,
@@ -394,7 +439,7 @@ test('rule 1 orders by admission block, and fromBlock is not that block', () => 
       padAddress(wallet), padUint(9n),
     ], walletScalar),
   };
-  assert.equal(admit(second.bytes, early).reason, 'rule_1');
+  assert.equal(seal(second.bytes, early).reason, 'rule_1');
 
   const decoded = decodeHistory(second.bytes);
   const decreasing = encodeHistory({
@@ -406,7 +451,7 @@ test('rule 1 orders by admission block, and fromBlock is not that block', () => 
       { ...decoded.records[1], block: 4n },
     ],
   });
-  const judged = assess(decreasing.bytes);
+  const judged = viewOf(decreasing.bytes);
   assert.equal(judged.ok, true);
   assert.equal(judged.killed, false);
   assert.equal(judged.faults[0].line, faultLine(1n));
@@ -419,7 +464,7 @@ test('rule 1 orders by admission block, and fromBlock is not that block', () => 
     id: decoded.id,
     records: [decoded.records[0], { ...decoded.records[1], id: decoded.records[0].id }],
   });
-  const dupView = assess(dup.bytes);
+  const dupView = viewOf(dup.bytes);
   assert.equal(dupView.killed, false);
   assert.equal(dupView.faults.some((item) => item.rule === 'rule_1'), true);
 
@@ -442,23 +487,22 @@ test('rule 1 orders by admission block, and fromBlock is not that block', () => 
 
 test('rule 2 keeps payTo intervals disjoint and a wallet at one book unless STOP', () => {
   let bytes = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
-  const open = admit(bytes, register(bytes, payTo, payToScalar, sellerKey, 10n));
+  const open = seal(bytes, register(bytes, payTo, payToScalar, sellerKey, 10n));
   assert.equal(open.ok, true, open.reason);
   const overlap = register(open.bytes, payTo, payToScalar, otherSeller, 15n);
-  assert.equal(admit(open.bytes, overlap).reason, 'rule_2');
+  assert.equal(seal(open.bytes, overlap).reason, 'rule_2');
   const stillOpen = register(open.bytes, payTo, payToScalar, otherSeller, 11n);
-  assert.equal(admit(open.bytes, stillOpen).reason, 'rule_2');
+  assert.equal(seal(open.bytes, stillOpen).reason, 'rule_2');
 
-  const closedSig = payToRevokeSig(payTo, payToScalar, sellerHash, 20n);
-  const closed = admit(open.bytes, revoke(open.bytes, sellerHash, 20n, 20n, closedSig, 'payTo'));
+  const closedSig = payToRevokeSig(payTo, payToScalar, sellerHash);
+  const closed = seal(open.bytes, revoke(open.bytes, sellerHash, 20n, closedSig, 'payTo'));
   assert.equal(closed.ok, true, closed.reason);
-  const future = register(closed.bytes, payTo, payToScalar, otherSeller, 30n, {
-    sig: controlSig(payTo, payToScalar, otherSeller, 31n),
-  });
-  future.validFrom = 31n;
-  assert.equal(admit(closed.bytes, future).reason, 'rule_2');
-  const next = admit(closed.bytes, register(closed.bytes, payTo, payToScalar, otherSeller, 20n));
+  const sameInstant = revoke(open.bytes, sellerHash, 10n, payToRevokeSig(payTo, payToScalar, sellerHash), 'payTo');
+  assert.equal(seal(open.bytes, sameInstant).reason, 'rule_2');
+  const next = seal(closed.bytes, register(closed.bytes, payTo, payToScalar, otherSeller, 20n));
   assert.equal(next.ok, true, next.reason);
+  const sameKey = register(closed.bytes, payTo, payToScalar, sellerKey, 25n);
+  assert.equal(seal(closed.bytes, sameKey).reason, 'rule_2');
   const sameBlock = register(emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes, payTo, payToScalar, otherSeller, 10n);
   sameBlock.seq = 1n;
   const overlapped = encodeHistory({
@@ -467,21 +511,21 @@ test('rule 2 keeps payTo intervals disjoint and a wallet at one book unless STOP
     id: payTo,
     records: [decodeHistory(open.bytes).records[0], sameBlock],
   });
-  const overlappedView = assess(overlapped.bytes);
+  const overlappedView = viewOf(overlapped.bytes);
   assert.equal(overlappedView.killed, false);
   assert.equal(overlappedView.faults[0].rule, 'rule_2');
   assert.equal(overlappedView.keys.length, 1);
 
-  const proved = keyStatus(next.bytes, { paymentBlock: 20n, sellerKey: otherSeller, transferTo: payTo });
+  const proved = status(next.bytes, { paymentBlock: 20n, sellerKey: otherSeller, transferTo: payTo });
   assert.equal(proved.ok, true);
-  const atStart = keyStatus(open.bytes, { paymentBlock: 10n, sellerKey, transferTo: payTo });
+  const atStart = status(open.bytes, { paymentBlock: 10n, sellerKey, transferTo: payTo });
   assert.equal(atStart.ok, true);
-  const before = keyStatus(open.bytes, { paymentBlock: 9n, sellerKey, transferTo: payTo });
+  const before = status(open.bytes, { paymentBlock: 9n, sellerKey, transferTo: payTo });
   assert.equal(before.status, 'key status unproven');
   assert.equal(before.status, KEY_STATUS_UNPROVEN);
-  const atEnd = keyStatus(closed.bytes, { paymentBlock: 20n, sellerKey, transferTo: payTo });
+  const atEnd = status(closed.bytes, { paymentBlock: 20n, sellerKey, transferTo: payTo });
   assert.equal(atEnd.status, KEY_STATUS_UNPROVEN);
-  const justBeforeEnd = keyStatus(closed.bytes, { paymentBlock: 19n, sellerKey, transferTo: payTo });
+  const justBeforeEnd = status(closed.bytes, { paymentBlock: 19n, sellerKey, transferTo: payTo });
   assert.equal(justBeforeEnd.ok, true);
 
   const commitment = sha256(ascii('wallet-book'));
@@ -498,7 +542,7 @@ test('rule 2 keeps payTo intervals disjoint and a wallet at one book unless STOP
       padAddress(wallet), commitment, padUint(3n),
     ], walletScalar),
   };
-  walletBytes = admit(walletBytes, join).bytes;
+  walletBytes = seal(walletBytes, join).bytes;
   const second = {
     ...join,
     seq: 1n,
@@ -509,8 +553,8 @@ test('rule 2 keeps payTo intervals disjoint and a wallet at one book unless STOP
       padAddress(wallet), otherCommit, padUint(4n),
     ], walletScalar),
   };
-  assert.equal(admit(walletBytes, second).reason, 'rule_2');
-  assert.equal(admit(emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, { ...join, sig: new Uint8Array(65) }).reason, 'rule_4');
+  assert.equal(seal(walletBytes, second).reason, 'rule_2');
+  assert.equal(seal(emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, { ...join, sig: new Uint8Array(65) }).reason, 'rule_4');
   const stopped = {
     seq: 1n,
     block: 4n,
@@ -522,13 +566,13 @@ test('rule 2 keeps payTo intervals disjoint and a wallet at one book unless STOP
       padAddress(wallet), otherCommit, padUint(4n),
     ], walletScalar),
   };
-  const afterStop = admit(walletBytes, stopped);
+  const afterStop = seal(walletBytes, stopped);
   assert.equal(afterStop.ok, true, afterStop.reason);
-  const view = assess(afterStop.bytes);
+  const view = viewOf(afterStop.bytes);
   assert.equal(view.stopped, true);
   assert.equal(view.active, null);
   assert.equal(view.killed, false);
-  const resume = admit(afterStop.bytes, {
+  const resume = seal(afterStop.bytes, {
     seq: 2n,
     block: 5n,
     fromBlock: null,
@@ -537,55 +581,55 @@ test('rule 2 keeps payTo intervals disjoint and a wallet at one book unless STOP
     sig: walletSig('WalletLeave(address wallet,uint64 block)', [padAddress(wallet), padUint(5n)], walletScalar),
   });
   assert.equal(resume.ok, true, resume.reason);
-  assert.equal(assess(resume.bytes).stopped, false);
+  assert.equal(viewOf(resume.bytes).stopped, false);
 });
 
 test('rule 3 and rule 4: the covering key is signed, and a bad signature is unproven', () => {
   let bytes = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
-  bytes = admit(bytes, register(bytes, payTo, payToScalar, sellerKey, 8n)).bytes;
-  const wrongTo = keyStatus(bytes, { paymentBlock: 8n, sellerKey, transferTo: otherPayTo });
+  bytes = seal(bytes, register(bytes, payTo, payToScalar, sellerKey, 8n)).bytes;
+  const wrongTo = status(bytes, { paymentBlock: 8n, sellerKey, transferTo: otherPayTo });
   assert.equal(wrongTo.status, KEY_STATUS_UNPROVEN);
-  const wrongKey = keyStatus(bytes, { paymentBlock: 8n, sellerKey: otherSeller, transferTo: payTo });
+  const wrongKey = status(bytes, { paymentBlock: 8n, sellerKey: otherSeller, transferTo: payTo });
   assert.equal(wrongKey.status, KEY_STATUS_UNPROVEN);
 
   const zeros = new Uint8Array(65);
-  assert.equal(admit(bytes, register(bytes, payTo, payToScalar, otherSeller, 40n, { sig: zeros })).reason, 'rule_4');
+  assert.equal(seal(bytes, register(bytes, payTo, payToScalar, otherSeller, 40n, { sig: zeros })).reason, 'rule_4');
 
-  const low = controlSig(payTo, payToScalar, otherSeller, 40n);
+  const low = controlSig(payTo, payToScalar, otherSeller);
   const highS = bytesToBig(low.subarray(32, 64));
   const flipped = concat([
     low.subarray(0, 32),
     bigToBytes(SECP256K1.order - highS, 32),
     Uint8Array.of(low[64] ^ 1),
   ]);
-  assert.equal(admit(bytes, register(bytes, payTo, payToScalar, otherSeller, 40n, { sig: flipped })).reason, 'rule_4');
+  assert.equal(seal(bytes, register(bytes, payTo, payToScalar, otherSeller, 40n, { sig: flipped })).reason, 'rule_4');
 
-  const low27 = controlSig(otherPayTo, otherScalar, otherSeller, 2n);
+  const low27 = controlSig(otherPayTo, otherScalar, otherSeller);
   const parity27 = new Uint8Array(low27);
   parity27[64] = low27[64] + 27;
   const emptyOther = emptyHistory(KIND_PAYTO, CHAIN, otherPayTo).bytes;
-  const as27 = admit(emptyOther, register(emptyOther, otherPayTo, otherScalar, otherSeller, 2n, { sig: parity27 }));
+  const as27 = seal(emptyOther, register(emptyOther, otherPayTo, otherScalar, otherSeller, 2n, { sig: parity27 }));
   assert.equal(as27.ok, true, as27.reason);
 
-  const keySig = keyRevokeSig(sellerHash, 12n);
-  const byKey = admit(bytes, revoke(bytes, sellerHash, 12n, 12n, keySig, 'key'));
+  const keySig = keyRevokeSig(sellerHash);
+  const byKey = seal(bytes, revoke(bytes, sellerHash, 12n, keySig, 'key'));
   assert.equal(byKey.ok, true, byKey.reason);
-  const again = keyRevokeSig(sellerHash, 14n);
-  assert.equal(admit(byKey.bytes, revoke(byKey.bytes, sellerHash, 14n, 14n, again, 'key')).reason, 'rule_2');
+  const again = keyRevokeSig(sellerHash);
+  assert.equal(seal(byKey.bytes, revoke(byKey.bytes, sellerHash, 14n, again, 'key')).reason, 'rule_2');
 
   let fresh = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
-  fresh = admit(fresh, register(fresh, payTo, payToScalar, sellerKey, 1n)).bytes;
-  const paySig = payToRevokeSig(payTo, payToScalar, sellerHash, 6n);
-  const byPay = admit(fresh, revoke(fresh, sellerHash, 6n, 4n, paySig, 'payTo'));
+  fresh = seal(fresh, register(fresh, payTo, payToScalar, sellerKey, 1n)).bytes;
+  const paySig = payToRevokeSig(payTo, payToScalar, sellerHash);
+  const byPay = seal(fresh, revoke(fresh, sellerHash, 4n, paySig, 'payTo'));
   assert.equal(byPay.ok, true, byPay.reason);
-  const foreign = payToRevokeSig(otherPayTo, otherScalar, sellerHash, 6n);
-  assert.equal(admit(fresh, revoke(fresh, sellerHash, 6n, 4n, foreign, 'payTo')).reason, 'rule_4');
+  const foreign = payToRevokeSig(otherPayTo, otherScalar, sellerHash);
+  assert.equal(seal(fresh, revoke(fresh, sellerHash, 4n, foreign, 'payTo')).reason, 'rule_4');
 });
 
 test('rule 5 detects equivocation between two roots and accepts a real extension', () => {
   let base = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
-  base = admit(base, register(base, payTo, payToScalar, sellerKey, 7n)).bytes;
-  const extended = admit(base, revoke(base, sellerHash, 18n, 18n, keyRevokeSig(sellerHash, 18n), 'key'));
+  base = seal(base, register(base, payTo, payToScalar, sellerKey, 7n)).bytes;
+  const extended = seal(base, revoke(base, sellerHash, 18n, keyRevokeSig(sellerHash), 'key'));
   assert.equal(extended.ok, true);
   assert.equal(extendsHistory(base, extended.bytes).extends, true);
   assert.equal(extendsHistory(extended.bytes, base).extends, false);
@@ -637,13 +681,13 @@ test('rule 5 detects equivocation between two roots and accepts a real extension
 
 test('rule 7 requires both payTos, and a keyHash revocation hits every slot', () => {
   let first = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
-  first = admit(first, register(first, payTo, payToScalar, sellerKey, 5n)).bytes;
+  first = seal(first, register(first, payTo, payToScalar, sellerKey, 5n)).bytes;
   let second = emptyHistory(KIND_PAYTO, CHAIN, otherPayTo).bytes;
   const ctx = { others: [{ id: payTo, bytes: first }] };
   const bare = register(second, otherPayTo, otherScalar, sellerKey, 6n);
-  assert.equal(admit(second, bare, ctx).reason, 'rule_7');
+  assert.equal(seal(second, bare, ctx).reason, 'rule_7');
 
-  const cross = typedDigest(CHAIN, 'CrossPayTo(address payTo,address otherPayTo,bytes32 keyHash)', (() => {
+  const cross = typedDigest(CHAIN, CONTRACT, 'CrossPayTo(address payTo,address otherPayTo,bytes32 keyHash)', (() => {
     const [a, b] = bytesToHex(payTo) <= bytesToHex(otherPayTo)
       ? [payTo, otherPayTo]
       : [otherPayTo, payTo];
@@ -656,7 +700,7 @@ test('rule 7 requires both payTos, and a keyHash revocation hits every slot', ()
       otherSig: sign(cross, payToScalar, SECP256K1),
     },
   });
-  const both = admit(second, signed, ctx);
+  const both = seal(second, signed, ctx);
   assert.equal(both.ok, true, both.reason);
   const oneSided = register(second, otherPayTo, otherScalar, sellerKey, 6n, {
     cross: {
@@ -665,21 +709,21 @@ test('rule 7 requires both payTos, and a keyHash revocation hits every slot', ()
       otherSig: new Uint8Array(65),
     },
   });
-  assert.equal(admit(second, oneSided, ctx).reason, 'rule_7');
+  assert.equal(seal(second, oneSided, ctx).reason, 'rule_7');
 
   const revokedAt = 22n;
   const spread = revokeAcross([first, both.bytes], {
     key: sellerKey,
     revokedAt,
     block: revokedAt,
-    sig: keyRevokeSig(sellerHash, revokedAt),
-  });
+    sig: keyRevokeSig(sellerHash),
+  }, { epochs: [EPOCH] });
   assert.equal(spread.ok, true, spread.reason);
   assert.equal(spread.applied, 2);
   for (const bytes of spread.histories) {
-    const view = assess(bytes);
+    const view = viewOf(bytes);
     assert.equal(view.keys[0].revokedAt, revokedAt);
-    assert.equal(keyStatus(bytes, {
+    assert.equal(status(bytes, {
       paymentBlock: revokedAt,
       sellerKey,
       transferTo: view.id,
@@ -693,7 +737,7 @@ test('a breaching record is ignored and does not kill the slot', () => {
     sig: new Uint8Array(65),
   });
   bad.seq = 1n;
-  const end = revoke(emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes, sellerHash, 30n, 30n, keyRevokeSig(sellerHash, 30n), 'key');
+  const end = revoke(emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes, sellerHash, 30n, keyRevokeSig(sellerHash), 'key');
   end.seq = 2n;
   const encoded = encodeHistory({
     kind: KIND_PAYTO,
@@ -701,7 +745,7 @@ test('a breaching record is ignored and does not kill the slot', () => {
     id: payTo,
     records: [good, bad, end],
   });
-  const view = assess(encoded.bytes);
+  const view = viewOf(encoded.bytes);
   assert.equal(view.ok, true);
   assert.equal(view.killed, false);
   assert.equal(view.count, 3);
@@ -709,24 +753,24 @@ test('a breaching record is ignored and does not kill the slot', () => {
   assert.equal(view.faults[0].rule, 'rule_4');
   assert.equal(view.keys.length, 1);
   assert.equal(view.keys[0].revokedAt, 30n);
-  assert.equal(keyStatus(encoded.bytes, { paymentBlock: 10n, sellerKey, transferTo: payTo }).ok, true);
-  assert.equal(keyStatus(encoded.bytes, { paymentBlock: 30n, sellerKey, transferTo: payTo }).status, KEY_STATUS_UNPROVEN);
-  assert.equal(keyStatus(encoded.bytes, { paymentBlock: 11n, sellerKey: otherSeller, transferTo: payTo }).status, KEY_STATUS_UNPROVEN);
+  assert.equal(status(encoded.bytes, { paymentBlock: 10n, sellerKey, transferTo: payTo }).ok, true);
+  assert.equal(status(encoded.bytes, { paymentBlock: 30n, sellerKey, transferTo: payTo }).status, KEY_STATUS_UNPROVEN);
+  assert.equal(status(encoded.bytes, { paymentBlock: 11n, sellerKey: otherSeller, transferTo: payTo }).status, KEY_STATUS_UNPROVEN);
 
-  const clean = admit(emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes, good);
-  assert.equal(admit(clean.bytes, { ...bad, seq: 1n }).reason, 'rule_4');
+  const clean = seal(emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes, good);
+  assert.equal(seal(clean.bytes, { ...bad, seq: 1n }).reason, 'rule_4');
 });
 
 test('a clean payTo entry is 124 bytes, 156 with the slot key, and a revoked key adds 180', () => {
   let bytes = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
-  bytes = admit(bytes, register(bytes, payTo, payToScalar, sellerKey, 9n)).bytes;
-  const entry = payToEntryBytes(bytes);
+  bytes = seal(bytes, register(bytes, payTo, payToScalar, sellerKey, 9n)).bytes;
+  const entry = payToEntryBytes(bytes, { epochs: [EPOCH] });
   assert.equal(entry.bytes.length, 124);
   const key = slotKey({ kind: KIND_PAYTO, chainId: CHAIN, id: payTo });
   assert.equal(entry.bytes.length + key.bytes.length, 156);
-  bytes = admit(bytes, revoke(bytes, sellerHash, 15n, 15n, payToRevokeSig(payTo, payToScalar, sellerHash, 15n), 'payTo')).bytes;
-  bytes = admit(bytes, register(bytes, payTo, payToScalar, otherSeller, 15n)).bytes;
-  const withRevoked = payToEntryBytes(bytes);
+  bytes = seal(bytes, revoke(bytes, sellerHash, 15n, payToRevokeSig(payTo, payToScalar, sellerHash), 'payTo')).bytes;
+  bytes = seal(bytes, register(bytes, payTo, payToScalar, otherSeller, 15n)).bytes;
+  const withRevoked = payToEntryBytes(bytes, { epochs: [EPOCH] });
   assert.equal(withRevoked.bytes.length - 124, 180);
 });
 
@@ -783,7 +827,7 @@ test('the epoch slot takes fresh randomness every hourly epoch', () => {
 
 test('padding reaches 1,024 leaves and a redraw keeps real slots', () => {
   let bytes = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
-  bytes = admit(bytes, register(bytes, payTo, payToScalar, sellerKey, 4n)).bytes;
+  bytes = seal(bytes, register(bytes, payTo, payToScalar, sellerKey, 4n)).bytes;
   let tree = createTree();
   const placed = placeHistory(tree, bytes);
   tree = drawEpoch(placed.tree, {
@@ -820,7 +864,14 @@ test('proof sizes at 1,024 entries sit on the SIMPLE §S5 citation', () => {
     assert.equal(verifyProof(hexToBytes(sample.key), hexToBytes(sample.value), proof, root).ok, true);
   }
   assert.ok(Math.abs(measured.mean - 363) < 1.5, `measured mean ${measured.mean}; cited 363; m7.out is not in the repo`);
-  assert.ok(measured.max >= 448 && measured.max <= 480, `measured max ${measured.max}; cited 448-480`);
+  assert.equal(measured.max, 480);
+  assert.equal(doc.cited.observed_tail_bytes, 544);
+  assert.equal(doc.cited.verifier_cap, false);
+  const wide = new Uint8Array(544);
+  for (let depth = 0; depth < 16; depth += 1) {
+    wide[Math.floor(depth / 8)] += Math.floor(128 / (2 ** (depth % 8)));
+  }
+  assert.equal(verifyProof(hexToBytes(measured.samples[0].key), hexToBytes(measured.samples[0].value), wide, hexToBytes(measured.root)).reason, 'bad_proof');
   assert.equal(doc.slot_keys.payTo_0x11, SPEC_KEYS.payTo);
   assert.equal(doc.slot_keys.epoch, SPEC_KEYS.epoch);
   const onDisk = readFileSync(VECTOR_PATH, 'utf8');
@@ -829,7 +880,7 @@ test('proof sizes at 1,024 entries sit on the SIMPLE §S5 citation', () => {
 
 test('a book creation is signed by the identity key and a second one is ignored', () => {
   const bookId = new Uint8Array(32).fill(0x22);
-  const digest = typedDigest(CHAIN, 'BookCreate(bytes32 bookId,bytes32 identityKeyHash,uint64 block)', [
+  const digest = typedDigest(CHAIN, CONTRACT, 'BookCreate(bytes32 bookId,bytes32 identityKeyHash,uint64 block)', [
     bookId,
     sha256(identityKey),
     padUint(1n),
@@ -843,29 +894,334 @@ test('a book creation is signed by the identity key and a second one is ignored'
     identityKey,
     sig: sign(digest, identityScalar, P256),
   };
-  const admitted = admit(emptyHistory(KIND_BOOK, CHAIN, bookId).bytes, good);
+  const admitted = seal(emptyHistory(KIND_BOOK, CHAIN, bookId).bytes, good);
   assert.equal(admitted.ok, true, admitted.reason);
-  assert.equal(bytesToHex(assess(admitted.bytes).book), bytesToHex(identityKey));
+  assert.equal(bytesToHex(viewOf(admitted.bytes).book), bytesToHex(identityKey));
   const unsigned = { ...good, seq: 1n, block: 2n, id: freshId(), sig: new Uint8Array(65) };
-  assert.equal(admit(admitted.bytes, unsigned).reason, 'rule_4');
+  assert.equal(seal(admitted.bytes, unsigned).reason, 'rule_4');
   const second = {
     ...good,
     seq: 1n,
     block: 2n,
     id: freshId(),
-    sig: sign(typedDigest(CHAIN, 'BookCreate(bytes32 bookId,bytes32 identityKeyHash,uint64 block)', [
+    sig: sign(typedDigest(CHAIN, CONTRACT, 'BookCreate(bytes32 bookId,bytes32 identityKeyHash,uint64 block)', [
       bookId, sha256(identityKey), padUint(2n),
     ]), identityScalar, P256),
   };
-  assert.equal(admit(admitted.bytes, second).reason, 'rule_1');
+  assert.equal(seal(admitted.bytes, second).reason, 'rule_1');
   const anchored = encodeHistory({
     kind: KIND_BOOK,
     chainId: CHAIN,
     id: bookId,
     records: [good, unsigned],
   });
-  const view = assess(anchored.bytes);
+  const view = viewOf(anchored.bytes);
   assert.equal(view.killed, false);
   assert.equal(view.faults[0].line, 'invalid record at seq 1 (Chit fault)');
   assert.equal(bytesToHex(view.book), bytesToHex(identityKey));
+});
+
+test('domain version 13 names the admitting contract, and expiry replaces validFrom', () => {
+  assert.equal(DOMAIN_TYPE, 'EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)');
+  assert.equal(DOMAIN_VERSION, '13');
+  assert.equal(PAYTO_CONTROL_TYPE, 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)');
+  assert.equal(REVOKE_TYPE, 'Revoke(address payTo,bytes32 keyHash)');
+  assert.equal(REVOKE_BY_KEY_TYPE, 'RevokeByKey(bytes32 keyHash)');
+  assert.notEqual(
+    bytesToHex(controlDigest(payTo, sellerKey, EXPIRY, CONTRACT)),
+    bytesToHex(controlDigest(payTo, sellerKey, EXPIRY, OTHER_CONTRACT)),
+  );
+  const listed = contractForHour([
+    { address: CONTRACT, fromHour: 0n, untilHour: 3600n },
+    { address: OTHER_CONTRACT, fromHour: 3600n, untilHour: null },
+  ], 3600n);
+  assert.equal(bytesToHex(listed), bytesToHex(OTHER_CONTRACT));
+  assert.equal(contractForHour([
+    { address: CONTRACT, fromHour: 0n, untilHour: 3600n },
+    { address: OTHER_CONTRACT, fromHour: 0n, untilHour: 7200n },
+  ], 1n), null);
+
+  const oldStruct = structHash('PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)', [
+    padAddress(payTo), padUint(1n), keccak256(sellerKey), padUint(EXPIRY),
+  ]);
+  const oldDomain = structHash('EIP712Domain(string name,string version,uint256 chainId)', [
+    keccak256(ascii('Chit402')), keccak256(ascii('1')), padUint(CHAIN),
+  ]);
+  const oldSig = sign(keccak256(concat([Uint8Array.of(0x19, 0x01), oldDomain, oldStruct])), payToScalar, SECP256K1);
+  const emptyPay = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n, { sig: oldSig })).reason, 'rule_4');
+  const successor = [{
+    prevAnchorBlock: 0n, showAnchorBlock: 1n << 40n, hourStart: 0n, contract: OTHER_CONTRACT,
+  }];
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n), { epochs: successor }).reason, 'rule_4');
+  const resigned = register(emptyPay, payTo, payToScalar, sellerKey, 10n, { contract: OTHER_CONTRACT });
+  assert.equal(seal(emptyPay, resigned, { epochs: successor }).ok, true);
+
+  const window = [{ prevAnchorBlock: 100n, showAnchorBlock: 200n, hourStart: 3600n, contract: CONTRACT }];
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 100n, { expiry: 3601n }), { epochs: window }).reason, 'rule_1');
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 201n, { expiry: 3601n }), { epochs: window }).reason, 'rule_1');
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 150n, { expiry: 3600n }), { epochs: window }).reason, 'rule_2');
+  const inside = seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 150n, { expiry: 3601n }), { epochs: window });
+  assert.equal(inside.ok, true, inside.reason);
+  assert.equal(viewOf(inside.bytes, { epochs: window }).keys[0].validFrom, 150n);
+
+  const opened = seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n)).bytes;
+  const dropped = revokeAcross([opened], {
+    key: sellerKey, block: 40n, sig: keyRevokeSig(sellerHash),
+  }, { epochs: [EPOCH] });
+  assert.equal(bytesToHex(decodeHistory(dropped.histories[0]).records[1].id), bytesToHex(sha256(ascii('chit402-smt-revoke-v1'), payTo, sellerHash)));
+});
+
+test('equivocation follows epoch order and stays on one slot', () => {
+  let base = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  base = seal(base, register(base, payTo, payToScalar, sellerKey, 7n)).bytes;
+  const extended = seal(base, revoke(base, sellerHash, 18n, keyRevokeSig(sellerHash), 'key')).bytes;
+  function anchor(historyBytes, seed) {
+    let tree = createTree();
+    const placed = placeHistory(tree, historyBytes);
+    tree = drawEpoch(placed.tree, { chainId: CHAIN, epoch: 0, hourStart: 0, randomness: fill(seed) }).tree;
+    return {
+      key: placed.slotKey.bytes,
+      value: historyBytes,
+      proof: prove(tree, placed.slotKey.bytes).proof,
+      root: rootBytes(tree),
+    };
+  }
+  assert.equal(detectEquivocation(anchor(extended, 1), anchor(base, 2)).equivocation, true);
+  assert.equal(detectEquivocation(anchor(base, 3), anchor(extended, 4)).equivocation, false);
+  let other = emptyHistory(KIND_PAYTO, CHAIN, otherPayTo).bytes;
+  other = seal(other, register(other, otherPayTo, otherScalar, otherSeller, 7n)).bytes;
+  assert.equal(detectEquivocation(anchor(base, 5), anchor(other, 5)).equivocation, false);
+});
+
+test('an ignored record does not raise the block floor or claim its id', () => {
+  const good = register(emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes, payTo, payToScalar, sellerKey, 10n);
+  const bad = register(emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes, payTo, payToScalar, otherSeller, 1000n, {
+    sig: new Uint8Array(65),
+  });
+  bad.seq = 1n;
+  const later = revoke(emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes, sellerHash, 20n, keyRevokeSig(sellerHash), 'key');
+  later.seq = 2n;
+  later.id = bad.id;
+  const encoded = encodeHistory({ kind: KIND_PAYTO, chainId: CHAIN, id: payTo, records: [good, bad, later] });
+  const view = viewOf(encoded.bytes);
+  assert.equal(view.killed, false);
+  assert.equal(view.keys[0].revokedAt, 20n);
+  assert.equal(view.faults.map((item) => item.seq).join(','), '1');
+  assert.equal(status(encoded.bytes, { paymentBlock: 15n, sellerKey, transferTo: payTo }).ok, true);
+  assert.equal(status(encoded.bytes, { paymentBlock: 30n, sellerKey, transferTo: payTo }).status, 'key status unproven');
+});
+
+test('rule 7 consent names the earlier holder, and the chain is part of key status', () => {
+  const victimScalar = 17n;
+  const victim = addressOf(victimScalar);
+  let held = emptyHistory(KIND_PAYTO, CHAIN, victim).bytes;
+  held = seal(held, register(held, victim, victimScalar, sellerKey, 5n)).bytes;
+  const stolen = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const wrong = typedDigest(CHAIN, CONTRACT, 'CrossPayTo(address payTo,address otherPayTo,bytes32 keyHash)', (() => {
+    const [a, b] = bytesToHex(payTo) <= bytesToHex(otherPayTo) ? [payTo, otherPayTo] : [otherPayTo, payTo];
+    return [padAddress(a), padAddress(b), sellerHash];
+  })());
+  const attack = register(stolen, payTo, payToScalar, sellerKey, 8n, {
+    cross: {
+      other: otherPayTo,
+      selfSig: sign(wrong, payToScalar, SECP256K1),
+      otherSig: sign(wrong, otherScalar, SECP256K1),
+    },
+  });
+  assert.equal(seal(stolen, attack, { others: [{ id: victim, bytes: held }] }).reason, 'rule_7');
+  const right = typedDigest(CHAIN, CONTRACT, 'CrossPayTo(address payTo,address otherPayTo,bytes32 keyHash)', (() => {
+    const [a, b] = bytesToHex(payTo) <= bytesToHex(victim) ? [payTo, victim] : [victim, payTo];
+    return [padAddress(a), padAddress(b), sellerHash];
+  })());
+  const allowed = register(stolen, payTo, payToScalar, sellerKey, 8n, {
+    cross: {
+      other: victim,
+      selfSig: sign(right, payToScalar, SECP256K1),
+      otherSig: sign(right, victimScalar, SECP256K1),
+    },
+  });
+  assert.equal(seal(stolen, allowed, { others: [{ id: victim, bytes: held }] }).ok, true);
+  const selfOnly = register(stolen, payTo, payToScalar, sellerKey, 8n, {
+    cross: {
+      other: victim,
+      selfSig: new Uint8Array(65),
+      otherSig: sign(right, victimScalar, SECP256K1),
+    },
+  });
+  assert.equal(seal(stolen, selfOnly, { others: [{ id: victim, bytes: held }] }).reason, 'rule_7');
+
+  let first = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  first = seal(first, register(first, payTo, payToScalar, otherSeller, 4n)).bytes;
+  const cd = typedDigest(CHAIN, CONTRACT, 'CrossPayTo(address payTo,address otherPayTo,bytes32 keyHash)', (() => {
+    const hash = keyHashOf(1, otherSeller);
+    const [a, b] = bytesToHex(payTo) <= bytesToHex(otherPayTo) ? [payTo, otherPayTo] : [otherPayTo, payTo];
+    return [padAddress(a), padAddress(b), hash];
+  })());
+  const later = seal(emptyHistory(KIND_PAYTO, CHAIN, otherPayTo).bytes, register(emptyHistory(KIND_PAYTO, CHAIN, otherPayTo).bytes, otherPayTo, otherScalar, otherSeller, 9n, {
+    cross: {
+      other: payTo,
+      selfSig: sign(cd, otherScalar, SECP256K1),
+      otherSig: sign(cd, payToScalar, SECP256K1),
+    },
+  }), { others: [{ id: payTo, bytes: first }] }).bytes;
+  assert.equal(status(first, { paymentBlock: 6n, sellerKey: otherSeller, transferTo: payTo }).ok, true);
+  assert.equal(status(first, {
+    paymentBlock: 6n, sellerKey: otherSeller, transferTo: payTo,
+    ctx: { others: [{ id: otherPayTo, bytes: later }] },
+  }).ok, true);
+
+  const testnet = 84532n;
+  const netSig = sign(typedDigest(testnet, CONTRACT, 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)', [
+    padAddress(payTo), padUint(1n), keccak256(sellerKey), padUint(EXPIRY),
+  ]), payToScalar, SECP256K1);
+  let foreign = emptyHistory(KIND_PAYTO, testnet, payTo).bytes;
+  foreign = seal(foreign, register(foreign, payTo, payToScalar, sellerKey, 5n, { sig: netSig })).bytes;
+  assert.equal(status(foreign, { chainId: CHAIN, paymentBlock: 6n, sellerKey, transferTo: payTo }).reason, 'bad_history');
+  assert.equal(status(foreign, { chainId: testnet, paymentBlock: 6n, sellerKey, transferTo: payTo }).ok, true);
+  const baseKey = slotKey({ kind: KIND_PAYTO, chainId: CHAIN, id: payTo }).bytes;
+  const planted = putLeaf(createTree(), baseKey, foreign).tree;
+  assert.equal(verifySlot(KIND_PAYTO, CHAIN, payTo, foreign, prove(planted, baseKey).proof, rootBytes(planted)).reason, 'bad_history');
+  const netKey = slotKey({ kind: KIND_PAYTO, chainId: testnet, id: payTo }).bytes;
+  const netTree = putLeaf(createTree(), netKey, foreign).tree;
+  assert.equal(verifySlot(KIND_PAYTO, testnet, payTo, foreign, prove(netTree, netKey).proof, rootBytes(netTree)).ok, true);
+});
+
+test('rule boundaries reject the extra mutant cases', () => {
+  const emptyPay = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const algDigest = typedDigest(CHAIN, CONTRACT, 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)', [
+    padAddress(payTo), padUint(2n), keccak256(otherSeller), padUint(EXPIRY),
+  ]);
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, otherSeller, 10n, {
+    alg: 2, sig: sign(algDigest, payToScalar, SECP256K1),
+  })).reason, 'rule_4');
+  assert.equal(seal(emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, {
+    seq: 0n, block: 4n, fromBlock: null, id: freshId(), type: REC_LEAVE,
+    sig: walletSig('WalletLeave(address wallet,uint64 block)', [padAddress(wallet), padUint(4n)], walletScalar),
+  }).reason, 'rule_2');
+  const stopCommit = sha256(ascii('stop'));
+  assert.equal(seal(emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, {
+    seq: 0n, block: 4n, fromBlock: null, id: freshId(), type: REC_STOP, commitment: stopCommit,
+    sig: walletSig('WalletStop(address wallet,bytes32 bookCommitment,uint64 block)', [
+      padAddress(wallet), stopCommit, padUint(4n),
+    ], walletScalar),
+  }).reason, 'rule_2');
+  assert.equal(status(emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, {
+    paymentBlock: 4n, sellerKey, transferTo: wallet,
+  }).reason, 'bad_kind');
+  assert.equal(seal(emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, register(
+    emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, wallet, walletScalar, sellerKey, 6n,
+  )).reason, 'rule_4');
+  const joinCommit = sha256(ascii('join-pay'));
+  assert.equal(seal(emptyPay, {
+    seq: 0n, block: 6n, fromBlock: null, id: freshId(), type: REC_JOIN, commitment: joinCommit,
+    sig: walletSig('WalletJoin(address wallet,bytes32 bookCommitment,uint64 block)', [
+      padAddress(payTo), joinCommit, padUint(6n),
+    ], payToScalar),
+  }).reason, 'rule_4');
+
+  const opened = seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n)).bytes;
+  const patchedLen = opened.slice();
+  patchedLen[10] = 19;
+  assert.equal(decodeHistory(patchedLen).reason, 'bad_kind');
+  const capped = emptyPay.slice();
+  const countAt = 11 + payTo.length;
+  const over = MAX_RECORDS + 1;
+  capped[countAt] = Math.floor(over / 16777216) % 256;
+  capped[countAt + 1] = Math.floor(over / 65536) % 256;
+  capped[countAt + 2] = Math.floor(over / 256) % 256;
+  capped[countAt + 3] = over % 256;
+  assert.equal(decodeHistory(capped).reason, 'bad_size');
+  const lone = encodeHistory({
+    kind: KIND_PAYTO, chainId: CHAIN, id: payTo,
+    records: [revoke(emptyPay, sellerHash, 12n, new Uint8Array(65), 'payTo')],
+  });
+  assert.equal(lone.bytes[35 + 59 + 32], 1);
+  const byByte = lone.bytes.slice();
+  byByte[35 + 59 + 32] = 3;
+  assert.equal(decodeHistory(byByte).ok, false);
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n, { sig: new Uint8Array(64) })).reason, 'rule_4');
+  const longSig = register(emptyPay, payTo, payToScalar, otherSeller, 12n, { sig: new Uint8Array(70) });
+  longSig.seq = 1n;
+  const mixed = viewOf(encodeHistory({
+    kind: KIND_PAYTO, chainId: CHAIN, id: payTo,
+    records: [decodeHistory(opened).records[0], longSig],
+  }).bytes);
+  assert.equal(mixed.killed, false);
+  assert.equal(mixed.keys.length, 1);
+  assert.equal(verifyProof(fill(1), fill(2), new Uint8Array(32), rootBytes(createTree()).subarray(0, 31)).reason, 'bad_length');
+  assert.equal(drawEpoch(drawEpoch(createTree(), {
+    chainId: CHAIN, epoch: 0, hourStart: 0, randomness: fill(1),
+  }).tree, { chainId: 84532n, epoch: 1, hourStart: 3600, randomness: fill(2) }).reason, 'bad_epoch');
+});
+
+test('keyHash is SHA-256(keyAlg || compressed key), and a RevokeByKey tombstone is permanent', () => {
+  assert.equal(bytesToHex(sellerKeyHash(1, sellerKey)), bytesToHex(sellerHash));
+  assert.notEqual(bytesToHex(sellerHash), bytesToHex(sha256(sellerKey)));
+  assert.notEqual(bytesToHex(keyHashOf(1, sellerKey)), bytesToHex(keyHashOf(2, sellerKey)));
+  assert.equal(sellerKeyHash(1, sellerKey.subarray(0, 32)), null);
+  const uncompressed = publicPoint(sellerScalar, SECP256K1);
+  assert.equal(uncompressed.length, 65);
+  assert.equal(sellerKeyHash(1, uncompressed), null);
+  const badPrefix = new Uint8Array(sellerKey);
+  badPrefix[0] = 0x04;
+  assert.equal(sellerKeyHash(1, badPrefix), null);
+
+  const emptyPay = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const emptyOther = emptyHistory(KIND_PAYTO, CHAIN, otherPayTo).bytes;
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, badPrefix, 10n)).reason, 'rule_4');
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, uncompressed, 10n)).reason, 'bad_history');
+
+  let slotA = seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n)).bytes;
+  const byPay = seal(slotA, revoke(slotA, sellerHash, 20n, payToRevokeSig(payTo, payToScalar, sellerHash), 'payTo'));
+  assert.equal(byPay.ok, true, byPay.reason);
+  const afterPay = seal(emptyOther, register(emptyOther, otherPayTo, otherScalar, sellerKey, 30n));
+  assert.equal(afterPay.ok, true, afterPay.reason);
+
+  slotA = seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n)).bytes;
+  const byKey = seal(slotA, revoke(slotA, sellerHash, 20n, keyRevokeSig(sellerHash), 'key'));
+  assert.equal(byKey.ok, true, byKey.reason);
+  const others = [{ id: payTo, bytes: byKey.bytes }];
+  const replay = seal(emptyOther, register(emptyOther, otherPayTo, otherScalar, sellerKey, 30n), { others });
+  assert.equal(replay.reason, 'rule_2');
+  const lineage = [
+    { prevAnchorBlock: 0n, showAnchorBlock: 100n, hourStart: 0n, contract: CONTRACT },
+    { prevAnchorBlock: 100n, showAnchorBlock: 1n << 40n, hourStart: 3600n, contract: OTHER_CONTRACT },
+  ];
+  const moved = register(emptyOther, otherPayTo, otherScalar, sellerKey, 150n, {
+    contract: OTHER_CONTRACT, expiry: 3601n,
+  });
+  assert.equal(seal(emptyOther, moved, { epochs: lineage, others }).reason, 'rule_2');
+  assert.equal(seal(emptyOther, moved, { epochs: lineage, tombstones: [sellerHash] }).reason, 'rule_2');
+  assert.equal(status(byKey.bytes, { paymentBlock: 15n, sellerKey, transferTo: payTo }).ok, true);
+  assert.equal(status(byKey.bytes, { paymentBlock: 20n, sellerKey, transferTo: payTo }).status, KEY_STATUS_UNPROVEN);
+  assert.equal(status(slotA, {
+    paymentBlock: 15n, sellerKey, transferTo: payTo, ctx: { others },
+  }).ok, true);
+  assert.equal(status(slotA, {
+    paymentBlock: 20n, sellerKey, transferTo: payTo, ctx: { others },
+  }).status, KEY_STATUS_UNPROVEN);
+
+  const carried = seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n), {
+    tombstones: [sellerHash],
+  });
+  assert.equal(carried.reason, 'rule_2');
+  const carriedBytes = seal(emptyPay, register(emptyPay, payTo, payToScalar, otherSeller, 10n), {
+    tombstones: [{ keyHash: sellerHash, block: 0n }],
+  });
+  assert.equal(carriedBytes.ok, true, carriedBytes.reason);
+
+  const mismatch = revoke(slotA, sha256(sellerKey), 20n, keyRevokeSig(sha256(sellerKey)), 'key');
+  assert.equal(seal(slotA, mismatch).reason, 'rule_2');
+  const wrongKey = revoke(slotA, sellerHash, 20n, keyRevokeSig(sellerHash, CONTRACT, 13n), 'key', otherSeller);
+  assert.equal(seal(slotA, wrongKey).reason, 'rule_4');
+  const forged = revoke(slotA, sellerHash, 20n, keyRevokeSig(sellerHash, CONTRACT, 13n), 'key', sellerKey);
+  assert.equal(seal(slotA, forged).reason, 'rule_4');
+  const anchored = encodeHistory({
+    kind: KIND_PAYTO, chainId: CHAIN, id: payTo,
+    records: [decodeHistory(slotA).records[0], mismatch],
+  });
+  const viewed = viewOf(anchored.bytes);
+  assert.equal(viewed.keys[0].revokedAt, 0n);
+  assert.equal(viewed.tombstones.has(bytesToHex(sellerHash)), false);
 });

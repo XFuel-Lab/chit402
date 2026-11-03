@@ -32,8 +32,13 @@ export {
   WALLET_JOIN_TYPE,
   WALLET_LEAVE_TYPE,
   WALLET_STOP_TYPE,
+  DOMAIN_TYPE,
+  DOMAIN_NAME,
+  DOMAIN_VERSION,
   bookCreateDigest,
+  contractForHour,
   crossDigest,
+  domainSeparator,
   payToControlDigest,
   revokeByKeyDigest,
   revokeDigest,
@@ -62,6 +67,7 @@ export {
   faultLine,
   keyStatus,
   payToEntryBytes,
+  verifySlot,
   revokeAcross,
 } from './history.mjs';
 export {
@@ -75,7 +81,11 @@ export {
 
 export const SCHEMA = 'chit402.cs2.smt.v1';
 
-/** Cited from SIMPLE §S5. m7.out is not in this repository. */
+/**
+ * Cited from SIMPLE §S5. m7.out is not in this repository.
+ * 480 is that citation's max, not a verifier cap. An independent count
+ * of random 1,024-key trees saw a 544-byte proof.
+ */
 export const CITED_PROOF_BYTES = Object.freeze({
   source: 'SIMPLE §S5',
   m7_out: 'not in this repository',
@@ -83,4 +93,5 @@ export const CITED_PROOF_BYTES = Object.freeze({
   mean: 363,
   maxLow: 448,
   maxHigh: 480,
+  observedTail: 544,
 });

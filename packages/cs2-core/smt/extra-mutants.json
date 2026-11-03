@@ -1,0 +1,155 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": ["node", "--test", "--test-concurrency=1", "packages/cs2-core/smt/smt.test.mjs"]
+  },
+  "mutants": [
+    {
+      "id": "D01_no_backward_branch",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (forward.extends) return { ok: true, equivocation: false };\n  return { ok: true, equivocation: true, reason: 'rule_5' };",
+      "replace": "  if (forward.extends) return { ok: true, equivocation: false };\n  const backward = extendsHistory(later.value, earlier.value);\n  if (backward.ok && backward.extends) return { ok: true, equivocation: false };\n  return { ok: true, equivocation: true, reason: 'rule_5' };",
+      "note": "a rollback is accepted because either history may extend the other"
+    },
+    {
+      "id": "D02_revoke_backdate",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "const afterPrev = block > epoch.prevAnchorBlock;",
+      "replace": "const afterPrev = true;",
+      "note": "an admission block may precede the previous anchor"
+    },
+    {
+      "id": "D03_revoke_at_validfrom",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (record.block <= key.validFrom) return 'rule_2';",
+      "replace": "if (record.block < key.validFrom) return 'rule_2';",
+      "note": "a revocation in the registration block is accepted"
+    },
+    {
+      "id": "D04_by_byte",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (by !== 1 && by !== 2) return null;\n",
+      "replace": "",
+      "note": "revoke by-byte 3..255 decodes"
+    },
+    {
+      "id": "D05_reregister_same_key",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "      if (equalBytes(key.key, record.key)) return 'rule_2';\n",
+      "replace": "",
+      "note": "revoked key re-registered in same slot"
+    },
+    {
+      "id": "D06_epoch_chain",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "    if (chainId !== tree.epoch.chainId) return fail('bad_epoch');\n",
+      "replace": "",
+      "note": "epoch slot switches chain"
+    },
+    {
+      "id": "D07_alg_check",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (!isAllowedAlg(record.alg)) return 'rule_4';\n",
+      "replace": "",
+      "note": "any alg byte accepted"
+    },
+    {
+      "id": "D08_status_kind",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (view.kind !== KIND_PAYTO) return { ok: false, reason: 'bad_kind', status: KEY_STATUS_UNPROVEN, killed: false };",
+      "replace": "  if (false) return { ok: false, reason: 'bad_kind', status: KEY_STATUS_UNPROVEN, killed: false };",
+      "note": "keyStatus on a wallet slot"
+    },
+    {
+      "id": "D09_idlen_byte",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (idLen === null || bytes[10] !== idLen) return fail('bad_kind');",
+      "replace": "  if (idLen === null) return fail('bad_kind');",
+      "note": "idLen byte unchecked"
+    },
+    {
+      "id": "D10_leave_without_join",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (state.active === null && !state.stopped) return 'rule_2';\n",
+      "replace": "",
+      "note": "leave with no active book"
+    },
+    {
+      "id": "D11_stop_without_active",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (state.active === null || state.stopped) return 'rule_2';",
+      "replace": "    if (state.stopped) return 'rule_2';",
+      "note": "STOP with no active book"
+    },
+    {
+      "id": "D12_cross_self_only",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  return selfOk && otherOk;",
+      "replace": "  return selfOk;",
+      "note": "cross needs only self"
+    },
+    {
+      "id": "D13_cross_other_only",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  return selfOk && otherOk;",
+      "replace": "  return otherOk;",
+      "note": "cross needs only other"
+    },
+    {
+      "id": "D14_unique_id",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (!reason && seen.has(idHex)) reason = 'rule_1';\n",
+      "replace": "",
+      "note": "duplicate record id accepted"
+    },
+    {
+      "id": "D15_block_kind_reg",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (decoded.kind !== KIND_PAYTO) return 'rule_4';\n    if (!isAllowedAlg",
+      "replace": "    if (!isAllowedAlg",
+      "note": "register in a wallet slot"
+    },
+    {
+      "id": "D16_proof_root_len",
+      "file": "packages/cs2-core/smt/tree.mjs",
+      "find": "  if (root.length !== 32) return { ok: false, reason: 'bad_length' };",
+      "replace": "  if (false && root.length !== 32) return { ok: false, reason: 'bad_length' };",
+      "note": "root length unchecked"
+    },
+    {
+      "id": "D17_low_s_equal",
+      "file": "packages/cs2-core/smt/sig.mjs",
+      "find": "  if (s > curve.order / 2n) return null;",
+      "replace": "  if (s > curve.order) return null;",
+      "note": "high-S accepted (both curves)"
+    },
+    {
+      "id": "D18_parity_27",
+      "file": "packages/cs2-core/smt/sig.mjs",
+      "find": "  if (v === 27 || v === 28) return v - 27;\n",
+      "replace": "",
+      "note": "27/28 refused"
+    },
+    {
+      "id": "D19_status_chain",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (!equalBytes(query.transferTo, view.id)) return unproven;",
+      "replace": "  if (false) return unproven;",
+      "note": "transfer-to unchecked"
+    },
+    {
+      "id": "D20_record_count_cap",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (count > MAX_RECORDS) return fail('bad_size');",
+      "replace": "  if (false) return fail('bad_size');",
+      "note": "record cap removed"
+    },
+    {
+      "id": "D21_wallet_kind_join",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (decoded.kind !== KIND_WALLET) return 'rule_4';\n    if (!verifyWalletJoin",
+      "replace": "    if (!verifyWalletJoin",
+      "note": "join in a payTo slot"
+    }
+  ]
+}

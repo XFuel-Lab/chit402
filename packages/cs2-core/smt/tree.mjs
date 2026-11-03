@@ -7,8 +7,9 @@
  *   empty = emptyHash(d), and past that module's depth cap the same
  *           recurrence: blank(d+1) = node(blank(d), blank(d)), blank(0) = H(0x02 ‖ "empty").
  *
- * A compressed proof is 32 bytes of bitmap plus the non-empty siblings
- * (SIMPLE §S5). Bit depth of the key (0 = MSB, the root) is set when that
+ * A compressed proof is 32 bytes of bitmap plus the non-empty siblings.
+ * Proof length is not capped at 480 bytes. Bit depth of the key (0 = MSB,
+ * the root) is set when that
  * level's sibling is not the blank hash of the child height. Siblings are
  * stored in increasing depth, root toward the leaf. A set bit whose sibling
  * is blank is not a canonical proof.
@@ -232,7 +233,8 @@ export function verifyProof(key, value, proof, root) {
   if (!(key instanceof Uint8Array) || key.length !== 32) return { ok: false, reason: 'bad_key' };
   if (value !== null && !(value instanceof Uint8Array)) return { ok: false, reason: 'bad_value' };
   if (!(proof instanceof Uint8Array)) return { ok: false, reason: 'bad_proof' };
-  if (!(root instanceof Uint8Array) || root.length !== 32) return { ok: false, reason: 'bad_proof' };
+  if (!(root instanceof Uint8Array)) return { ok: false, reason: 'bad_proof' };
+  if (root.length !== 32) return { ok: false, reason: 'bad_length' };
   if (proof.length < PROOF_BITMAP_BYTES) return { ok: false, reason: 'bad_proof' };
   const rest = proof.length - PROOF_BITMAP_BYTES;
   if (rest % 32 !== 0) return { ok: false, reason: 'bad_proof' };
