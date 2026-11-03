@@ -13,14 +13,25 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commitments, encodeLine, HEADER_BYTE_0, HEADER_BYTE_1, LINE_BYTES, USED_BYTES } from '../line/index.mjs';
 import { SAMPLE } from '../line/sample.mjs';
+import { chacha20 } from '@noble/ciphers/chacha.js';
+import { poly1305 } from '@noble/ciphers/_poly1305.js';
+import { expand, extract } from '@noble/hashes/hkdf.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { x25519 } from '@noble/curves/ed25519.js';
+import { readOpenAttempts, resetOpenAttempts } from './core.js';
 import {
   DUMMY_RECIPIENT_PK,
   DK_BYTES,
+  HEADER_BYTE_0 as sealHeader0,
+  HEADER_BYTE_1 as sealHeader1,
+  LINE_BYTES as sealLineBytes,
   LINE_CT_BYTES,
   REASONS,
   SEALED_BYTES,
   SLOT_BYTES,
   SLOT_COUNT,
+  USED_BYTES as sealUsedBytes,
   dkCommitment,
   lineLeaf,
   openLine,
@@ -33,6 +44,8 @@ import {
   MODE_AUTH_PSK,
   MODE_BASE,
   MODE_PSK,
+  aeadOpen,
+  aeadSeal,
   computeNonce,
   contextExport,
   contextOpen,
@@ -41,11 +54,10 @@ import {
   sealBase,
   setupR,
   setupS,
+  zeroDhRejected,
 } from './hpke.js';
-import { aeadOpen, aeadSeal, chacha20Block, poly1305 } from './vendor/chacha20poly1305.js';
-import { hkdfExpand, hkdfExtract, hmacSha256 } from './vendor/hkdf.js';
-import { sha256 } from './vendor/sha256.js';
-import { x25519, x25519Public } from './vendor/x25519.js';
+import { sealLineWithSeed } from './vector.js';
+import * as sealApi from './index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -55,6 +67,25 @@ function hex(bytes) {
 
 function fromHex(value) {
   return Uint8Array.from(Buffer.from(value, 'hex'));
+}
+
+const x25519Public = (sk) => x25519.getPublicKey(sk);
+const x25519Mul = (scalar, u) => x25519.scalarMult(scalar, u);
+
+function hmacSha256(key, msg) {
+  return hmac(sha256, key, msg);
+}
+
+function hkdfExtract(salt, ikm) {
+  return extract(sha256, ikm, salt.length === 0 ? undefined : salt);
+}
+
+function hkdfExpand(prk, info, length) {
+  return expand(sha256, prk, info, length);
+}
+
+function chacha20Block(key, counter, nonce) {
+  return chacha20(key, nonce, new Uint8Array(64), undefined, counter);
 }
 
 function nodeSha256(...parts) {
@@ -100,7 +131,7 @@ const ESK = [fromHex('50'.repeat(32)), fromHex('60'.repeat(32))];
 function repeatSeal(line, recoverySk = RECOVERY_SK) {
   const bookPk = x25519Public(BOOK_SK);
   const recoveryPk = recoverySk ? x25519Public(recoverySk) : null;
-  return sealLine(line, bookPk, recoveryPk, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] });
+  return sealLineWithSeed(line, bookPk, recoveryPk, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] });
 }
 
 test('sha256 and hkdf match the published digests', () => {
@@ -152,7 +183,7 @@ test('RFC 8439 ChaCha20, Poly1305, and AEAD vectors', () => {
 
   const polyKey = fromHex('85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b');
   const msg = new TextEncoder().encode('Cryptographic Forum Research Group');
-  assert.equal(hex(poly1305(polyKey, msg)), 'a8061dc1305136c6c22b8baf0c0127a9');
+  assert.equal(hex(poly1305(msg, polyKey)), 'a8061dc1305136c6c22b8baf0c0127a9');
 
   const macKey = fromHex('808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f');
   const macNonce = fromHex('000000000001020304050607');
@@ -186,8 +217,8 @@ test('RFC 7748 X25519 vectors', () => {
   const bob = fromHex('5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb');
   assert.equal(hex(x25519Public(alice)), '8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a');
   assert.equal(hex(x25519Public(bob)), 'de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f');
-  assert.equal(hex(x25519(alice, x25519Public(bob))), '4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742');
-  assert.equal(hex(x25519(bob, x25519Public(alice))), '4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742');
+  assert.equal(hex(x25519Mul(alice, x25519Public(bob))), '4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742');
+  assert.equal(hex(x25519Mul(bob, x25519Public(alice))), '4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742');
 
   const pairs = [
     [
@@ -202,13 +233,13 @@ test('RFC 7748 X25519 vectors', () => {
     ],
   ];
   for (const [scalar, u, out] of pairs) {
-    assert.equal(hex(x25519(fromHex(scalar), fromHex(u))), out);
+    assert.equal(hex(x25519Mul(fromHex(scalar), fromHex(u))), out);
   }
 
   let k = fromHex(`09${'00'.repeat(31)}`);
   let u = fromHex(`09${'00'.repeat(31)}`);
   for (let i = 0; i < 1000; i += 1) {
-    const next = x25519(k, u);
+    const next = x25519Mul(k, u);
     if (i === 0) {
       assert.equal(hex(next), '422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079');
     }
@@ -324,13 +355,26 @@ test('vendored primitives are hash-pinned and free of Node-only crypto', () => {
   const pins = JSON.parse(readFileSync(join(HERE, 'vendor/PINS.json'), 'utf8'));
   assert.equal(pins.schema, 'chit402.cs2.seal.vendor-pins.v1');
   assert.equal(pins.alg, 'sha256');
-  const names = Object.keys(pins.files).sort();
-  assert.deepEqual(names, ['chacha20poly1305.js', 'hkdf.js', 'sha256.js', 'x25519.js']);
-  for (const name of names) {
-    const bytes = readFileSync(join(HERE, 'vendor', name));
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), pins.files[name], name);
+  const packages = [...pins.packages].sort((a, b) => a.name.localeCompare(b.name));
+  assert.deepEqual(packages.map((pkg) => `${pkg.name}@${pkg.version}`), [
+    '@noble/ciphers@2.4.0',
+    '@noble/curves@2.4.0',
+    '@noble/hashes@2.4.0',
+  ]);
+  for (const pkg of packages) {
+    assert.match(pkg.integrity, /^sha512-[A-Za-z0-9+/]+=*$/);
+    assert.match(pkg.tarball_sha256, /^[0-9a-f]{64}$/);
   }
-  const files = ['index.js', 'hpke.js', ...names.map((name) => join('vendor', name))];
+  const names = Object.keys(pins.files).sort();
+  assert.deepEqual(names, Object.keys(pins.files).slice().sort());
+  for (const name of names) {
+    const bytes = new Uint8Array(readFileSync(join(HERE, name)));
+    assert.equal(hex(sha256(bytes)), pins.files[name], name);
+    const text = new TextDecoder().decode(bytes);
+    assert.equal(/from\s+['"]node:/.test(text), false, name);
+    assert.equal(/require\s*\(/.test(text), false, name);
+  }
+  const glue = ['index.js', 'core.js', 'hpke.js', 'vector.js'];
   const banned = [
     /node:/,
     /require\s*\(/,
@@ -344,16 +388,19 @@ test('vendored primitives are hash-pinned and free of Node-only crypto', () => {
     /\.\.\/ecdsa/,
     /\.\.\/smt/,
   ];
-  for (const file of files) {
+  for (const file of glue) {
     const text = readFileSync(join(HERE, file), 'utf8');
     for (const pattern of banned) assert.equal(pattern.test(text), false, `${file} ${pattern}`);
   }
-  const vendorDir = readdirSync(join(HERE, 'vendor')).filter((name) => name.endsWith('.js')).sort();
-  assert.deepEqual(vendorDir, names);
+  assert.equal(readdirSync(join(HERE, 'vendor')).includes('PINS.json'), true);
 });
 
 test('seal constants match the line codec layout', () => {
   assert.equal(LINE_BYTES, 1024);
+  assert.equal(sealLineBytes, LINE_BYTES);
+  assert.equal(sealHeader0, HEADER_BYTE_0);
+  assert.equal(sealHeader1, HEADER_BYTE_1);
+  assert.equal(sealUsedBytes, USED_BYTES);
   assert.equal(HEADER_BYTE_0, 0x63);
   assert.equal(HEADER_BYTE_1, 0x32);
   assert.equal(USED_BYTES, 803);
@@ -377,7 +424,7 @@ test('golden seal vectors open and match the committed blob', () => {
     assert.equal(hex(bookPk), row.book_pk);
     const recoveryPk = row.recovery_sk ? x25519Public(fromHex(row.recovery_sk)) : null;
     if (recoveryPk) assert.equal(hex(recoveryPk), row.recovery_pk);
-    const sealed = sealLine(line, bookPk, recoveryPk, {
+    const sealed = sealLineWithSeed(line, bookPk, recoveryPk, {
       dk: fromHex(row.dk),
       esk: [fromHex(row.esk0), fromHex(row.esk1)],
     });
@@ -390,7 +437,7 @@ test('golden seal vectors open and match the committed blob', () => {
     const opened = openLine(sealed.sealed, fromHex(row.book_sk), 0);
     assert.equal(opened.ok, true);
     assert.equal(hex(opened.line), hex(line));
-    const again = sealLine(line, bookPk, recoveryPk, {
+    const again = sealLineWithSeed(line, bookPk, recoveryPk, {
       dk: fromHex(row.dk),
       esk: [fromHex(row.esk0), fromHex(row.esk1)],
     });
@@ -420,7 +467,7 @@ test('the sealed blob is a constant 1,200 bytes', () => {
 test('wrong key, swapped slot, swapped ciphertext, and truncated blob fail closed', () => {
   const line = sampleLine();
   const sealed = repeatSeal(line);
-  const other = sealLine(otherLine(), x25519Public(BOOK_SK), x25519Public(RECOVERY_SK), {
+  const other = sealLineWithSeed(otherLine(), x25519Public(BOOK_SK), x25519Public(RECOVERY_SK), {
     dk: fromHex('45'.repeat(32)),
     esk: [fromHex('55'.repeat(32)), fromHex('65'.repeat(32))],
   });
@@ -509,7 +556,7 @@ test('errors and logs carry no plaintext, key, or length', () => {
       openLine(sealed.sealed, BOOK_SK, 2),
       sealLine(line.subarray(0, 100), x25519Public(BOOK_SK), null),
       sealLine('line', x25519Public(BOOK_SK), null),
-      sealLine(line, new Uint8Array(32), null, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] }),
+      sealLine(line, new Uint8Array(32), null),
     ];
     for (const result of failures) {
       assert.equal(result.ok, false);
@@ -521,7 +568,7 @@ test('errors and logs carry no plaintext, key, or length', () => {
     for (const name of names) console[name] = previous[name];
   }
 
-  const fresh = sealLine(line, x25519Public(BOOK_SK), x25519Public(RECOVERY_SK), {
+  const fresh = sealLineWithSeed(line, x25519Public(BOOK_SK), x25519Public(RECOVERY_SK), {
     dk: DK.slice(),
     esk: [ESK[0].slice(), ESK[1].slice()],
   });
@@ -580,7 +627,7 @@ test('a missing recovery key still uses two slots and the dummy recipient', () =
 test('slot index is bound into the wrap, so identical recipients cannot be swapped', () => {
   const line = sampleLine();
   const bookPk = x25519Public(BOOK_SK);
-  const sealed = sealLine(line, bookPk, bookPk, {
+  const sealed = sealLineWithSeed(line, bookPk, bookPk, {
     dk: DK.slice(),
     esk: [ESK[0].slice(), ESK[1].slice()],
   });
@@ -601,16 +648,16 @@ test('a line that is not the fixed layout is rejected without echoing it', () =>
   const bookPk = x25519Public(BOOK_SK);
   const badHeader = line.slice();
   badHeader[0] = 0;
-  const header = sealLine(badHeader, bookPk, null, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] });
+  const header = sealLineWithSeed(badHeader, bookPk, null, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] });
   assertClosed(header, 'bad_header');
   assertNoMaterial(header, [badHeader, DK]);
   const badSecond = line.slice();
   badSecond[1] = 0;
-  assertClosed(sealLine(badSecond, bookPk, null, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] }), 'bad_header');
+  assertClosed(sealLineWithSeed(badSecond, bookPk, null, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] }), 'bad_header');
 
   const badPad = line.slice();
   badPad[900] = 1;
-  const pad = sealLine(badPad, bookPk, null, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] });
+  const pad = sealLineWithSeed(badPad, bookPk, null, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] });
   assertClosed(pad, 'bad_padding');
   assert.equal(JSON.stringify(pad).includes('900'), false);
 
@@ -672,12 +719,117 @@ test('bad inputs stay inside the fixed reason set', () => {
   assertClosed(sealLine(new Uint8Array(1200), bookPk, null), 'bad_length');
   assertClosed(sealLine(line, bookPk, fromHex('aa')), 'bad_key');
   assertClosed(sealLine(line, bookPk, null, null), 'bad_type');
-  assertClosed(sealLine(line, bookPk, null, { dk: new Uint8Array(32), esk: [ESK[0].slice(), ESK[1].slice()] }), 'bad_key');
-  assertClosed(sealLine(line, bookPk, null, { dk: DK.slice(), esk: [ESK[0]] }), 'bad_type');
+  assertClosed(sealLine(line, bookPk, null, { dk: DK.slice(), esk: [ESK[0].slice(), ESK[1].slice()] }), 'bad_type');
+  assertClosed(sealLineWithSeed(line, bookPk, null, { dk: new Uint8Array(32), esk: [ESK[0].slice(), ESK[1].slice()] }), 'bad_key');
+  assertClosed(sealLineWithSeed(line, bookPk, null, { dk: DK.slice(), esk: [ESK[0]] }), 'bad_type');
   assertClosed(openLine(new Uint8Array(1200), BOOK_SK, 0), 'open_failed');
   assertClosed(openLine(new Uint8Array(1200), BOOK_SK, 2), 'bad_type');
   assertClosed(openLine('blob', BOOK_SK, 0), 'bad_type');
   assertClosed(dkCommitment(fromHex('aa')), 'bad_key');
   assertClosed(sealedCommitment(new Uint8Array(1199)), 'bad_length');
   assertClosed(lineLeaf(new Uint8Array(31), new Uint8Array(1200), DK), 'bad_key');
+  assert.equal(Object.hasOwn(sealApi, 'sealLineWithSeed'), false);
+  assert.equal(Object.hasOwn(sealApi, 'readOpenAttempts'), false);
+});
+
+function xorBytes(a, b) {
+  const out = new Uint8Array(Math.min(a.length, b.length));
+  for (let i = 0; i < out.length; i += 1) out[i] = a[i] ^ b[i];
+  return out;
+}
+
+function encAt(sealed, slot) {
+  const at = 1040 + (slot * 80);
+  return sealed.slice(at, at + 32);
+}
+
+test('fresh seals do not reuse dk, ephemeral keys, or keystream', () => {
+  const bookPk = x25519Public(BOOK_SK);
+  const recoveryPk = x25519Public(RECOVERY_SK);
+  const line = sampleLine();
+  const first = sealLine(line, bookPk, recoveryPk);
+  const second = sealLine(line, bookPk, recoveryPk);
+  assert.equal(first.ok && second.ok, true);
+  assert.equal(first.sealed.length, 1200);
+  assert.notEqual(hex(first.sealed.subarray(0, 1040)), hex(second.sealed.subarray(0, 1040)));
+  assert.notEqual(hex(first.dkCommitment), hex(second.dkCommitment));
+  const encs = [encAt(first.sealed, 0), encAt(first.sealed, 1), encAt(second.sealed, 0), encAt(second.sealed, 1)];
+  const distinct = new Set(encs.map(hex));
+  assert.equal(distinct.size, 4);
+  assert.notEqual(hex(encs[0]), hex(encs[1]));
+  assert.notEqual(hex(encs[2]), hex(encs[3]));
+  const opened = openLine(first.sealed, BOOK_SK, 0);
+  assert.equal(opened.ok, true);
+  assert.equal(hex(opened.dkCommitment), hex(first.dkCommitment));
+  assert.equal(Object.hasOwn(opened, 'line'), true);
+
+  const other = sealLine(otherLine(), bookPk, recoveryPk);
+  assert.equal(other.ok, true);
+  const ctXor = xorBytes(first.sealed.subarray(0, 1024), other.sealed.subarray(0, 1024));
+  const lineXor = xorBytes(line, otherLine());
+  assert.notEqual(hex(ctXor), hex(lineXor));
+
+  const cryptoObj = globalThis.crypto;
+  const saved = cryptoObj.getRandomValues;
+  cryptoObj.getRandomValues = (buf) => {
+    buf.fill(7);
+    return buf;
+  };
+  try {
+    const left = sealLine(line, bookPk, recoveryPk);
+    const right = sealLine(line, bookPk, recoveryPk);
+    assert.equal(left.ok && right.ok, true);
+    assert.equal(hex(left.sealed), hex(right.sealed));
+    assert.equal(hex(encAt(left.sealed, 0)), hex(encAt(left.sealed, 1)));
+  } finally {
+    cryptoObj.getRandomValues = saved;
+  }
+});
+
+test('openLineAny always opens both slots', () => {
+  const sealed = sealLine(sampleLine(), x25519Public(BOOK_SK), x25519Public(RECOVERY_SK));
+  assert.equal(sealed.ok, true);
+  resetOpenAttempts();
+  const opened = openLineAny(sealed.sealed, BOOK_SK);
+  assert.equal(opened.ok, true);
+  assert.equal(opened.slot, 0);
+  assert.equal(hex(opened.dkCommitment), hex(sealed.dkCommitment));
+  assert.equal(readOpenAttempts(), 2);
+  resetOpenAttempts();
+  const recovery = openLineAny(sealed.sealed, RECOVERY_SK);
+  assert.equal(recovery.ok, true);
+  assert.equal(recovery.slot, 1);
+  assert.equal(readOpenAttempts(), 2);
+});
+
+test('receiver-side zero-DH check refuses low-order encapsulated keys', () => {
+  assert.equal(zeroDhRejected(new Uint8Array(32)), true);
+  assert.equal(zeroDhRejected(null), true);
+  assert.equal(zeroDhRejected(Uint8Array.of(1)), false);
+  const probe = deriveKeyPair(fromHex('09'.repeat(32)));
+  assert.equal(probe.ok, true);
+  const P = (1n << 255n) - 19n;
+  const points = [
+    0n,
+    1n,
+    P - 1n,
+    325606250916557431795983626356110631294008115727848805560023387167927233504n,
+    39382357235489614581723060781553021112529911719440698176882885853963445705823n,
+    P,
+    P + 1n,
+  ];
+  for (const point of points) {
+    const enc = new Uint8Array(32);
+    let value = point;
+    for (let i = 0; i < 32; i += 1) {
+      enc[i] = Number(value & 0xffn);
+      value >>= 8n;
+    }
+    let result;
+    assert.doesNotThrow(() => {
+      result = setupR({ mode: MODE_BASE, enc, skR: probe.sk, info: new Uint8Array(0) });
+    });
+    assertClosed(result, 'open_failed');
+    assertNoMaterial(result, [probe.sk, enc]);
+  }
 });

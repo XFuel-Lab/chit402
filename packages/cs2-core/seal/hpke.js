@@ -9,9 +9,10 @@
  * Failure is { ok: false, reason } and carries no key, plaintext, or length.
  */
 
-import { aeadOpen, aeadSeal } from './vendor/chacha20poly1305.js';
-import { hkdfExpand, hkdfExtract } from './vendor/hkdf.js';
-import { x25519, x25519Public } from './vendor/x25519.js';
+import { chacha20poly1305 } from '@noble/ciphers/chacha.js';
+import { expand, extract } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { x25519 } from '@noble/curves/ed25519.js';
 
 export const KEM_ID = 0x0020;
 export const KDF_ID = 0x0001;
@@ -61,25 +62,62 @@ function fail(reason) {
   return { ok: false, reason };
 }
 
+export function aeadSeal(key, nonce, aad, pt) {
+  try {
+    return chacha20poly1305(key, nonce, aad).encrypt(pt);
+  } catch {
+    return null;
+  }
+}
+
+export function aeadOpen(key, nonce, aad, data) {
+  try {
+    return chacha20poly1305(key, nonce, aad).decrypt(data);
+  } catch {
+    return null;
+  }
+}
+
 function labeledExtract(suite, salt, label, ikm) {
-  return hkdfExtract(salt, concat([HPKE_V1, suite, ascii(label), ikm]));
+  const labeled = concat([HPKE_V1, suite, ascii(label), ikm]);
+  const usedSalt = salt.length === 0 ? undefined : salt;
+  return extract(sha256, labeled, usedSalt);
 }
 
 function labeledExpand(suite, prk, label, info, length) {
   const labeled = concat([u16(length), HPKE_V1, suite, ascii(label), info]);
-  return hkdfExpand(prk, labeled, length);
+  const out = expand(sha256, prk, labeled, length);
+  return out ? out.slice() : out;
+}
+
+/**
+ * Receiver-side zero-DH check. A low-order peer point makes the shared
+ * secret all zeros. noble throws on those points before the ladder, and
+ * this predicate also refuses an all-zero output. The open path maps
+ * either refusal to one failure reason.
+ */
+export function zeroDhRejected(shared) {
+  return shared == null || isZero(shared);
 }
 
 function dh(sk, pk) {
-  const out = x25519(sk, pk);
-  if (!out || isZero(out)) return null;
-  return out;
+  try {
+    const shared = x25519.getSharedSecret(sk, pk);
+    if (zeroDhRejected(shared)) {
+      if (shared) shared.fill(0);
+      return null;
+    }
+    return shared;
+  } catch {
+    return null;
+  }
 }
 
 function extractAndExpand(sharedDh, kemContext) {
   const eae = labeledExtract(SUITE_KEM, new Uint8Array(0), 'eae_prk', sharedDh);
   const secret = labeledExpand(SUITE_KEM, eae, 'shared_secret', kemContext, NSECRET);
   eae.fill(0);
+  sharedDh.fill(0);
   return secret;
 }
 
@@ -94,7 +132,7 @@ export function deriveKeyPair(ikm) {
   const sk = labeledExpand(SUITE_KEM, prk, 'sk', new Uint8Array(0), 32);
   prk.fill(0);
   if (!sk) return fail('bad_key');
-  const pk = x25519Public(sk);
+  const pk = x25519.getPublicKey(sk);
   if (!pk) return fail('bad_key');
   return { ok: true, sk, pk };
 }
@@ -102,7 +140,7 @@ export function deriveKeyPair(ikm) {
 function encapWith(pkR, skE, skS) {
   if (!(pkR instanceof Uint8Array) || pkR.length !== 32) return fail('bad_key');
   if (!(skE instanceof Uint8Array) || skE.length !== 32) return fail('bad_key');
-  const pkE = x25519Public(skE);
+  const pkE = x25519.getPublicKey(skE);
   if (!pkE) return fail('bad_key');
   const dhER = dh(skE, pkR);
   if (!dhER) {
@@ -112,10 +150,19 @@ function encapWith(pkR, skE, skS) {
   let kemContext;
   let sharedDh;
   if (skS) {
-    if (!(skS instanceof Uint8Array) || skS.length !== 32) return fail('bad_key');
-    const pkS = x25519Public(skS);
+    if (!(skS instanceof Uint8Array) || skS.length !== 32) {
+      dhER.fill(0);
+      pkE.fill(0);
+      return fail('bad_key');
+    }
+    const pkS = x25519.getPublicKey(skS);
     const dhSR = dh(skS, pkR);
-    if (!pkS || !dhSR) return fail('bad_key');
+    if (!pkS || !dhSR) {
+      dhER.fill(0);
+      if (dhSR) dhSR.fill(0);
+      pkE.fill(0);
+      return fail('bad_key');
+    }
     sharedDh = concat([dhER, dhSR]);
     kemContext = concat([pkE, pkR, pkS]);
     dhSR.fill(0);
@@ -132,7 +179,7 @@ function encapWith(pkR, skE, skS) {
 function decapWith(enc, skR, pkS) {
   if (!(enc instanceof Uint8Array) || enc.length !== 32) return fail('bad_key');
   if (!(skR instanceof Uint8Array) || skR.length !== 32) return fail('bad_key');
-  const pkR = x25519Public(skR);
+  const pkR = x25519.getPublicKey(skR);
   const dhRE = dh(skR, enc);
   if (!pkR || !dhRE) return fail('open_failed');
   let sharedDh;
