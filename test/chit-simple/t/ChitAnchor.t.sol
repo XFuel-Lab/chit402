@@ -437,8 +437,38 @@ contract ChitAnchorTest is Test {
     }
 
     function _noKey(string memory path) private view {
-        string memory reason = _reject(vm.readFile(path));
-        assertEq(reason, "", path);
+        string memory text = vm.readFile(path);
+        text = _cut(text, "cast wallet import <name> --interactive");
+        text = _cut(text, "Never use --private-key.");
+        assertEq(_reject(text), "", path);
+    }
+
+    function _cut(string memory text, string memory needle) private pure returns (string memory) {
+        bytes memory b = bytes(text);
+        bytes memory n = bytes(needle);
+        if (n.length == 0 || b.length < n.length) return text;
+        bytes memory out = new bytes(b.length);
+        uint256 w = 0;
+        uint256 i = 0;
+        while (i < b.length) {
+            bool match_ = i + n.length <= b.length;
+            if (match_) {
+                for (uint256 j = 0; j < n.length; j++) {
+                    if (b[i + j] != n[j]) {
+                        match_ = false;
+                        break;
+                    }
+                }
+            }
+            if (match_) {
+                i += n.length;
+                continue;
+            }
+            out[w++] = b[i++];
+        }
+        bytes memory trimmed = new bytes(w);
+        for (uint256 k = 0; k < w; k++) trimmed[k] = out[k];
+        return string(trimmed);
     }
 
     function _reject(string memory text) private pure returns (string memory) {

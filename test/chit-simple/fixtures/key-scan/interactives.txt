@@ -1,1 +1,1 @@
-cast wallet import name --interactives
+forge script DeployChitAnchor.s.sol --interactives

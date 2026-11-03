@@ -33,7 +33,13 @@ node print-runtime.mjs <deployer> <nonce> <checkpoint>
 forge script DeployChitAnchor.s.sol:DeployChitAnchor --rpc-url <base-sepolia-rpc> --sender <deployer-address>
 ```
 
-7. Import the dedicated testnet deployer key into an encrypted Foundry keystore at the prompt (`cast wallet import <name>`), or use a hardware wallet. The import takes no key on the command line.
+7. Import the dedicated testnet deployer key into an encrypted Foundry keystore. Never use --private-key. That flag puts the key on the command line and in shell history. The import uses a hidden prompt and writes an encrypted keystore:
+
+```
+cast wallet import <name> --interactive
+```
+
+A hardware wallet is the other path.
 8. Broadcast with that account:
 
 ```
@@ -47,11 +53,13 @@ A hardware wallet uses `--ledger` in place of `--account <name>`.
 node check-deploy.mjs <deployed-address>
 ```
 
-The command exits nonzero unless `checkpoint()` is that address, `checkpointVersion()` is 1, the code hash matches, and the single rotation event is the genesis event (version 1, old address zero, new address the checkpoint). Stop on any mismatch.
-10. Verify the source on chain 84532. Run this from `deploy/chit-simple/sepolia-pack`. `--root .` selects this directory's Foundry profile: solc 0.8.24, Cancun, via IR, optimizer 200, `bytecode_hash` none, CBOR metadata off. Put the explorer API key in `ETHERSCAN_API_KEY` or in a gitignored Foundry config. Do not pass `--etherscan-api-key` or any other key flag on the command line.
+The script reads `BASE_SEPOLIA_RPC_URL` and passes it to `cast` as `ETH_RPC_URL`. It does not put the URL on the command line. The command exits nonzero unless the receipt succeeded and its contract address is the deployed address, `checkpoint()` is the checkpoint you set, `checkpointVersion()` is 1, the code hash matches, and the single rotation event emitted by that contract is the genesis event (version 1, old address zero, new address the checkpoint). Stop on any mismatch.
+10. Verify the source on chain 84532. Run this from `deploy/chit-simple/sepolia-pack`. `--root .` selects this directory's Foundry profile: solc 0.8.24, Cancun, via IR, optimizer 200, `bytecode_hash` none, CBOR metadata off. Read the explorer API key with a hidden prompt. The key stays in the environment. It never goes in argv, and it never goes in the tracked `foundry.toml`. Do not pass `--etherscan-api-key` or any other key flag on the command line.
 
 ```
+read -rs ETHERSCAN_API_KEY; export ETHERSCAN_API_KEY
 forge verify-contract --root . --chain 84532 --compiler-version 0.8.24 --optimizer-runs 200 --via-ir --evm-version cancun --constructor-args "$(cast abi-encode "constructor(address)" "$CHIT_ANCHOR_CHECKPOINT")" --watch <deployed-address> ../../../contracts/chit-simple/ChitAnchor.sol:ChitAnchor
+unset ETHERSCAN_API_KEY
 ```
 
 STOP unless the match is exact. Gas for `anchor` is in `gas-snapshot.txt`.

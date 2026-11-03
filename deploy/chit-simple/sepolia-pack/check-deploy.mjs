@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const ROTATION_TOPIC = '0x95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3';
+export const ROTATION_TOPIC = '0x95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3';
 
 export function decodeRotation(data) {
   const hex = String(data || '').toLowerCase().replace(/^0x/, '');
@@ -25,11 +25,26 @@ export function decodeRotation(data) {
   return { version, oldAddr, newAddr };
 }
 
-export function rotationLogs(payload) {
+export function receiptBinding(receipt, address) {
+  if (!receipt || typeof receipt !== 'object') return 'receipt is missing';
+  const status = receipt.status;
+  const ok = status === 1 || status === '0x1' || status === '0x01' || String(status) === '1';
+  if (!ok) return `receipt status ${status}`;
+  const created = String(receipt.contractAddress || '').toLowerCase();
+  if (created !== String(address || '').toLowerCase()) {
+    return `receipt contractAddress ${created} != ${address}`;
+  }
+  return '';
+}
+
+export function rotationLogs(payload, emitter) {
+  const want = String(emitter || '').toLowerCase();
   const logs = Array.isArray(payload) ? payload : (payload && payload.logs) || [];
   return logs.filter((log) => {
     const topics = log.topics || [];
-    return topics.length > 0 && topics[0].toLowerCase() === ROTATION_TOPIC;
+    if (!topics.length || String(topics[0]).toLowerCase() !== ROTATION_TOPIC) return false;
+    if (!want) return true;
+    return String(log.address || '').toLowerCase() === want;
   });
 }
 
@@ -38,8 +53,11 @@ function fail(message) {
   process.exit(1);
 }
 
-function cast(args) {
-  const result = spawnSync('cast', args, { encoding: 'utf8' });
+function cast(args, rpc) {
+  const result = spawnSync('cast', args, {
+    encoding: 'utf8',
+    env: { ...process.env, ETH_RPC_URL: rpc },
+  });
   if (result.status !== 0) {
     process.stderr.write(result.stderr || result.stdout || 'cast failed\n');
     process.exit(result.status || 1);
@@ -79,20 +97,25 @@ function main() {
     process.stderr.write('usage: BASE_SEPOLIA_RPC_URL=... CHIT_ANCHOR_CHECKPOINT=... node check-deploy.mjs <deployed-address>\n');
     process.exit(2);
   }
-  const onCheckpoint = cast(['call', address, 'checkpoint()(address)', '--rpc-url', rpc]).toLowerCase();
-  const version = BigInt(cast(['call', address, 'checkpointVersion()(uint64)', '--rpc-url', rpc]));
-  const code = cast(['code', address, '--rpc-url', rpc]);
-  const hash = cast(['keccak', code]).toLowerCase();
+  const onCheckpoint = cast(['call', address, 'checkpoint()(address)'], rpc).toLowerCase();
+  const version = BigInt(cast(['call', address, 'checkpointVersion()(uint64)'], rpc));
+  const code = cast(['code', address], rpc);
+  const hash = cast(['keccak', code], rpc).toLowerCase();
   const expected = expectedHash(checkpoint);
   if (onCheckpoint !== checkpoint) fail(`checkpoint() ${onCheckpoint} != ${checkpoint}`);
   if (version !== 1n) fail(`checkpointVersion() is ${version}, expected 1`);
   if (hash !== expected.hash) fail(`code hash ${hash} != ${expected.hash}`);
   if (expected.address && address !== expected.address) fail(`address ${address} != ${expected.address}`);
 
-  const raw = tx
-    ? cast(['receipt', tx, '--rpc-url', rpc, '--json'])
-    : cast(['logs', '--address', address, '--from-block', '0', ROTATION_TOPIC, '--rpc-url', rpc, '--json']);
-  const logs = rotationLogs(JSON.parse(raw));
+  let logs;
+  if (tx) {
+    const receipt = JSON.parse(cast(['receipt', tx, '--json'], rpc));
+    const binding = receiptBinding(receipt, address);
+    if (binding) fail(binding);
+    logs = rotationLogs(receipt, address);
+  } else {
+    logs = rotationLogs(JSON.parse(cast(['logs', '--address', address, '--from-block', '0', ROTATION_TOPIC, '--json'], rpc)), address);
+  }
   if (logs.length !== 1) fail(`expected one rotation event, found ${logs.length}`);
   const decoded = decodeRotation(logs[0].data);
   if (!decoded) fail('rotation event data is not three words');
