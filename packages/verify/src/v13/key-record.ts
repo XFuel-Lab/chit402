@@ -144,8 +144,8 @@ export function formatKeyHash(bytes: Uint8Array): string | null {
 /** SHA-256("chit402-state-v1" ‖ 0x05 ‖ chainId ‖ keyHash). chainId is 8 bytes. */
 export function keySlotKey(chainId: number, keyHash: Uint8Array, sha256: Sha): Uint8Array | null {
   if (!Number.isSafeInteger(chainId) || chainId < 0 || keyHash.length !== 32) return null;
-  const domain = new Uint8Array(17);
   const label = 'chit402-state-v1';
+  const domain = new Uint8Array(label.length);
   for (let i = 0; i < label.length; i += 1) domain[i] = label.charCodeAt(i);
   const chain = new Uint8Array(8);
   let value = BigInt(chainId);

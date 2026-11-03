@@ -1393,6 +1393,8 @@ test('key status needs both proofs, and a tombstone applies only forward', () =>
   assert.equal(parseKeyHash(`0x${'ab'.repeat(33)}`), null);
   const slot = keySlotKey(84532, parsed, sha256);
   assert.equal(slot.length, 32);
+  const literal = keySlotKey(8453, new Uint8Array(32).fill(0x33), sha256);
+  assert.equal(Buffer.from(literal).toString('hex'), 'e791917a7c2f11b2f7d6db4b211822aa63593fd8a7e3b0abdfee3ec180e62613');
   const registration = {
     admissionBlock: 90,
     expiry: 2_000_000_000n,
