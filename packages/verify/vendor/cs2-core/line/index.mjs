@@ -377,7 +377,7 @@ function requireAlg(alg) {
   return { ok: true };
 }
 
-function checkSigma(sigma64) {
+export function checkSigma(sigma64) {
   if (sigma64.length !== 64) return fail('bad_length');
   const r = readBe(sigma64, 0, 32);
   const s = readBe(sigma64, 32, 32);

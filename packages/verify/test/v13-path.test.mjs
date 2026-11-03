@@ -46,9 +46,10 @@ import {
   KEY_STATUS_SCHEMA,
   cachedAdmission,
   clearAdmissionCache,
+  TEST_VECTOR_KEY_HASH,
   keyStatus,
-  lowS,
   parseKeyHash,
+  readPayToSignatures,
   pointOnCurve,
   revokeByKeyDigest,
 } from '../dist/v13/key-record.js';
@@ -59,7 +60,7 @@ setDefaultResultOrder('ipv4first');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = new URL('../../cs2-core/', import.meta.url);
 const { leafHash, nodeHash } = await import(new URL('merkle/index.js', CORE));
-const { encodeLine, commitments, slotKey, stateLeaf, isAllowedAlg } = await import(new URL('line/index.mjs', CORE));
+const { encodeLine, commitments, slotKey, stateLeaf, isAllowedAlg, checkSigma } = await import(new URL('line/index.mjs', CORE));
 const { keccak256 } = await import(new URL('ecdsa/keccak.js', CORE));
 const { sha256 } = await import(new URL('sha256.js', CORE));
 const { P256 } = await import(new URL('ecdsa/curves.js', CORE));
@@ -1309,8 +1310,8 @@ test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecke
   high[31] = 1;
   const sHex = (P256.order - 1n).toString(16).padStart(64, '0');
   for (let i = 0; i < 32; i += 1) high[32 + i] = Number.parseInt(sHex.slice(i * 2, i * 2 + 2), 16);
-  assert.equal(lowS(low, P256.order), true);
-  assert.equal(lowS(high, P256.order), false);
+  assert.equal(checkSigma(low).ok, true);
+  assert.equal(checkSigma(high).ok, false);
   const digest = revokeByKeyDigest(keccak256, 84532, CONTRACT.slice(2), hash);
   assert.equal(digest.length, 32);
   const again = chitDomainSeparator(keccak256, 84532, CONTRACT.slice(2));
@@ -1440,13 +1441,22 @@ test('key status needs both proofs, and a tombstone applies only forward', () =>
     registration: { ...registration, admissionBlock: 120 },
     tombstone: { revokedAtBlock: 100, outOfBounds: false },
   }).reason, 'registered_after_tombstone');
-  assert.equal(keyStatus({ ...base, slotRevokeBlock: 100 }).reason, 'revoked');
-  assert.equal(keyStatus({ ...base, slotRevokeBlock: 150 }).exit, 0);
+  const sameHash = new Uint8Array(32).fill(9);
+  const otherHash = new Uint8Array(32).fill(8);
+  assert.equal(keyStatus({
+    ...base, slotRevokeBlock: 100, slotRevokeKeyHash: sameHash, registrationKeyHash: sameHash,
+  }).reason, 'revoked');
+  assert.equal(keyStatus({
+    ...base, slotRevokeBlock: 100, slotRevokeKeyHash: otherHash, registrationKeyHash: sameHash,
+  }).exit, 0);
+  assert.equal(keyStatus({ ...base, slotRevokeBlock: 150, slotRevokeKeyHash: sameHash, registrationKeyHash: sameHash }).exit, 0);
   assert.equal(keyStatus({
     ...base,
     block: 130,
     registration: { ...registration, admissionBlock: 120 },
     slotRevokeBlock: 100,
+    slotRevokeKeyHash: sameHash,
+    registrationKeyHash: sameHash,
   }).reason, 'registered_after_slot_revoke');
   assert.equal(keyStatus({
     ...base,
@@ -1500,7 +1510,7 @@ test('T4 the published PoP vector verifies low-S and rejects high-S', () => {
   const input = sha256(d);
   assert.equal(Buffer.from(input).toString('hex'), 'bb391415c05e39d77ca17381d3be3f7d0cd5e5332e5a579311adaa0aa62106e9');
   const sig = Buffer.from('2e238cb3c5b55330c113777a6695d5f94e5e4c3f2298dcdd397eb503c5c5c88938f10d7bce3aa35340558528143104c1f9c02ccba0be6026133ad4d15d7dc038', 'hex');
-  assert.equal(lowS(sig, P256.order), true);
+  assert.equal(checkSigma(sig).ok, true);
   assert.equal(pointOnCurve(key, P256), true);
   const x = BigInt(`0x${key.subarray(1).toString('hex')}`);
   const p = P256.p;
@@ -1522,7 +1532,55 @@ test('T4 the published PoP vector verifies low-S and rejects high-S', () => {
   const s = BigInt(`0x${sig.subarray(32).toString('hex')}`);
   const highS = (P256.order - s).toString(16).padStart(64, '0');
   const high = Buffer.concat([sig.subarray(0, 32), Buffer.from(highS, 'hex')]);
-  assert.equal(lowS(high, P256.order), false);
+  assert.equal(checkSigma(high).ok, false);
+});
+
+test('an empty prior slot, a u16 signature prefix, and the test-vector key', () => {
+  clearAdmissionCache();
+  const first = cachedAdmission({
+    slotKey: 'first', seq: 0, absentAtPrior: false, emptySlotAtPrior: true,
+    memberAtEpoch: true, priorAnchor: 10, anchor: 20, block: 15,
+  });
+  assert.equal(first.ok, true);
+  assert.equal(first.block, 15);
+  const pop = new Uint8Array(64);
+  pop[31] = 1;
+  pop[63] = 1;
+  const body = new Uint8Array(2 + 2 + 2 + pop.length);
+  body[0] = 0;
+  body[1] = 2;
+  body[2] = 1;
+  body[3] = 2;
+  body[4] = 0;
+  body[5] = 64;
+  body.set(pop, 6);
+  const opened = readPayToSignatures(body);
+  assert.equal(opened.ok, true);
+  assert.equal(opened.pop.length, 64);
+  const wide = new Uint8Array(body);
+  wide[5] = 65;
+  assert.equal(readPayToSignatures(wide).ok, false);
+  const vector = Buffer.from(TEST_VECTOR_KEY_HASH, 'hex');
+  const seen = keyStatus({
+    schema: KEY_STATUS_SCHEMA,
+    block: 100,
+    hourStart: 1_700_000_000,
+    payToProof: { siblings: [], root: 'aa' },
+    keyProof: { siblings: [], root: 'aa' },
+    keyLeaf: 'empty',
+    registration: {
+      admissionBlock: 90,
+      expiry: 2_000_000_000n,
+      payToSignature: new Uint8Array([1]),
+      keySignature: new Uint8Array(64),
+      popOk: true,
+    },
+    slotRevokeBlock: null,
+    registrationKeyHash: vector,
+    tombstone: null,
+  });
+  assert.equal(seen.exit, 1);
+  assert.equal(seen.print, 'test vector key');
 });
 
 test('D23 the CLI refuses a bad shape and an unpinned contract', () => {

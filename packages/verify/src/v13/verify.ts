@@ -22,7 +22,7 @@ import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
 import { verifySlot, type VerifySlotInput } from './slot.js';
-import { assessSlotValue, lowS, pointOnCurve } from './key-record.js';
+import { assessSlotValue, pointOnCurve } from './key-record.js';
 import {
   ANCHORED_TOPIC0,
   UNAUDITED_NOTE,
@@ -73,6 +73,7 @@ type LineModule = {
   stateLeaf: (key: Uint8Array, value: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateNode: (left: Uint8Array, right: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   isAllowedAlg: (alg: number) => boolean;
+  checkSigma: (sigma64: Uint8Array) => { ok: true } | { ok: false; reason: string };
 };
 
 type EcdsaModule = {
@@ -338,7 +339,7 @@ function proveKey(
         onCurve: (key) => pointOnCurve(key, crypto.ecdsa.P256),
       },
       signatureOk: (digest, signature, key) => {
-        if (!lowS(signature, crypto.ecdsa.P256.order)) return false;
+        if (!line.checkSigma(signature).ok) return false;
         const point = decompressOn(key, crypto.ecdsa.P256, crypto.ecdsa);
         if (!point) return false;
         try {

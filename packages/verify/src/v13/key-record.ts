@@ -104,16 +104,6 @@ export function pointOnCurve(key: Uint8Array, curve: CurveParams): boolean {
   return acc === 1n;
 }
 
-/** 64-byte r‖s, both in range, s at most half the curve order. */
-export function lowS(signature: Uint8Array, order: bigint): boolean {
-  if (signature.length !== 64) return false;
-  let r = 0n;
-  let s = 0n;
-  for (let i = 0; i < 32; i += 1) r = (r << 8n) | BigInt(signature[i]);
-  for (let i = 32; i < 64; i += 1) s = (s << 8n) | BigInt(signature[i]);
-  return r > 0n && r < order && s > 0n && s <= (order >> 1n);
-}
-
 export interface KeyGate {
   allowed: (alg: number) => boolean;
   onCurve: (key: Uint8Array) => boolean;
@@ -163,6 +153,37 @@ export function keySlotKey(chainId: number, keyHash: Uint8Array, sha256: Sha): U
 
 export const KEY_STATUS_SCHEMA = 'chit402.cs2.key-status.v2';
 
+/** Public T4 key. The verifier never treats it as a live seller key. */
+export const TEST_VECTOR_KEY_HASH = '70703a0707c1ba660d772d3b613966bf84599afa8059b29636a613fefbfa9390';
+
+function bytesToHexLocal(bytes: Uint8Array): string {
+  let hex = '';
+  for (let i = 0; i < bytes.length; i += 1) hex += bytes[i].toString(16).padStart(2, '0');
+  return hex;
+}
+
+/** One u16 big-endian length prefix, then that many bytes. */
+export function readU16Field(bytes: Uint8Array, offset: number): { ok: true; value: Uint8Array; next: number } | { ok: false } {
+  if (offset < 0 || offset + 2 > bytes.length) return { ok: false };
+  const len = (bytes[offset] << 8) | bytes[offset + 1];
+  const start = offset + 2;
+  const end = start + len;
+  if (len < 0 || end > bytes.length) return { ok: false };
+  return { ok: true, value: bytes.subarray(start, end), next: end };
+}
+
+/**
+ * PayTo-control signature, then the possession signature. Both prefixes are
+ * u16 big-endian. The possession signature is exactly 64 bytes and nothing follows.
+ */
+export function readPayToSignatures(bytes: Uint8Array): { ok: true; payTo: Uint8Array; pop: Uint8Array } | { ok: false } {
+  const payTo = readU16Field(bytes, 0);
+  if (!payTo.ok) return payTo;
+  const pop = readU16Field(bytes, payTo.next);
+  if (!pop.ok || pop.value.length !== 64 || pop.next !== bytes.length) return { ok: false };
+  return { ok: true, payTo: payTo.value, pop: pop.value };
+}
+
 export interface SlotProof {
   siblings: string[] | null;
   root?: string | null;
@@ -206,6 +227,9 @@ export interface KeyStatusInput {
    * RevokeByKey sitting outside kind 0x05.
    */
   slotRevokeBlock: number | null;
+  /** The Revoke's keyHash. The check applies only when it equals the registration. */
+  slotRevokeKeyHash?: Uint8Array | null;
+  registrationKeyHash?: Uint8Array | null;
   revokeByKeyOutsideKeySlot?: boolean;
   tombstone: { revokedAtBlock: number | null; outOfBounds: boolean } | null;
 }
@@ -234,6 +258,8 @@ export function cachedAdmission(input: {
   slotKey: string;
   seq: number;
   absentAtPrior: boolean;
+  /** An empty leaf at e−1 is absence for a slot's first registration. */
+  emptySlotAtPrior?: boolean;
   memberAtEpoch: boolean;
   priorAnchor: number;
   anchor: number;
@@ -242,7 +268,8 @@ export function cachedAdmission(input: {
   const id = `${input.slotKey}:${input.seq}`;
   const prior = admissionCache.get(id);
   if (prior != null) return { ok: true, block: prior, cached: true };
-  if (!input.absentAtPrior || !input.memberAtEpoch) return { ok: false, exit: 2, reason: 'unproven' };
+  const absent = input.absentAtPrior || input.emptySlotAtPrior === true;
+  if (!absent || !input.memberAtEpoch) return { ok: false, exit: 2, reason: 'unproven' };
   if (!(input.priorAnchor < input.block && input.block <= input.anchor)) {
     return { ok: false, exit: 2, reason: 'unproven' };
   }
@@ -277,7 +304,13 @@ export function keyStatus(input: KeyStatusInput): KeyStatusResult {
   const reg = input.registration;
   if (!reg || !reg.payToSignature || reg.payToSignature.length === 0) return status(2, 'unproven');
   if (!reg.keySignature || reg.keySignature.length !== 64 || !reg.popOk) return status(2, 'unproven');
-  const slotRevoke = input.revokeByKeyOutsideKeySlot ? null : input.slotRevokeBlock;
+  const sameKey = input.slotRevokeKeyHash != null
+    && input.registrationKeyHash != null
+    && equalBytes(input.slotRevokeKeyHash, input.registrationKeyHash);
+  const slotRevoke = input.revokeByKeyOutsideKeySlot || !sameKey ? null : input.slotRevokeBlock;
+  if (input.registrationKeyHash && bytesToHexLocal(input.registrationKeyHash) === TEST_VECTOR_KEY_HASH) {
+    return status(1, 'test_vector_key', 'test vector key');
+  }
   if (slotRevoke != null && reg.admissionBlock >= slotRevoke) {
     return status(1, 'registered_after_slot_revoke');
   }
