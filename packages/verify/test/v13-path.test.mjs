@@ -35,7 +35,6 @@ import {
   DOMAIN_TYPE,
   DOMAIN_VERSION,
   EXAMPLE_ANCHOR_CODE_HASH,
-  KEY_ALG_SECP256K1,
   PAYTO_CONTROL_TYPE,
   REVOKE_BY_KEY_TYPE,
   REVOKE_TYPE,
@@ -43,6 +42,8 @@ import {
   chitDomainSeparator,
   judgePayTo,
   keyHashOf,
+  lowS,
+  pointOnCurve,
   revokeByKeyDigest,
 } from '../dist/v13/key-record.js';
 import { V13_RPC_DEFAULTS } from '../dist/v13/rpc-defaults.js';
@@ -52,7 +53,7 @@ setDefaultResultOrder('ipv4first');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = new URL('../../cs2-core/', import.meta.url);
 const { leafHash, nodeHash } = await import(new URL('merkle/index.js', CORE));
-const { encodeLine, commitments, slotKey, stateLeaf } = await import(new URL('line/index.mjs', CORE));
+const { encodeLine, commitments, slotKey, stateLeaf, isAllowedAlg } = await import(new URL('line/index.mjs', CORE));
 const { keccak256 } = await import(new URL('ecdsa/keccak.js', CORE));
 const { sha256 } = await import(new URL('sha256.js', CORE));
 const { P256 } = await import(new URL('ecdsa/curves.js', CORE));
@@ -1261,35 +1262,48 @@ test('the admitting domain ignores an old contract and an admission block outsid
 });
 
 test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecked', () => {
-  const key = new Uint8Array(33);
-  key[0] = 2;
-  key[1] = 9;
-  const hash = keyHashOf(KEY_ALG_SECP256K1, key, sha256);
-  const other = keyHashOf(KEY_ALG_SECP256K1, key, (bytes) => sha256(Uint8Array.of(bytes[0] ^ 1, ...bytes.subarray(1))));
+  const { publicKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const x = Buffer.from(jwk.x, 'base64url');
+  const y = Buffer.from(jwk.y, 'base64url');
+  const key = Uint8Array.from(Buffer.concat([Buffer.from([y[31] & 1 ? 3 : 2]), x]));
+  const gate = { allowed: isAllowedAlg, onCurve: (bytes) => pointOnCurve(bytes, P256) };
+  const hash = keyHashOf(0x01, key, sha256, gate);
   assert.ok(hash);
-  assert.notDeepEqual(Array.from(hash), Array.from(sha256(key)));
-  assert.equal(keyHashOf(KEY_ALG_SECP256K1, Uint8Array.of(4, ...new Uint8Array(64)), sha256), null);
+  assert.deepEqual(Buffer.from(hash), Buffer.from(sha256(Buffer.concat([Buffer.from([0x01]), Buffer.from(key)]))));
+  assert.notDeepEqual(Buffer.from(hash), Buffer.from(sha256(Buffer.from(key))));
+  assert.equal(keyHashOf(0x02, key, sha256, gate), null);
+  assert.equal(keyHashOf(0x00, key, sha256, gate), null);
+  assert.equal(keyHashOf(0x03, key, sha256, gate), null);
+  assert.equal(keyHashOf(undefined, key, sha256, gate), null);
+  const off = new Uint8Array(33);
+  off[0] = 2;
+  off[1] = 9;
+  assert.equal(pointOnCurve(off, P256), false);
+  assert.equal(keyHashOf(0x01, off, sha256, gate), null);
+  assert.equal(keyHashOf(0x01, Uint8Array.of(4, ...new Uint8Array(64)), sha256, gate), null);
   const hour = 1_700_000_000;
-  assert.equal(judgePayTo({
-    alg: KEY_ALG_SECP256K1, key, keyHash: hash, expiry: BigInt(hour + 10),
-    showingHour: hour, receiptHour: hour, tombstoned: false, sha256,
-  }).ok, true);
-  assert.equal(judgePayTo({
-    alg: KEY_ALG_SECP256K1, key, keyHash: hash, expiry: BigInt(hour + 10),
-    showingHour: hour, receiptHour: hour, tombstoned: true, sha256,
-  }).reason, 'key_revoked_tombstone');
-  assert.equal(judgePayTo({
-    alg: KEY_ALG_SECP256K1, key, keyHash: hash, expiry: BigInt(hour),
-    showingHour: hour, receiptHour: hour - 1, tombstoned: false, sha256,
-  }).reason, 'expiry_not_after_hour');
-  assert.equal(judgePayTo({
-    alg: KEY_ALG_SECP256K1, key, keyHash: hash, expiry: BigInt(hour + 10),
-    showingHour: hour, receiptHour: hour + 10, tombstoned: false, sha256,
-  }).reason, 'key_expired');
-  assert.equal(judgePayTo({
-    alg: KEY_ALG_SECP256K1, key, keyHash: other, expiry: BigInt(hour + 10),
-    showingHour: hour, receiptHour: hour, tombstoned: false, sha256,
-  }).reason, 'key_hash_mismatch');
+  const judged = (extra) => judgePayTo({
+    alg: 0x01, key, keyHash: hash, expiry: BigInt(hour + 10),
+    showingHour: hour, receiptHour: hour, tombstoned: false, sha256, gate, ...extra,
+  });
+  assert.equal(judged({}).ok, true);
+  assert.equal(judged({ tombstoned: true }).reason, 'key_revoked_tombstone');
+  assert.equal(judged({ expiry: BigInt(hour), receiptHour: hour - 1 }).reason, 'expiry_not_after_hour');
+  assert.equal(judged({ receiptHour: hour + 10 }).reason, 'key_expired');
+  assert.equal(judged({ keyHash: sha256(Buffer.from(key)) }).reason, 'key_hash_mismatch');
+  assert.equal(judged({ alg: 0x02 }).reason, 'bad_alg');
+  assert.equal(judged({ alg: undefined, key }).reason, 'bad_alg');
+  assert.equal(judged({ key: off }).reason, 'off_curve');
+  const low = new Uint8Array(64);
+  low[31] = 1;
+  low[63] = 1;
+  const high = new Uint8Array(64);
+  high[31] = 1;
+  const sHex = (P256.order - 1n).toString(16).padStart(64, '0');
+  for (let i = 0; i < 32; i += 1) high[32 + i] = Number.parseInt(sHex.slice(i * 2, i * 2 + 2), 16);
+  assert.equal(lowS(low, P256.order), true);
+  assert.equal(lowS(high, P256.order), false);
   const digest = revokeByKeyDigest(keccak256, 84532, CONTRACT.slice(2), hash);
   assert.equal(digest.length, 32);
   const again = chitDomainSeparator(keccak256, 84532, CONTRACT.slice(2));
@@ -1306,16 +1320,17 @@ test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecke
   assert.equal(PAYTO_CONTROL_TYPE.includes('validFrom'), false);
   assert.equal(REVOKE_TYPE.includes('revokedAt'), false);
   const expiry = BigInt(hour + 10);
+  const calls = [];
   const tail = Buffer.concat([
     Buffer.from(key),
-    Buffer.from([KEY_ALG_SECP256K1]),
+    Buffer.from([0x01]),
     Buffer.from(expiry.toString(16).padStart(16, '0'), 'hex'),
     Buffer.from(hash),
     Buffer.from([1]),
-    Buffer.from([KEY_ALG_SECP256K1]),
+    Buffer.from([0x01]),
     Buffer.from(key),
     Buffer.from(hash),
-    Buffer.alloc(65, 1),
+    Buffer.alloc(64, 1),
   ]);
   const tomb = assessSlotValue({
     slotValue: tail,
@@ -1325,9 +1340,27 @@ test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecke
     admitting: CONTRACT,
     showingHour: hour,
     receiptHour: hour,
-    signatureOk: () => true,
+    gate,
+    signatureOk: () => { calls.push('sig'); return true; },
   });
   assert.equal(tomb.reason, 'key_revoked_tombstone');
+  assert.deepEqual(calls, ['sig']);
+  const skipped = [];
+  const badAlg = Buffer.from(tail);
+  badAlg[75] = 0x02;
+  const refused = assessSlotValue({
+    slotValue: badAlg,
+    sha256,
+    keccak: keccak256,
+    chainId: 84532,
+    admitting: CONTRACT,
+    showingHour: hour,
+    receiptHour: hour,
+    gate,
+    signatureOk: () => { skipped.push('sig'); return true; },
+  });
+  assert.equal(refused.reason, 'bad_alg');
+  assert.deepEqual(skipped, []);
   const unbound = assessSlotValue({
     slotValue: tail,
     sha256,
@@ -1336,9 +1369,10 @@ test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecke
     admitting: CONTRACT,
     showingHour: hour,
     receiptHour: hour,
+    gate,
     signatureOk: () => false,
   });
-  assert.equal(unbound.ok, false);
+  assert.equal(unbound.reason, 'bad_signature');
   assert.equal(EXAMPLE_ANCHOR_CODE_HASH, '0xcd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080');
 });
 

@@ -22,7 +22,7 @@ import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
 import { verifySlot, type VerifySlotInput } from './slot.js';
-import { assessSlotValue } from './key-record.js';
+import { assessSlotValue, lowS, pointOnCurve } from './key-record.js';
 import {
   ANCHORED_TOPIC0,
   UNAUDITED_NOTE,
@@ -72,11 +72,11 @@ type LineModule = {
   slotKey: (input: { kind: number; chainId: number; id: string }) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateLeaf: (key: Uint8Array, value: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateNode: (left: Uint8Array, right: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
+  isAllowedAlg: (alg: number) => boolean;
 };
 
 type EcdsaModule = {
-  P256: { p: bigint; a: bigint; b: bigint };
-  SECP256K1: { p: bigint; a: bigint; b: bigint };
+  P256: { p: bigint; a: bigint; b: bigint; order: bigint };
   yParityByTrial: (digest: Uint8Array, sig64: Uint8Array, publicKey: Uint8Array, curve: unknown) => number;
   bytesToBig: (bytes: Uint8Array) => bigint;
   bigToBytes: (value: bigint, length: number) => Uint8Array;
@@ -107,7 +107,6 @@ async function loadCores() {
     line: line as LineModule,
     ecdsa: {
       P256: (curves as { P256: EcdsaModule['P256'] }).P256,
-      SECP256K1: (curves as { SECP256K1: EcdsaModule['SECP256K1'] }).SECP256K1,
       yParityByTrial: (recover as { yParityByTrial: EcdsaModule['yParityByTrial'] }).yParityByTrial,
       bytesToBig: (bytes as { bytesToBig: EcdsaModule['bytesToBig'] }).bytesToBig,
       bigToBytes: (bytes as { bigToBytes: EcdsaModule['bigToBytes'] }).bigToBytes,
@@ -334,13 +333,17 @@ function proveKey(
       admitting: slotInput.admitting,
       showingHour: hours.showingHour,
       receiptHour: hours.receiptHour,
+      gate: {
+        allowed: (alg) => line.isAllowedAlg(alg),
+        onCurve: (key) => pointOnCurve(key, crypto.ecdsa.P256),
+      },
       signatureOk: (digest, signature, key) => {
-        if (signature.length !== 65) return false;
-        const point = decompressOn(key, crypto.ecdsa.SECP256K1, crypto.ecdsa);
+        if (!lowS(signature, crypto.ecdsa.P256.order)) return false;
+        const point = decompressOn(key, crypto.ecdsa.P256, crypto.ecdsa);
         if (!point) return false;
         try {
-          const parity = crypto.ecdsa.yParityByTrial(digest, signature.subarray(0, 64), point, crypto.ecdsa.SECP256K1);
-          return parity === signature[64];
+          crypto.ecdsa.yParityByTrial(digest, signature, point, crypto.ecdsa.P256);
+          return true;
         } catch {
           return false;
         }
