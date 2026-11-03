@@ -68,26 +68,36 @@ function run(argv, cwd) {
   return new Promise((resolveRun) => {
     const child = spawn(argv[0], argv.slice(1), { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
-    const timer = setTimeout(() => { child.kill('SIGKILL'); }, 120000);
+    const timer = setTimeout(() => { child.kill('SIGKILL'); }, 180000);
     child.stdout.on('data', (chunk) => { out += chunk; });
     child.stderr.on('data', (chunk) => { out += chunk; });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolveRun(code === 0);
+      resolveRun({ ok: code === 0, out });
     });
   });
 }
 
+function hollowFailure(compiled, tested) {
+  if (!compiled.ok) return true;
+  if (tested.ok) return false;
+  return !/AssertionError|ERR_ASSERTION/.test(tested.out);
+}
+
 const verifyDir = join(root, 'packages/verify');
-const baseline = await run(spec.suite.argv, verifyDir) && await run(spec.test, verifyDir);
-if (!baseline) {
+const baselineCompile = await run(spec.suite.argv, verifyDir);
+const baselineTest = baselineCompile.ok ? await run(spec.test, verifyDir) : { ok: false, out: '' };
+if (!baselineCompile.ok || !baselineTest.ok) {
   process.stderr.write('v13 suite failed before mutants\n');
+  process.stderr.write(baselineCompile.out);
+  process.stderr.write(baselineTest.out);
   process.exit(1);
 }
 
 let killed = 0;
 let survived = 0;
 let skipped = 0;
+let hollow = 0;
 for (const mutant of mutants) {
   const abs = join(root, mutant.file);
   const before = sha256(abs);
@@ -97,15 +107,20 @@ for (const mutant of mutants) {
     continue;
   }
   const compiled = await run(spec.suite.argv, verifyDir);
-  const passed = compiled && await run(spec.test, verifyDir);
+  const tested = compiled.ok ? await run(spec.test, verifyDir) : { ok: false, out: '' };
   restoreAll();
   if (sha256(abs) !== before) {
     process.stderr.write(`restore failed ${mutant.id}\n`);
     process.exit(1);
   }
+  const passed = compiled.ok && tested.ok;
   if (passed) {
     survived += 1;
     process.stdout.write(`SURVIVED ${mutant.id}\n`);
+  } else if (hollowFailure(compiled, tested)) {
+    hollow += 1;
+    survived += 1;
+    process.stdout.write(`HOLLOW ${mutant.id}\n`);
   } else {
     killed += 1;
     process.stdout.write(`KILLED ${mutant.id}\n`);
@@ -114,5 +129,5 @@ for (const mutant of mutants) {
 
 const scored = killed + survived;
 const score = scored === 0 ? 0 : killed / scored;
-process.stdout.write(`killed ${killed} survived ${survived} not_applied ${skipped} score ${(score * 100).toFixed(1)}%\n`);
+process.stdout.write(`killed ${killed} survived ${survived} hollow ${hollow} not_applied ${skipped} score ${(score * 100).toFixed(1)}%\n`);
 if (score < 0.9) process.exit(1);

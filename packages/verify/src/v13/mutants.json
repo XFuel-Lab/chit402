@@ -1,27 +1,386 @@
 {
   "suite": {
-    "argv": ["npx", "tsc", "--pretty", "false", "--incremental", "false"]
+    "argv": [
+      "npx",
+      "tsc",
+      "--pretty",
+      "false",
+      "--incremental",
+      "false"
+    ]
   },
-  "test": ["node", "--test", "--test-concurrency=1", "test/v13-path.test.mjs"],
+  "test": [
+    "node",
+    "--test",
+    "--test-concurrency=1",
+    "test/v13-path.test.mjs"
+  ],
   "mutants": [
-    { "id": "trust_rotation", "file": "packages/verify/src/v13/core/decide.ts", "find": "return pin.checkpoint;", "replace": "return rotatedTo || pin.checkpoint;" },
-    { "id": "cap_inclusive", "file": "packages/verify/src/v13/core/decide.ts", "find": "size > BigInt(MAX_TREE_SIZE)", "replace": "size >= BigInt(MAX_TREE_SIZE)" },
-    { "id": "hourly_kind", "file": "packages/verify/src/v13/core/decide.ts", "find": "event.kind === KIND_HOURLY", "replace": "event.kind !== KIND_HOURLY" },
-    { "id": "accept_leaf", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (LEAF_KEYS.has(key))", "replace": "if (false && LEAF_KEYS.has(key))" },
-    { "id": "accept_size", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (SIZE_KEYS.has(key))", "replace": "if (false && SIZE_KEYS.has(key))" },
-    { "id": "version_twelve", "file": "packages/verify/src/v13/core/decide.ts", "find": "value.v !== 13", "replace": "value.v !== 12" },
-    { "id": "sniff_payload_version", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (hasOwn(value, 'payload_version')) return false;", "replace": "if (false) return false;" },
-    { "id": "sniff_issuer_jws", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (hasOwn(value, 'issuer_signature')) return false;", "replace": "if (false) return false;" },
-    { "id": "ignore_block_hash", "file": "packages/verify/src/v13/core/decide.ts", "find": "payment.blockHash.toLowerCase() !== line.blockHash.toLowerCase()", "replace": "false" },
-    { "id": "pending_is_final", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!proven && !hourly)", "replace": "if (false && !proven && !hourly)" },
-    { "id": "ignore_revoke", "file": "packages/verify/src/v13/core/decide.ts", "find": "parsed.receipt.epoch > revoke", "replace": "parsed.receipt.epoch < revoke" },
-    { "id": "ignore_genesis", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (hourStart < pin.genesisHourStart) return false;", "replace": "if (false) return false;" },
-    { "id": "unpinned_passes", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!pin) return fail(2, 'contract_not_pinned'", "replace": "if (!pin) return fail(0, 'contract_not_pinned'" },
-    { "id": "pre_anchor_passes", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!head) return fail(2, 'pre_anchor'", "replace": "if (!head) return fail(0, 'pre_anchor'" },
-    { "id": "missing_leaf_passes", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!included.ok) return fail(1, 'not_in_log'", "replace": "if (!included.ok) return fail(0, 'not_in_log'" },
-    { "id": "ignore_sender", "file": "packages/verify/src/v13/core/decide.ts", "find": "world.anchorFrom.toLowerCase() !== sender.toLowerCase()", "replace": "false" },
-    { "id": "tampered_snapshot_ok", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!world.snapshotSigned)", "replace": "if (false && !world.snapshotSigned)" },
-    { "id": "missing_rpc_passes", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!world.rpcConfigured) return fail(2, 'rpc_unconfigured'", "replace": "if (!world.rpcConfigured) return fail(0, 'rpc_unconfigured'" },
-    { "id": "drop_epoch_topic", "file": "packages/verify/src/v13/verify.ts", "find": "topics: [ANCHORED_TOPIC0, topic]", "replace": "topics: [ANCHORED_TOPIC0]" }
+    {
+      "id": "trust_rotation",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "return pin.checkpoint;",
+      "replace": "return rotatedTo || pin.checkpoint;"
+    },
+    {
+      "id": "cap_inclusive",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "size > BigInt(MAX_TREE_SIZE)",
+      "replace": "size >= BigInt(MAX_TREE_SIZE)"
+    },
+    {
+      "id": "hourly_kind",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "event.kind === KIND_HOURLY",
+      "replace": "event.kind !== KIND_HOURLY"
+    },
+    {
+      "id": "accept_leaf",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (LEAF_KEYS.has(key))",
+      "replace": "if (false && LEAF_KEYS.has(key))"
+    },
+    {
+      "id": "accept_size",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (SIZE_KEYS.has(key))",
+      "replace": "if (false && SIZE_KEYS.has(key))"
+    },
+    {
+      "id": "version_twelve",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "value.v !== 13",
+      "replace": "value.v !== 12"
+    },
+    {
+      "id": "sniff_payload_version",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (hasOwn(value, 'payload_version')) return false;",
+      "replace": "if (false) return false;"
+    },
+    {
+      "id": "sniff_issuer_jws",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (hasOwn(value, 'issuer_signature')) return false;",
+      "replace": "if (false) return false;"
+    },
+    {
+      "id": "ignore_block_hash",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "payment.blockHash.toLowerCase() !== line.blockHash.toLowerCase()",
+      "replace": "false"
+    },
+    {
+      "id": "pending_is_final",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!proven && !hourly)",
+      "replace": "if (false && !proven && !hourly)"
+    },
+    {
+      "id": "ignore_revoke",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "parsed.receipt.epoch > revoke",
+      "replace": "parsed.receipt.epoch < revoke"
+    },
+    {
+      "id": "ignore_genesis",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (hourStart < pin.genesisHourStart) return false;",
+      "replace": "if (false) return false;"
+    },
+    {
+      "id": "unpinned_passes",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!pin) return fail(2, 'contract_not_pinned'",
+      "replace": "if (!pin) return fail(0, 'contract_not_pinned'"
+    },
+    {
+      "id": "pre_anchor_passes",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!head) return fail(2, 'pre_anchor'",
+      "replace": "if (!head) return fail(0, 'pre_anchor'"
+    },
+    {
+      "id": "missing_leaf_passes",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!included.ok) return fail(1, 'not_in_log'",
+      "replace": "if (!included.ok) return fail(0, 'not_in_log'"
+    },
+    {
+      "id": "ignore_sender",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "world.anchorFrom.toLowerCase() !== sender.toLowerCase()",
+      "replace": "false"
+    },
+    {
+      "id": "tampered_snapshot_ok",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!world.snapshotSigned)",
+      "replace": "if (false && !world.snapshotSigned)"
+    },
+    {
+      "id": "missing_rpc_passes",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!world.rpcConfigured) return fail(2, 'rpc_unconfigured'",
+      "replace": "if (!world.rpcConfigured) return fail(0, 'rpc_unconfigured'"
+    },
+    {
+      "id": "drop_epoch_topic",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "topics: [ANCHORED_TOPIC0, topic]",
+      "replace": "topics: [ANCHORED_TOPIC0]"
+    },
+    {
+      "id": "D-covers-final-plus1",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "return event.blockNumber <= finalizedNumber && event.size > BigInt(index);",
+      "replace": "return event.blockNumber <= finalizedNumber + 1 && event.size > BigInt(index);"
+    },
+    {
+      "id": "D-covers-size-ge",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "return event.blockNumber <= finalizedNumber && event.size > BigInt(index);",
+      "replace": "return event.blockNumber <= finalizedNumber && event.size >= BigInt(index);"
+    },
+    {
+      "id": "D-hourly-any-kind",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "covers(event, index, finalizedNumber) && event.kind === KIND_HOURLY",
+      "replace": "covers(event, index, finalizedNumber)"
+    },
+    {
+      "id": "D-pending-flip",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!proven && !hourly)",
+      "replace": "if (!proven && hourly)"
+    },
+    {
+      "id": "D-pending-exit1",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "fail(2, 'pending_hourly_close'",
+      "replace": "fail(1, 'pending_hourly_close'"
+    },
+    {
+      "id": "D-stateRoot-from-head",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "const stateRoot = hourly ? hourly.stateRoot : head.stateRoot;",
+      "replace": "const stateRoot = head.stateRoot;"
+    },
+    {
+      "id": "D-canon-skip-number-hash",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!input.canonicalHash || input.canonicalHash.toLowerCase() !== input.block.hash.toLowerCase()) return 'reorged';",
+      "replace": ""
+    },
+    {
+      "id": "D-canon-skip-want",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (input.block.hash.toLowerCase() !== input.wantHash.toLowerCase()) return 'reorged';",
+      "replace": ""
+    },
+    {
+      "id": "D-canon-final-boundary",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (input.block.number > input.finalizedNumber) return 'not_final';",
+      "replace": "if (input.block.number > input.finalizedNumber + 1) return 'not_final';"
+    },
+    {
+      "id": "D-read-by-number",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "rpc(urls, 'eth_getBlockByHash', [line.blockHash, false])",
+      "replace": "rpc(urls, 'eth_getBlockByNumber', [hexQty(line.blockNumber), false])"
+    },
+    {
+      "id": "D-finalized-to-latest",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "['finalized', false]",
+      "replace": "['latest', false]"
+    },
+    {
+      "id": "D-ignore-txindex",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!payment.txIndexMatch) return 'payment_mismatch';",
+      "replace": ""
+    },
+    {
+      "id": "D-ignore-value",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!data || BigInt(`0x${data}`) !== line.value) return 'payment_mismatch';",
+      "replace": ""
+    },
+    {
+      "id": "D-ignore-from",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (transfer.topics[1].toLowerCase() !== padAddress(line.from)) return 'payment_mismatch';",
+      "replace": ""
+    },
+    {
+      "id": "D-ignore-to",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (transfer.topics[2].toLowerCase() !== padAddress(line.to)) return 'payment_mismatch';",
+      "replace": ""
+    },
+    {
+      "id": "D-ignore-emitter",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (transfer.address.toLowerCase() !== usdc) return 'payment_mismatch';",
+      "replace": ""
+    },
+    {
+      "id": "D-ignore-auth-nonce",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (auth.topics[2].toLowerCase() !== line.nonce.toLowerCase()) return 'payment_mismatch';",
+      "replace": ""
+    },
+    {
+      "id": "D-ignore-authorizer",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (auth.topics[1].toLowerCase() !== padAddress(line.authorizer)) return 'payment_mismatch';",
+      "replace": ""
+    },
+    {
+      "id": "D-ignore-receipt-epoch",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (head.epoch !== BigInt(parsed.receipt.epoch)) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "D-ignore-prior",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (head.epoch > 0n && prior && prior.size > BigInt(parsed.receipt.index)) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "D-ignore-anchor-to",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "|| world.anchorTo.toLowerCase() !== pin.address)",
+      "replace": ")"
+    },
+    {
+      "id": "D-ignore-codehash",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "D-revoke-ge",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "parsed.receipt.epoch > revoke",
+      "replace": "parsed.receipt.epoch > revoke + 1"
+    },
+    {
+      "id": "D-ignore-retire",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (pin.retireHourStart != null && hourStart > pin.retireHourStart) return false;",
+      "replace": ""
+    },
+    {
+      "id": "D-size-from-receipt",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "parsed.receipt.index, sized.size, head.root",
+      "replace": "parsed.receipt.index, parsed.receipt.index + 1, head.root"
+    },
+    {
+      "id": "D-cap-plus1",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (size < 0n || size > BigInt(MAX_TREE_SIZE)) return { ok: false, reason: 'tree_size_above_cap' };",
+      "replace": "if (size < 0n || size > BigInt(MAX_TREE_SIZE) + 1n) return { ok: false, reason: 'tree_size_above_cap' };"
+    },
+    {
+      "id": "D-verdict-2-as-invalid",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "result.exit === 1 ? 'invalid'",
+      "replace": "result.exit >= 1 ? 'invalid'"
+    },
+    {
+      "id": "D-unknown-block-exit1",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "fail(2, 'unknown_block'",
+      "replace": "fail(1, 'unknown_block'"
+    },
+    {
+      "id": "D-reorged-exit2",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "fail(1, 'reorged'",
+      "replace": "fail(2, 'reorged'"
+    },
+    {
+      "id": "D-not-final-exit0",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "fail(2, 'block_not_final'",
+      "replace": "fail(0, 'block_not_final'"
+    },
+    {
+      "id": "D-pin-extra-keys",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "keys.length !== PIN_KEYS.length || ",
+      "replace": ""
+    },
+    {
+      "id": "D-narrow-unknown-keys",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!NARROW_KEYS.has(key)) return { ok: false, reason: 'extension_widens_pin' };",
+      "replace": ""
+    },
+    {
+      "id": "D-narrow-retire-widen",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (pin.retireHourStart != null && row.retireHourStart > pin.retireHourStart) {",
+      "replace": "if (false) {"
+    },
+    {
+      "id": "D-narrow-new-contract",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!pin) return { ok: false, reason: 'extension_widens_pin' };",
+      "replace": "if (!pin) continue;"
+    },
+    {
+      "id": "D-ext-skip-narrow-check",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "if (!narrow.ok) return { ok: false, reason: narrow.reason };",
+      "replace": ""
+    },
+    {
+      "id": "D-ext-skip-signature",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "if (!signed.valid) return { ok: false, reason: signed.reason || 'issuer_history_invalid' };",
+      "replace": ""
+    },
+    {
+      "id": "D-sigma-always",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "ecdsa.yParityByTrial(opened.sigmaDigest, decoded.sigma.sigma, point, ecdsa.P256);\n    return true;",
+      "replace": "return true;"
+    },
+    {
+      "id": "D-slotproof-always",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "return bytesToHex(acc) === stateRoot.toLowerCase();",
+      "replace": "return true;"
+    },
+    {
+      "id": "D-schema-sniff",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (value.schema !== V13_SCHEMA) return false;",
+      "replace": ""
+    },
+    {
+      "id": "D-topic0-unchecked",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if (!sameTopic(log.topics[0], ANCHORED_TOPIC0)) return null;",
+      "replace": ""
+    },
+    {
+      "id": "D-anchor-from-unchecked",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "world.anchorFrom.toLowerCase() !== sender.toLowerCase() ||",
+      "replace": ""
+    },
+    {
+      "id": "D-library-maps-2-to-verified",
+      "file": "packages/verify/src/index.ts",
+      "find": "overall: exit === 0 ? 'verified' : exit === 1 ? 'failed' : 'partial',",
+      "replace": "overall: exit === 1 ? 'failed' : 'verified',"
+    }
   ]
 }

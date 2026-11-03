@@ -3,13 +3,17 @@
  * from the P0-7 brief. The corpus gate is not edited. The flip list is empty.
  */
 import { createServer } from 'node:http';
+import { setDefaultResultOrder } from 'node:dns';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { checkReceiptInput } from '../dist/check-input.js';
+import { verifyReceipt } from '../dist/index.js';
 import { verifyIssuerHistoryDocument } from '../dist/issuer-history.js';
 import { jwkThumbprint } from '../dist/jws.js';
 import { TEST_SNAPSHOT } from '../dist/internal/test-seam.js';
@@ -19,18 +23,36 @@ import {
   CORPUS_FLIP_LIST,
   MAX_TREE_SIZE,
   UNAUDITED_NOTE,
+  parseV13Receipt,
   runV13,
   topicUint,
   treeSizeFromHead,
   trustedSender,
   isExactV13Receipt,
 } from '../dist/v13/core/decide.js';
+import { verifySlot } from '../dist/v13/slot.js';
+import {
+  DOMAIN_TYPE,
+  DOMAIN_VERSION,
+  EXAMPLE_ANCHOR_CODE_HASH,
+  KEY_ALG_SECP256K1,
+  PAYTO_CONTROL_TYPE,
+  REVOKE_BY_KEY_TYPE,
+  REVOKE_TYPE,
+  judgePayTo,
+  keyHashOf,
+  revokeByKeyDigest,
+} from '../dist/v13/key-record.js';
+import { V13_RPC_DEFAULTS } from '../dist/v13/rpc-defaults.js';
+
+setDefaultResultOrder('ipv4first');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = new URL('../../cs2-core/', import.meta.url);
 const { leafHash, nodeHash } = await import(new URL('merkle/index.js', CORE));
 const { encodeLine, commitments, slotKey, stateLeaf } = await import(new URL('line/index.mjs', CORE));
 const { keccak256 } = await import(new URL('ecdsa/keccak.js', CORE));
+const { sha256 } = await import(new URL('sha256.js', CORE));
 const { P256 } = await import(new URL('ecdsa/curves.js', CORE));
 const { signRawDigest } = await import(new URL('ecdsa/sign.js', CORE));
 const { bytesToBig } = await import(new URL('ecdsa/bytes.js', CORE));
@@ -341,11 +363,17 @@ async function withChain(scene, run) {
   }
 }
 
+function rpcPair(url) {
+  if (typeof url !== 'string' || url === '') return [];
+  if (url.includes('127.0.0.1')) return [url, url.replaceAll('127.0.0.1', 'localhost')];
+  return [url, url];
+}
+
 function optionsFor(key, doc, url, file) {
   return {
     publicInput: true,
     trustedKids: [key.kid],
-    rpcUrl: url,
+    rpcUrls: rpcPair(url),
     issuerHistoryBytes: file ?? null,
     [TEST_SNAPSHOT]: { issuerHistory: { document: doc, bytes: JSON.stringify(doc) } },
   };
@@ -745,4 +773,671 @@ test('a head size above the cap is refused and the cap itself is passed to inclu
   assert.equal(handled.exit, 0);
   assert.deepEqual(seen, [MAX_TREE_SIZE]);
   assert.equal(key.kid.length > 0, true);
+});
+
+const FIN = 110;
+
+function sceneHandler(s) {
+  const payHash = `0x${s.payment.blockHash}`;
+  const txHash = `0x${s.payment.txHash}`;
+  const anchorTx = `0x${'ee'.repeat(32)}`;
+  const calls = [];
+  const h = (method, params) => {
+    calls.push([method, params]);
+    if (method === 'eth_getBlockByNumber' && params[0] === 'finalized') {
+      return { number: `0x${FIN.toString(16)}`, hash: `0x${'ab'.repeat(32)}` };
+    }
+    if (method === 'eth_getLogs') {
+      const topics = params[0]?.topics ?? [];
+      if (topics[0] !== ANCHORED_TOPIC0) return s.rotationLogs ?? [];
+      return (s.logs ?? []).filter((log) => log.topics[1] === topics[1]);
+    }
+    if (method === 'eth_getTransactionReceipt' && params[0] === anchorTx) {
+      if (s.anchorReceiptNull) return null;
+      return {
+        from: s.anchorFrom ?? CHECKPOINT,
+        to: s.anchorTo ?? CONTRACT,
+        blockNumber: '0x69',
+        blockHash: `0x${'ef'.repeat(32)}`,
+        transactionIndex: '0x0',
+        logs: [],
+      };
+    }
+    if (method === 'eth_getCode') return s.code ?? CODE;
+    if (method === 'eth_call') {
+      if (params[0]?.data === '0x2eb38ae0' && s.retired) return `0x${word(1)}`;
+      return { error: 'execution reverted' };
+    }
+    if (method === 'eth_getBlockByHash' && params[0].toLowerCase() === payHash) {
+      return {
+        number: s.payBlockNumber ?? '0x64',
+        hash: s.sameWrong ? `0x${'12'.repeat(32)}` : (s.byHashHash ?? payHash),
+        transactions: s.txs ?? [txHash],
+      };
+    }
+    if (method === 'eth_getBlockByNumber' && params[0] === (s.payBlockNumber ?? '0x64')) {
+      const hash = s.sameWrong ? `0x${'12'.repeat(32)}` : (s.reorg ? `0x${'99'.repeat(32)}` : payHash);
+      return { number: s.payBlockNumber ?? '0x64', hash };
+    }
+    if (method === 'eth_getTransactionReceipt' && params[0].toLowerCase() === txHash) {
+      const base = s.logBase ?? 0;
+      return {
+        blockHash: payHash,
+        logs: s.payLogs ?? [
+          {
+            logIndex: `0x${base.toString(16)}`,
+            address: USDC,
+            topics: [
+              '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5',
+              `0x${'0'.repeat(24)}${s.logAuthorizer ?? s.payment.authorizer}`,
+              `0x${s.logNonce ?? s.payment.nonce}`,
+            ],
+            data: '0x',
+          },
+          {
+            logIndex: `0x${(base + 1).toString(16)}`,
+            address: s.emitter ?? USDC,
+            topics: [
+              '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+              `0x${'0'.repeat(24)}${s.logFrom ?? s.payment.from}`,
+              `0x${'0'.repeat(24)}${s.logTo ?? s.payment.to}`,
+            ],
+            data: `0x${word(s.logValue ?? s.payment.value)}`,
+          },
+        ],
+      };
+    }
+    if (method === 'eth_getTransactionByHash') return { to: s.txTo ?? USDC, input: s.input ?? '0x' };
+    return null;
+  };
+  return { h, calls };
+}
+
+async function runScene(scene, receipt, opts) {
+  const { h, calls } = sceneHandler(scene);
+  const server = await listen(h);
+  try {
+    const out = await checkReceiptInput(JSON.stringify(receipt), { ...opts(server.url) });
+    return { v: out.verdict, calls };
+  } finally {
+    await server.close();
+  }
+}
+
+function ext(key, doc, payloadExtra) {
+  return signDoc(key, [
+    ...doc.entries,
+    historyEntry(key, doc.head_hash, { not_after: '2026-01-01T00:00:00.000Z' }),
+  ], payloadExtra);
+}
+
+const okLog = (built, over = {}) => anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0, ...over });
+
+test('D00 honest hourly receipt verifies', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const r = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 0, r.v.reason);
+  assert.equal(r.v.result, 'verified');
+});
+
+test('D04 and D05 an extension or a live document keeps the earliest revoke-after', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = signDoc(key, [historyEntry(key, null)], {
+    contracts: [pinOf()],
+    narrowing: [{ chainId: 84532, address: CONTRACT, revokeAfterEpoch: 0 }],
+  });
+  const base = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(base.v.exit_code, 1);
+  assert.equal(base.v.reason, 'revoked_after_epoch');
+  const file = ext(key, doc, { narrowing: [] });
+  const lifted = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u, JSON.stringify(file)));
+  assert.equal(lifted.v.exit_code, 1);
+  assert.equal(lifted.v.reason, 'revoked_after_epoch');
+  const fetchImpl = async () => new Response(JSON.stringify(file), { status: 200 });
+  const live = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => ({
+    ...optionsFor(key, doc, u),
+    fetchImpl,
+  }));
+  assert.equal(live.v.exit_code, 1);
+  assert.equal(live.v.reason, 'revoked_after_epoch');
+});
+
+test('D14 localLogIndex is the position inside the receipt', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const r = await runScene({ payment: built.payment, logs: [okLog(built)], logBase: 5 }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 0, r.v.reason);
+  const wide = signedLine({ localLogIndex: 6 });
+  const bad = await runScene({ payment: wide.payment, logs: [okLog(wide)], logBase: 5 }, v13Receipt(wide), (u) => optionsFor(key, doc, u));
+  assert.equal(bad.v.exit_code, 1);
+  assert.equal(bad.v.reason, 'payment_mismatch');
+});
+
+test('payment value, from, to, emitter, nonce, and authorizer are bound', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const scenes = [
+    { logValue: 2 },
+    { logFrom: '44'.repeat(20) },
+    { logTo: '55'.repeat(20) },
+    { emitter: OTHER },
+    { logNonce: '66'.repeat(32) },
+    { logAuthorizer: '77'.repeat(20) },
+  ];
+  for (const scene of scenes) {
+    const r = await runScene({ payment: built.payment, logs: [okLog(built)], ...scene }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+    assert.equal(r.v.exit_code, 1, JSON.stringify(scene));
+    assert.equal(r.v.reason, 'payment_mismatch', JSON.stringify(scene));
+  }
+});
+
+test('a seller signature that does not match the slot key is invalid', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const receipt = v13Receipt(built);
+  const at = 750 * 2;
+  const flipped = (Number.parseInt(receipt.line.slice(at, at + 2), 16) ^ 1).toString(16).padStart(2, '0');
+  receipt.line = receipt.line.slice(0, at) + flipped + receipt.line.slice(at + 2);
+  const leaf = leafHash(Buffer.from(receipt.line, 'hex'));
+  const r = await runScene({ payment: built.payment, logs: [okLog(built, { root: hexOf(leaf.hash) })] }, receipt, (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 1);
+  assert.equal(r.v.reason, 'sigma_invalid');
+});
+
+test('the anchor transaction to, the receipt epoch, and a size equal to the index', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const to = await runScene({ payment: built.payment, logs: [okLog(built)], anchorTo: OTHER }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(to.v.exit_code, 1);
+  assert.equal(to.v.reason, 'anchor_sender_mismatch');
+  const epoch = await runScene({ payment: built.payment, logs: [okLog(built, { epoch: 2 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(epoch.v.exit_code, 1);
+  assert.equal(epoch.v.reason, 'not_first_anchor');
+  const bound = await runScene({ payment: built.payment, logs: [okLog(built, { size: 0 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(bound.v.exit_code, 2);
+  assert.equal(bound.v.reason, 'pre_anchor');
+});
+
+test('a retire hour, an unknown kind, and a wrong topic0 do not verify', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key, [pinOf({ retireHourStart: HOUR })]);
+  const retired = await runScene({ payment: built.payment, logs: [okLog(built, { hour: HOUR + 3600 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(retired.v.exit_code, 1);
+  assert.equal(retired.v.reason, 'hour_outside_coverage');
+  const kind = await runScene({ payment: built.payment, logs: [okLog(built, { kind: 7 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.notEqual(kind.v.exit_code, 0);
+  const log = okLog(built);
+  log.topics = [`0x${'ab'.repeat(32)}`, log.topics[1], log.topics[2]];
+  const topic = await runScene({ payment: built.payment, logs: [log] }, v13Receipt(built), (u) => optionsFor(key, bundleFor(key), u));
+  assert.notEqual(topic.v.exit_code, 0);
+});
+
+test('exit 2 is could_not_check and the library overall is partial', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const r = await runScene({ payment: built.payment, logs: [] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 2);
+  assert.equal(r.v.result, 'could_not_check');
+  const { h } = sceneHandler({ payment: built.payment, logs: [] });
+  const server = await listen(h);
+  try {
+    const lib = await verifyReceipt(v13Receipt(built), optionsFor(key, doc, server.url));
+    assert.equal(lib.overall, 'partial');
+    assert.equal(lib.verdict.result, 'could_not_check');
+  } finally {
+    await server.close();
+  }
+});
+
+test('an extra pin key and a forged extension signature are refused', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const pin = pinOf();
+  pin.note = 'extra';
+  const doc = bundleFor(key, [pin]);
+  const extra = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(extra.v.exit_code, 1);
+  assert.equal(extra.v.reason, 'snapshot_contracts_invalid');
+  const honest = bundleFor(key);
+  const signed = ext(key, honest, { narrowing: [] });
+  const jws = signed.issuer_signature.jws;
+  signed.issuer_signature.jws = `${jws.slice(0, -1)}${jws.endsWith('a') ? 'b' : 'a'}`;
+  const forged = await checkReceiptInput(JSON.stringify(v13Receipt(built)), optionsFor(key, honest, 'http://127.0.0.1:9', JSON.stringify(signed)));
+  assert.equal(forged.verdict.exit_code, 1);
+  assert.equal(forged.verdict.reason, 'signature_invalid');
+});
+
+test('equal wrong block hashes are still a reorg', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const r = await runScene({ payment: built.payment, logs: [okLog(built)], sameWrong: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 1);
+  assert.equal(r.v.reason, 'reorged');
+});
+
+test('D15 a Permit2 nonce at an odd nibble does not verify', async () => {
+  const key = makeKey();
+  const built = signedLine({ method: 2 });
+  const doc = bundleFor(key);
+  const input = `0x30f28b7a0${built.payment.nonce}${'0'.repeat(63)}`;
+  const r = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    txTo: '0x000000000022d473030f116ddee9f6b43ac78ba3',
+    input,
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.notEqual(r.v.exit_code, 0);
+});
+
+test('D07 a malformed rotation stays invalid and a well-formed chain asks for an update', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const malformed = [{
+    address: CONTRACT,
+    topics: [ROTATION_TOPIC0, `0x${'0'.repeat(24)}${CHECKPOINT.slice(2)}`, `0x${'0'.repeat(24)}${OTHER.slice(2)}`],
+    data: '0x',
+    blockNumber: '0x60',
+  }];
+  const bad = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    rotationLogs: malformed,
+    anchorFrom: OTHER,
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(bad.v.exit_code, 1);
+  assert.equal(bad.v.reason, 'anchor_sender_mismatch');
+  const data = `0x${word(1)}${word(BigInt(CHECKPOINT))}${word(BigInt(OTHER))}`;
+  const formed = [{ address: CONTRACT, topics: [ROTATION_TOPIC0], data, blockNumber: '0x60' }];
+  const rotated = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    rotationLogs: formed,
+    anchorFrom: OTHER,
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(rotated.v.exit_code, 2);
+  assert.equal(rotated.v.reason, 'checkpoint_rotated');
+  assert.equal(rotated.v.message, 'update chit402-verify');
+});
+
+test('D20 an Anchored event from another address is not the head', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const payload = JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  const world = {
+    history: { ok: true, reason: null, source: 'bundled', headHash: null, entryCount: 1, asOf: null },
+    snapshotSigned: true,
+    bundledPayload: payload,
+    narrowing: [],
+    liveExtension: null,
+    rpcConfigured: true,
+    finalizedNumber: 110,
+    events: [{
+      epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: built.stateRoot,
+      kind: 0, blockNumber: 105, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+      logIndex: 0, address: OTHER,
+    }],
+    codeHash: pinOf().codeHash,
+    anchorFrom: CHECKPOINT,
+    anchorTo: CONTRACT,
+    successor: 'not_required',
+    chainGenesis: null,
+    line: {
+      chainId: 84532, blockHash: `0x${built.payment.blockHash}`, blockNumber: 100, txIndex: 0,
+      localLogIndex: 1, txHash: `0x${built.payment.txHash}`, token: USDC, from: `0x${built.payment.from}`,
+      to: `0x${built.payment.to}`, value: 1000000n, method: 1, authorizer: `0x${built.payment.authorizer}`,
+      nonce: `0x${built.payment.nonce}`, bytes: built.line,
+    },
+    lineReason: null,
+    rotatedTo: null,
+    payment: { blockHash: `0x${built.payment.blockHash}`, txIndexMatch: true, txTo: USDC, input: '0x', logs: [] },
+    canonical: 'ok',
+  };
+  const out = runV13(v13Receipt(built), world, {
+    leafHash, verifyInclusion: () => ({ ok: true }), proveKey: () => true, sigmaOk: () => true,
+  });
+  assert.equal(out.reason, 'pre_anchor');
+  assert.notEqual(out.exit, 0);
+});
+
+test('D21 a null anchor receipt is not verified', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const r = await runScene({ payment: built.payment, logs: [okLog(built)], anchorReceiptNull: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 2);
+  assert.notEqual(r.v.exit_code, 0);
+});
+
+test('D26 index and epoch above the safe integer cap are refused at parse', () => {
+  const built = signedLine();
+  const epoch = parseV13Receipt({ ...v13Receipt(built), epoch: 2 ** 53 + 2 });
+  const index = parseV13Receipt({ ...v13Receipt(built), index: 2 ** 53 });
+  assert.equal(epoch.ok, false);
+  assert.equal(epoch.reason, 'above_safe_integer');
+  assert.equal(index.ok, false);
+  assert.equal(index.reason, 'above_safe_integer');
+});
+
+test('the admitting domain ignores an old contract and an admission block outside the anchor bounds', () => {
+  const old = verifySlot({
+    chainId: 84532,
+    admitting: CONTRACT,
+    signedDomain: { name: 'Chit402', version: '13', chainId: 84532, verifyingContract: OTHER },
+    admissionBlock: 100,
+    previousAnchorBlock: 90,
+    showingAnchorBlock: 110,
+    paymentBlock: 100,
+  });
+  assert.equal(old.ignored, true);
+  assert.equal(old.reason, 'old_domain_ignored');
+  assert.equal(old.domain.version, DOMAIN_VERSION);
+  const late = verifySlot({
+    chainId: 84532,
+    admitting: CONTRACT,
+    signedDomain: { name: 'Chit402', version: '13', chainId: 84532, verifyingContract: CONTRACT },
+    admissionBlock: 120,
+    previousAnchorBlock: 90,
+    showingAnchorBlock: 110,
+    paymentBlock: 100,
+  });
+  assert.equal(late.ignored, true);
+  assert.equal(late.reason, 'admission_block_out_of_bounds');
+  assert.equal(DOMAIN_TYPE.includes('salt'), false);
+  assert.equal(PAYTO_CONTROL_TYPE, 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)');
+  assert.equal(REVOKE_TYPE, 'Revoke(address payTo,bytes32 keyHash)');
+  assert.equal(REVOKE_BY_KEY_TYPE, 'RevokeByKey(bytes32 keyHash)');
+});
+
+test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecked', () => {
+  const key = new Uint8Array(33);
+  key[0] = 2;
+  key[1] = 9;
+  const hash = keyHashOf(KEY_ALG_SECP256K1, key, sha256);
+  const other = keyHashOf(KEY_ALG_SECP256K1, key, (bytes) => sha256(Uint8Array.of(bytes[0] ^ 1, ...bytes.subarray(1))));
+  assert.ok(hash);
+  assert.notDeepEqual(Array.from(hash), Array.from(sha256(key)));
+  assert.equal(keyHashOf(KEY_ALG_SECP256K1, Uint8Array.of(4, ...new Uint8Array(64)), sha256), null);
+  const hour = 1_700_000_000;
+  assert.equal(judgePayTo({
+    alg: KEY_ALG_SECP256K1, key, keyHash: hash, expiry: BigInt(hour + 10),
+    showingHour: hour, receiptHour: hour, tombstoned: false, sha256,
+  }).ok, true);
+  assert.equal(judgePayTo({
+    alg: KEY_ALG_SECP256K1, key, keyHash: hash, expiry: BigInt(hour + 10),
+    showingHour: hour, receiptHour: hour, tombstoned: true, sha256,
+  }).reason, 'key_revoked_tombstone');
+  assert.equal(judgePayTo({
+    alg: KEY_ALG_SECP256K1, key, keyHash: hash, expiry: BigInt(hour),
+    showingHour: hour, receiptHour: hour - 1, tombstoned: false, sha256,
+  }).reason, 'expiry_not_after_hour');
+  assert.equal(judgePayTo({
+    alg: KEY_ALG_SECP256K1, key, keyHash: hash, expiry: BigInt(hour + 10),
+    showingHour: hour, receiptHour: hour + 10, tombstoned: false, sha256,
+  }).reason, 'key_expired');
+  assert.equal(judgePayTo({
+    alg: KEY_ALG_SECP256K1, key, keyHash: other, expiry: BigInt(hour + 10),
+    showingHour: hour, receiptHour: hour, tombstoned: false, sha256,
+  }).reason, 'key_hash_mismatch');
+  const digest = revokeByKeyDigest(keccak256, 84532, CONTRACT.slice(2), hash);
+  assert.equal(digest.length, 32);
+  assert.equal(EXAMPLE_ANCHOR_CODE_HASH, '0xcd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080');
+});
+
+test('D23 the CLI refuses a bad shape and an unpinned contract', () => {
+  const built = signedLine();
+  const dir = mkdtempSync(join(tmpdir(), 'v13cli-'));
+  const bad = join(dir, 'bad.json');
+  const ok = join(dir, 'ok.json');
+  writeFileSync(bad, JSON.stringify({ ...v13Receipt(built), leafHash: built.leaf }));
+  writeFileSync(ok, JSON.stringify(v13Receipt(built)));
+  const env = { ...process.env, CHIT402_HERMETIC: '1', BASE_RPC_URL: 'http://127.0.0.1:9' };
+  const a = spawnSync(process.execPath, [join(HERE, '../dist/cli.js'), bad, '--json'], { env, encoding: 'utf8' });
+  const b = spawnSync(process.execPath, [join(HERE, '../dist/cli.js'), ok, '--json'], { env, encoding: 'utf8' });
+  assert.equal(a.status, 1, a.stdout + a.stderr);
+  assert.equal(b.status, 2, b.stdout + b.stderr);
+  assert.match(b.stdout, /contract_not_pinned/);
+  assert.match(b.stdout, /anchor contract unaudited/);
+});
+
+test('D25 the flip list and the default RPC list are frozen', () => {
+  assert.throws(() => { CORPUS_FLIP_LIST.push('x'); });
+  assert.equal(Object.isFrozen(V13_RPC_DEFAULTS), true);
+  assert.equal(Object.isFrozen(V13_RPC_DEFAULTS[84532]), true);
+  assert.ok(V13_RPC_DEFAULTS[84532].length >= 3);
+});
+
+test('D01 a caller kid cannot widen the bundled pins', async () => {
+  const key = makeKey();
+  const att = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const e = signDoc(att, [...doc.entries, historyEntry(att, doc.head_hash)], { narrowing: [], contracts: [pinOf({ address: OTHER })] });
+  const r = await runScene({ payment: built.payment, logs: [] }, v13Receipt(built, { contract: OTHER }), (u) => ({
+    ...optionsFor(key, doc, u, JSON.stringify(e)),
+    trustedKids: [key.kid, att.kid],
+  }));
+  assert.notEqual(r.v.exit_code, 0);
+});
+
+test('D02 an embedded attacker key under the bundled kid is refused', async () => {
+  const key = makeKey();
+  const att = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const e = ext(att, doc, { narrowing: [] });
+  e.issuer_signature.kid = key.kid;
+  const r = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u, JSON.stringify(e)));
+  assert.equal(r.v.exit_code, 1, r.v.reason);
+});
+
+test('D03 a live document signed by another key adds no pin', async () => {
+  const key = makeKey();
+  const att = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const live = signDoc(att, [...doc.entries, historyEntry(att, doc.head_hash)], { narrowing: [] });
+  const fetchImpl = async () => new Response(JSON.stringify(live), { status: 200 });
+  const { h } = sceneHandler({ payment: built.payment, logs: [okLog(built)] });
+  const server = await listen(h);
+  try {
+    const out = await checkReceiptInput(JSON.stringify(v13Receipt(built, { contract: OTHER })), { ...optionsFor(key, doc, server.url), fetchImpl });
+    assert.equal(out.verdict.exit_code, 2);
+    assert.equal(out.verdict.reason, 'contract_not_pinned');
+    assert.ok(out.verdict.live_extension);
+  } finally {
+    await server.close();
+  }
+});
+
+test('D06 unknown, widening, and unpinned narrowing rows are refused', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = signDoc(key, [historyEntry(key, null)], { contracts: [pinOf({ retireHourStart: HOUR + 7200 })], narrowing: [] });
+  const rows = [
+    [{ chainId: 84532, address: CONTRACT, revokeAfterEpoch: 9, checkpoint: OTHER }],
+    [{ chainId: 84532, address: CONTRACT, retireHourStart: HOUR + 99999 }],
+    [{ chainId: 84532, address: OTHER, revokeAfterEpoch: 9 }],
+  ];
+  for (const row of rows) {
+    const e = ext(key, doc, { narrowing: row });
+    const r = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u, JSON.stringify(e)));
+    assert.equal(r.v.exit_code, 1, JSON.stringify(row));
+    assert.equal(r.v.reason, 'extension_widens_pin');
+  }
+});
+
+test('D08 caller leaf and size spellings are refused', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const cases = [
+    ['leaf', 'caller_supplied_leaf'],
+    ['leafHash', 'caller_supplied_leaf'],
+    ['leaf_hash', 'caller_supplied_leaf'],
+    ['treeSize', 'caller_supplied_tree_size'],
+    ['tree_size', 'caller_supplied_tree_size'],
+    ['size', 'caller_supplied_tree_size'],
+    ['root', 'bad_receipt'],
+  ];
+  for (const [name, reason] of cases) {
+    const rec = { ...v13Receipt(built), [name]: name.includes('ize') || name === 'size' ? 1 : built.leaf };
+    const out = await checkReceiptInput(JSON.stringify(rec), optionsFor(key, doc, 'http://127.0.0.1:9'));
+    assert.equal(out.verdict.exit_code, 1, name);
+    assert.equal(out.verdict.reason, reason, name);
+  }
+});
+
+test('D09 inclusion uses the anchored size', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const other = new Uint8Array(32).fill(7);
+  const left = leafHash(other).hash;
+  const root2 = hexOf(nodeHash(left, leafHash(built.line).hash).hash);
+  const rec = v13Receipt(built, { proof: [hexOf(left)] });
+  rec.index = 1;
+  const good = await runScene({ payment: built.payment, logs: [okLog(built, { root: root2, size: 2 })] }, rec, (u) => optionsFor(key, doc, u));
+  assert.equal(good.v.exit_code, 0, good.v.reason);
+  for (const size of [3, 4]) {
+    const bad = await runScene({ payment: built.payment, logs: [okLog(built, { root: root2, size })] }, rec, (u) => optionsFor(key, doc, u));
+    assert.equal(bad.v.exit_code, 1, `size ${size}`);
+    assert.equal(bad.v.reason, 'not_in_log');
+  }
+});
+
+test('D10 an anchored size above the cap is refused', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  for (const size of [2n ** 64n, 2n ** 53n, 2n ** 256n - 1n]) {
+    const r = await runScene({ payment: built.payment, logs: [okLog(built, { size })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+    assert.equal(r.v.exit_code, 1, String(size));
+    assert.equal(r.v.reason, 'tree_size_above_cap');
+  }
+});
+
+test('D11 the payment block is read by hash', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const ok = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(ok.v.exit_code, 0);
+  assert.ok(ok.calls.some(([method, params]) => method === 'eth_getBlockByHash' && params[0] === `0x${built.payment.blockHash}`));
+  assert.equal(ok.calls.some(([, params]) => JSON.stringify(params).includes('latest')), false);
+  const re = await runScene({ payment: built.payment, logs: [okLog(built)], reorg: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(re.v.exit_code, 1);
+  assert.equal(re.v.reason, 'reorged');
+});
+
+test('D12 a payment block past finalized is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const above = await runScene({ payment: built.payment, logs: [okLog(built)], payBlockNumber: `0x${(FIN + 1).toString(16)}` }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(above.v.exit_code, 2);
+  assert.equal(above.v.reason, 'block_not_final');
+  const at = await runScene({ payment: built.payment, logs: [okLog(built)], payBlockNumber: `0x${FIN.toString(16)}` }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(at.v.exit_code, 0, at.v.reason);
+});
+
+test('D13 a txHash at the wrong index is a payment mismatch', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const r = await runScene({ payment: built.payment, logs: [okLog(built)], txs: [`0x${'01'.repeat(32)}`, `0x${built.payment.txHash}`] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 1);
+  assert.equal(r.v.reason, 'payment_mismatch');
+});
+
+test('D16 and D17 the hourly close is the finalized boundary', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const fast = okLog(built, { kind: 1, stateRoot: '00'.repeat(32), block: FIN });
+  const hourly = okLog(built, { epoch: 2, kind: 0, size: 2, block: FIN + 1 });
+  const pending = await runScene({ payment: built.payment, logs: [fast, hourly] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(pending.v.exit_code, 2);
+  assert.equal(pending.v.reason, 'pending_hourly_close');
+  const landed = okLog(built, { epoch: 2, kind: 0, size: 2, block: FIN });
+  const final = await runScene({ payment: built.payment, logs: [okLog(built, { kind: 1, stateRoot: '00'.repeat(32), block: FIN - 1 }), landed] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(final.v.exit_code, 0, final.v.reason);
+});
+
+test('D18 a head past finalized is pre-anchor', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const r = await runScene({ payment: built.payment, logs: [okLog(built, { block: FIN + 1 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 2);
+  assert.equal(r.v.reason, 'pre_anchor');
+});
+
+test('D22 empty code does not match the pin', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const r = await runScene({ payment: built.payment, logs: [okLog(built)], code: '0x' }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(r.v.exit_code, 1);
+  assert.equal(r.v.reason, 'code_hash_mismatch');
+});
+
+test('D24 the library maps exit 0 and cannot add a pin', async () => {
+  const key = makeKey();
+  const att = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const { h } = sceneHandler({ payment: built.payment, logs: [okLog(built)] });
+  const server = await listen(h);
+  try {
+    const good = await verifyReceipt(v13Receipt(built), optionsFor(key, doc, server.url));
+    assert.equal(good.verdict.exit_code, 0);
+    assert.equal(good.overall, 'verified');
+    const shape = await verifyReceipt({ ...v13Receipt(built), size: 9 }, optionsFor(key, doc, server.url));
+    assert.equal(shape.verdict.exit_code, 1);
+    assert.equal(shape.overall, 'failed');
+    const e = signDoc(att, [...doc.entries, historyEntry(att, doc.head_hash)], { narrowing: [] });
+    const unp = await verifyReceipt(v13Receipt(built, { contract: OTHER }), {
+      ...optionsFor(key, doc, server.url, JSON.stringify(e)),
+      trustedKids: [key.kid, att.kid],
+    });
+    assert.notEqual(unp.verdict.exit_code, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test('D27 version 13 lookalikes are not dispatched', () => {
+  assert.equal(isExactV13Receipt({ v: 13n }), false);
+  assert.equal(isExactV13Receipt({ v: '13', schema: 'chit402.cs2.receipt.v1' }), false);
+  assert.equal(isExactV13Receipt({ v: 13, schema: 'chit402.cs2.receipt.v1 ' }), false);
+  assert.equal(isExactV13Receipt({ v: 13, schema: 'CHIT402.cs2.receipt.v1' }), false);
+});
+
+test('one repeated RPC URL is not two endpoints', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const { h } = sceneHandler({ payment: built.payment, logs: [okLog(built)] });
+  const server = await listen(h);
+  try {
+    const opts = optionsFor(key, doc, server.url);
+    opts.rpcUrls = [server.url, server.url];
+    const out = await checkReceiptInput(JSON.stringify(v13Receipt(built)), opts);
+    assert.equal(out.verdict.exit_code, 2);
+    assert.equal(out.verdict.reason, 'rpc_unconfigured');
+  } finally {
+    await server.close();
+  }
 });

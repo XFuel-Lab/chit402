@@ -21,6 +21,8 @@ import { readTestSnapshot } from '../internal/test-seam.js';
 import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
+import { verifySlot, type VerifySlotInput } from './slot.js';
+import { assessSlotValue } from './key-record.js';
 import {
   ANCHORED_TOPIC0,
   UNAUDITED_NOTE,
@@ -49,6 +51,7 @@ export interface V13Options {
   trustedKids?: readonly string[];
   fetchImpl?: typeof fetch;
   rpcUrl?: string | null;
+  rpcUrls?: readonly string[] | null;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -73,34 +76,44 @@ type LineModule = {
 
 type EcdsaModule = {
   P256: { p: bigint; a: bigint; b: bigint };
+  SECP256K1: { p: bigint; a: bigint; b: bigint };
   yParityByTrial: (digest: Uint8Array, sig64: Uint8Array, publicKey: Uint8Array, curve: unknown) => number;
   bytesToBig: (bytes: Uint8Array) => bigint;
   bigToBytes: (value: bigint, length: number) => Uint8Array;
 };
 
-let cores: { merkle: MerkleModule; line: LineModule; ecdsa: EcdsaModule; keccak: (message: Uint8Array) => Uint8Array } | null = null;
+let cores: {
+  merkle: MerkleModule;
+  line: LineModule;
+  ecdsa: EcdsaModule;
+  keccak: (message: Uint8Array) => Uint8Array;
+  sha256: (message: Uint8Array) => Uint8Array;
+} | null = null;
 
 async function loadCores() {
   if (cores) return cores;
-  const root = pathToFileURL(join(dirname(__filename), '../../../cs2-core/')).href;
-  const [merkle, line, curves, recover, bytes, keccakMod] = await Promise.all([
+  const root = pathToFileURL(join(dirname(__filename), '../../vendor/cs2-core/')).href;
+  const [merkle, line, curves, recover, bytes, keccakMod, shaMod] = await Promise.all([
     import(new URL('merkle/index.js', root).href),
     import(new URL('line/index.mjs', root).href),
     import(new URL('ecdsa/curves.js', root).href),
     import(new URL('ecdsa/recover.js', root).href),
     import(new URL('ecdsa/bytes.js', root).href),
     import(new URL('ecdsa/keccak.js', root).href),
+    import(new URL('sha256.js', root).href),
   ]);
   cores = {
     merkle: merkle as MerkleModule,
     line: line as LineModule,
     ecdsa: {
       P256: (curves as { P256: EcdsaModule['P256'] }).P256,
+      SECP256K1: (curves as { SECP256K1: EcdsaModule['SECP256K1'] }).SECP256K1,
       yParityByTrial: (recover as { yParityByTrial: EcdsaModule['yParityByTrial'] }).yParityByTrial,
       bytesToBig: (bytes as { bytesToBig: EcdsaModule['bytesToBig'] }).bytesToBig,
       bigToBytes: (bytes as { bigToBytes: EcdsaModule['bigToBytes'] }).bigToBytes,
     },
     keccak: (keccakMod as { keccak256: (message: Uint8Array) => Uint8Array }).keccak256,
+    sha256: (shaMod as { sha256: (message: Uint8Array) => Uint8Array }).sha256,
   };
   return cores;
 }
@@ -149,23 +162,44 @@ function hermetic(): boolean {
 }
 
 function rpcUrls(chainId: number, options: V13Options): string[] {
-  if (typeof options.rpcUrl === 'string' && options.rpcUrl.trim() !== '') return [options.rpcUrl.trim()];
-  const env = options.env ?? process.env;
-  const fromEnv = env.BASE_RPC_URL;
-  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return [fromEnv.trim()];
-  return [...(V13_RPC_DEFAULTS[chainId] ?? [])];
+  let raw: string[] = [];
+  if (options.rpcUrls && options.rpcUrls.length > 0) {
+    raw = options.rpcUrls.map((item) => item.trim()).filter((item) => item !== '');
+  } else if (typeof options.rpcUrl === 'string' && options.rpcUrl.trim() !== '') {
+    raw = [options.rpcUrl.trim()];
+  } else {
+    const env = options.env ?? process.env;
+    const fromEnv = env.BASE_RPC_URL;
+    if (typeof fromEnv === 'string' && fromEnv.trim() !== '') raw = [fromEnv.trim()];
+    else raw = [...(V13_RPC_DEFAULTS[chainId] ?? [])];
+  }
+  return [...new Set(raw)];
+}
+
+function rpcError(code: string): Error {
+  return Object.assign(new Error(code), { code });
 }
 
 async function rpc(urls: string[], method: string, params: unknown[]): Promise<unknown> {
-  let last: unknown = new Error('rpc_unreachable');
-  for (const url of urls) {
+  const unique = [...new Set(urls)];
+  if (unique.length < 2) throw rpcError('rpc_unconfigured');
+  const settled = await Promise.all(unique.map(async (url) => {
     try {
-      return await jsonRpc(url, method, params);
+      return { ok: true as const, value: await jsonRpc(url, method, params) };
     } catch (err) {
-      last = err;
+      return { ok: false as const, err };
     }
+  }));
+  const answers = settled.filter((item) => item.ok).map((item) => item.value);
+  if (answers.length < 2) {
+    const failed = settled.find((item) => !item.ok);
+    throw failed && !failed.ok ? failed.err : rpcError('rpc_unreachable');
   }
-  throw last;
+  const first = JSON.stringify(answers[0]);
+  for (const answer of answers.slice(1)) {
+    if (JSON.stringify(answer) !== first) throw rpcError('rpc_disagreement');
+  }
+  return answers[0];
 }
 
 function hexQty(n: number): string {
@@ -248,18 +282,82 @@ function decompressP256(compressed: Uint8Array, ecdsa: EcdsaModule): Uint8Array 
   return out;
 }
 
-function proveKey(line: LineModule, view: LineView, slotValue: Uint8Array | null, slotProof: { side: 'left' | 'right'; hash: string }[]) {
+function decompressOn(compressed: Uint8Array, curve: { p: bigint; a: bigint; b: bigint }, ecdsa: EcdsaModule): Uint8Array | null {
+  if (compressed.length < 33) return null;
+  const key = compressed.subarray(0, 33);
+  if (key[0] !== 2 && key[0] !== 3) return null;
+  const p = curve.p;
+  const x = ecdsa.bytesToBig(key.subarray(1));
+  const x2 = (x * x) % p;
+  const x3 = (x2 * x) % p;
+  const ax = (curve.a * x) % p;
+  let rhs = (x3 + ax + curve.b) % p;
+  let y = 1n;
+  let base = rhs % p;
+  let exp = (p + 1n) / 4n;
+  while (exp > 0n) {
+    if ((exp & 1n) === 1n) y = (y * base) % p;
+    base = (base * base) % p;
+    exp >>= 1n;
+  }
+  const odd = (y & 1n) === 1n;
+  if (odd !== (key[0] === 3)) y = (p - y) % p;
+  const out = new Uint8Array(65);
+  out[0] = 4;
+  out.set(ecdsa.bigToBytes(x, 32), 1);
+  out.set(ecdsa.bigToBytes(y, 32), 33);
+  return out;
+}
+
+function proveKey(
+  line: LineModule,
+  view: LineView,
+  slotValue: Uint8Array | null,
+  slotProof: string[],
+  slotInput: VerifySlotInput,
+  crypto: {
+    sha256: (message: Uint8Array) => Uint8Array;
+    keccak: (message: Uint8Array) => Uint8Array;
+    ecdsa: EcdsaModule;
+  },
+  hours: { showingHour: number | null; receiptHour: number | null },
+) {
   return (stateRoot: string): boolean => {
+    const judged = verifySlot(slotInput);
+    if (judged.ignored) return false;
     if (!slotValue) return false;
+    const use = assessSlotValue({
+      slotValue,
+      sha256: crypto.sha256,
+      keccak: crypto.keccak,
+      chainId: slotInput.chainId,
+      admitting: slotInput.admitting,
+      showingHour: hours.showingHour,
+      receiptHour: hours.receiptHour,
+      signatureOk: (digest, signature, key) => {
+        if (signature.length !== 65) return false;
+        const point = decompressOn(key, crypto.ecdsa.SECP256K1, crypto.ecdsa);
+        if (!point) return false;
+        try {
+          const parity = crypto.ecdsa.yParityByTrial(digest, signature.subarray(0, 64), point, crypto.ecdsa.SECP256K1);
+          return parity === signature[64];
+        } catch {
+          return false;
+        }
+      },
+    });
+    if (!use.ok) return false;
     const key = line.slotKey({ kind: 1, chainId: view.chainId, id: view.to.slice(2) });
     if (!key.ok) return false;
     const leaf = line.stateLeaf(key.bytes, slotValue);
     if (!leaf.ok) return false;
     let acc = leaf.bytes;
-    for (const step of slotProof) {
-      const sibling = hexToBytes(step.hash);
+    for (let i = 0; i < slotProof.length; i += 1) {
+      const sibling = hexToBytes(slotProof[i]);
       if (!sibling || sibling.length !== 32) return false;
-      const node = step.side === 'left' ? line.stateNode(sibling, acc) : line.stateNode(acc, sibling);
+      const byte = key.bytes[Math.floor(i / 8)] ?? 0;
+      const bit = (byte >> (7 - (i % 8))) & 1;
+      const node = bit === 1 ? line.stateNode(sibling, acc) : line.stateNode(acc, sibling);
       if (!node.ok) return false;
       acc = node.bytes;
     }
@@ -321,6 +419,15 @@ async function fetchLive(
   }
 }
 
+function combineNarrowing(base: Record<string, unknown> | null, extra: Record<string, unknown> | null): unknown {
+  const left = base && Array.isArray(base.narrowing) ? base.narrowing : [];
+  const right = extra && Array.isArray(extra.narrowing) ? extra.narrowing : [];
+  return [...left, ...right];
+}
+
+const LOG_SPAN = 4999;
+const ROTATION_TOPIC0 = '0x95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3';
+
 function blankWorld(history: V13History, extra: Partial<V13World> = {}): V13World {
   return {
     history,
@@ -345,41 +452,61 @@ function blankWorld(history: V13History, extra: Partial<V13World> = {}): V13Worl
   };
 }
 
-async function fetchEvents(urls: string[], address: string, epoch: number, finalized: number): Promise<AnchoredEvent[]> {
+async function fetchEvents(
+  urls: string[],
+  address: string,
+  epoch: number,
+  finalized: number,
+): Promise<{ events: AnchoredEvent[]; priorStatus: 'absent' | 'present' | 'unreadable' }> {
   const want = new Set<number>();
   if (epoch > 0) want.add(epoch - 1);
   want.add(epoch);
   const out: AnchoredEvent[] = [];
+  let priorStatus: 'absent' | 'present' | 'unreadable' = epoch > 0 ? 'absent' : 'present';
   const pull = async (n: number): Promise<number> => {
     const topic = topicUint(BigInt(n));
     if (!topic) return 0;
-    const result = await rpc(urls, 'eth_getLogs', [{
-      address,
-      fromBlock: '0x0',
-      toBlock: hexQty(finalized),
-      topics: [ANCHORED_TOPIC0, topic],
-    }]);
-    if (!Array.isArray(result)) return 0;
     let count = 0;
-    for (const item of result) {
-      const rec = asRecord(item);
-      if (!rec) continue;
-      const blockNumber = parseQty(rec.blockNumber);
-      const logIndex = parseQty(rec.logIndex);
-      const event = anchoredFromLog({
-        address: typeof rec.address === 'string' ? rec.address : undefined,
-        topics: Array.isArray(rec.topics) ? rec.topics.filter((t): t is string => typeof t === 'string') : undefined,
-        data: typeof rec.data === 'string' ? rec.data : undefined,
-        blockNumber: blockNumber ?? undefined,
-        blockHash: typeof rec.blockHash === 'string' ? rec.blockHash : undefined,
-        transactionHash: typeof rec.transactionHash === 'string' ? rec.transactionHash : undefined,
-        logIndex: logIndex ?? undefined,
-      });
-      if (event) {
-        out.push(event);
-        count += 1;
+    try {
+      for (let from = 0; from <= finalized; from += LOG_SPAN + 1) {
+        const to = Math.min(finalized, from + LOG_SPAN);
+        const result = await rpc(urls, 'eth_getLogs', [{
+          address,
+          fromBlock: hexQty(from),
+          toBlock: hexQty(to),
+          topics: [ANCHORED_TOPIC0, topic],
+        }]);
+        if (!Array.isArray(result)) {
+          if (n === epoch - 1) priorStatus = 'unreadable';
+          return 0;
+        }
+        for (const item of result) {
+          const rec = asRecord(item);
+          if (!rec) continue;
+          const blockNumber = parseQty(rec.blockNumber);
+          const logIndex = parseQty(rec.logIndex);
+          const event = anchoredFromLog({
+            address: typeof rec.address === 'string' ? rec.address : undefined,
+            topics: Array.isArray(rec.topics) ? rec.topics.filter((part): part is string => typeof part === 'string') : undefined,
+            data: typeof rec.data === 'string' ? rec.data : undefined,
+            blockNumber: blockNumber ?? undefined,
+            blockHash: typeof rec.blockHash === 'string' ? rec.blockHash : undefined,
+            transactionHash: typeof rec.transactionHash === 'string' ? rec.transactionHash : undefined,
+            logIndex: logIndex ?? undefined,
+          });
+          if (event) {
+            out.push(event);
+            count += 1;
+          }
+        }
       }
+    } catch (err) {
+      const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
+      if (code === 'rpc_disagreement' || n !== epoch - 1) throw err;
+      priorStatus = 'unreadable';
+      return 0;
     }
+    if (n === epoch - 1 && count > 0) priorStatus = 'present';
     return count;
   };
   for (const n of want) await pull(n);
@@ -389,7 +516,7 @@ async function fetchEvents(urls: string[], address: string, epoch: number, final
     const count = await pull(cursor);
     if (count === 0) break;
   }
-  return out;
+  return { events: out, priorStatus };
 }
 
 function addressFromWord(word: string): string | null {
@@ -454,23 +581,37 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     }
     sourceDoc = ext.doc;
     history = historyOf(ext.doc, 'file', true, null);
-    narrowing = signedPayload(ext.doc)?.narrowing ?? null;
+    narrowing = combineNarrowing(payload, signedPayload(ext.doc));
   } else {
     const live = await fetchLive(bundleDoc, trustedKids, options.fetchImpl);
     if (live.refused) liveExtension = live.refused;
     if (live.doc) {
       sourceDoc = live.doc;
       history = historyOf(live.doc, 'live', true, null);
-      narrowing = signedPayload(live.doc)?.narrowing ?? null;
+      narrowing = combineNarrowing(payload, signedPayload(live.doc));
     }
   }
   void sourceDoc;
 
   const parsed = parseV13Receipt(receipt);
-  const loaded = await loadCores();
+  let loaded: Awaited<ReturnType<typeof loadCores>> | null = null;
+  if (parsed.ok) {
+    try {
+      loaded = await loadCores();
+    } catch {
+      return verdictOf(runV13(receipt, blankWorld(history, {
+        snapshotSigned: true,
+        bundledPayload: payload,
+        narrowing,
+        liveExtension,
+        line: null,
+        lineReason: 'verifier_runtime_missing',
+      }), idleHooks()), version);
+    }
+  }
   let line: LineView | null = null;
   let lineReason: string | null = null;
-  if (parsed.ok) {
+  if (parsed.ok && loaded) {
     const bytes = hexToBytes(parsed.receipt.lineHex);
     const decoded = bytes ? loaded.line.decodeLine(bytes) : { ok: false as const, reason: 'bad_line' };
     if (!bytes || !decoded.ok) lineReason = 'bad_line';
@@ -491,15 +632,16 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     line,
     lineReason,
     rotatedTo: null,
-    rpcConfigured: urls.length > 0,
+    rpcConfigured: urls.length >= 2,
   };
 
-  if (!parsed.ok || !line || urls.length === 0) {
+  if (!parsed.ok || !line || !loaded || urls.length < 2) {
     return verdictOf(runV13(receipt, blankWorld(history, base), idleHooks()), version);
   }
 
   let finalizedNumber: number | null = null;
   let events: AnchoredEvent[] = [];
+  let priorStatus: V13World['priorStatus'] = 'absent';
   let codeHash: string | null = null;
   let anchorFrom: string | null = null;
   let anchorTo: string | null = null;
@@ -507,6 +649,10 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   let chainGenesis: number | null = null;
   let canonical: V13World['canonical'] = 'unreachable';
   let payment: PaymentView | null = null;
+  let rotationExplains = false;
+  let ownRetired: V13World['ownRetired'] = 'no';
+  let rpcReason: string | null = null;
+  let showingHour: number | null = null;
 
   try {
     const fin = asRecord(await rpc(urls, 'eth_getBlockByNumber', ['finalized', false]));
@@ -514,7 +660,9 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     if (finalizedNumber == null) {
       return verdictOf(runV13(receipt, blankWorld(history, { ...base, canonical: 'ok', finalizedNumber: null }), idleHooks()), version);
     }
-    events = await fetchEvents(urls, parsed.receipt.contract, parsed.receipt.epoch, finalizedNumber);
+    const fetched = await fetchEvents(urls, parsed.receipt.contract, parsed.receipt.epoch, finalizedNumber);
+    events = fetched.events;
+    priorStatus = fetched.priorStatus;
     const head = firstCovering(events, parsed.receipt.index, finalizedNumber);
     if (head) {
       const tx = asRecord(await rpc(urls, 'eth_getTransactionReceipt', [head.txHash]));
@@ -527,6 +675,17 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
       }
       const genesis = await callWord(urls, parsed.receipt.contract, '0x014af0c4');
       if (genesis != null) chainGenesis = Number(genesis);
+      const retired = await callWord(urls, parsed.receipt.contract, '0x2eb38ae0');
+      if (retired === 1n) {
+        const next = await callWord(urls, parsed.receipt.contract, '0x6ff968c3');
+        if (next == null) ownRetired = 'successor_unreadable';
+      }
+      if (head.hourStart <= BigInt(Number.MAX_SAFE_INTEGER)) showingHour = Number(head.hourStart);
+      const checkpoint = checkpointOf(payload, line.chainId, parsed.receipt.contract);
+      if (checkpoint && anchorFrom && anchorFrom.toLowerCase() !== checkpoint) {
+        const logs = await fetchRotation(urls, parsed.receipt.contract, finalizedNumber);
+        rotationExplains = rotationChain(logs, checkpoint, anchorFrom);
+      }
     }
     const pinPredecessor = predecessorOf(payload, line.chainId, parsed.receipt.contract);
     if (pinPredecessor && pinPredecessor !== ZERO_ADDRESS) {
@@ -543,58 +702,70 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     } else {
       const number = parseQty(byHash.number);
       const hash = typeof byHash.hash === 'string' ? byHash.hash : '';
-      const byNumber = number == null ? null : asRecord(await rpc(urls, 'eth_getBlockByNumber', [hexQty(number), false]));
-      const canonicalHash = byNumber && typeof byNumber.hash === 'string' ? byNumber.hash : null;
-      const judged = classifyCanonical({
-        rpcError: false,
-        block: number == null ? null : { number, hash },
-        finalizedNumber,
-        canonicalHash,
-        wantHash: line.blockHash,
-      });
-      canonical = judged === 'finality_unavailable' ? 'unreachable' : judged;
-      const txs = Array.isArray(byHash.transactions) ? byHash.transactions : [];
-      const at = txs[line.txIndex];
-      const txIndexMatch = typeof at === 'string' && at.toLowerCase() === line.txHash.toLowerCase();
-      const rec = asRecord(await rpc(urls, 'eth_getTransactionReceipt', [line.txHash]));
-      const tx = asRecord(await rpc(urls, 'eth_getTransactionByHash', [line.txHash]));
-      if (rec) {
-        const logs = Array.isArray(rec.logs) ? rec.logs : [];
-        payment = {
-          blockHash: typeof rec.blockHash === 'string' ? rec.blockHash : '',
-          txIndexMatch,
-          txTo: tx && typeof tx.to === 'string' ? tx.to : null,
-          input: tx && typeof tx.input === 'string' ? tx.input : '',
-          logs: logs.flatMap((item, index) => {
-            const row = asRecord(item);
-            if (!row || typeof row.address !== 'string' || !Array.isArray(row.topics)) return [];
-            const logIndex = parseQty(row.logIndex);
-            return [{
-              index: logIndex ?? index,
-              address: row.address,
-              topics: row.topics.filter((t): t is string => typeof t === 'string'),
-              data: typeof row.data === 'string' ? row.data : '0x',
-            }];
-          }),
-        };
+      if (!hash) {
+        canonical = 'unreachable';
+      } else {
+        const byNumber = number == null ? null : asRecord(await rpc(urls, 'eth_getBlockByNumber', [hexQty(number), false]));
+        const canonicalHash = byNumber && typeof byNumber.hash === 'string' ? byNumber.hash : null;
+        const judged = classifyCanonical({
+          rpcError: false,
+          block: number == null ? null : { number, hash },
+          finalizedNumber,
+          canonicalHash,
+          wantHash: line.blockHash,
+        });
+        canonical = judged === 'finality_unavailable' ? 'unreachable' : judged;
+        const txs = Array.isArray(byHash.transactions) ? byHash.transactions : [];
+        const at = txs[line.txIndex];
+        const txIndexMatch = typeof at === 'string' && at.toLowerCase() === line.txHash.toLowerCase();
+        const rec = asRecord(await rpc(urls, 'eth_getTransactionReceipt', [line.txHash]));
+        const tx = asRecord(await rpc(urls, 'eth_getTransactionByHash', [line.txHash]));
+        if (rec) {
+          const logs = Array.isArray(rec.logs) ? rec.logs : [];
+          payment = {
+            blockHash: typeof rec.blockHash === 'string' ? rec.blockHash : '',
+            txIndexMatch,
+            txTo: tx && typeof tx.to === 'string' ? tx.to : null,
+            input: tx && typeof tx.input === 'string' ? tx.input : '',
+            logs: receiptLogs(logs),
+          };
+        }
       }
     }
-  } catch {
+  } catch (err) {
+    const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
+    if (code === 'rpc_disagreement') rpcReason = 'rpc_disagreement';
     canonical = 'unreachable';
   }
 
-  const slotValue = parsed.ok ? parsed.receipt.slotValue : null;
-  const slotProof = parsed.ok ? parsed.receipt.slotProof : [];
+  const slotValue = parsed.receipt.slotValue;
+  const slotProof = parsed.receipt.slotProof;
   const hooks = {
     leafHash: loaded.merkle.leafHash,
     verifyInclusion: loaded.merkle.verifyInclusion,
-    proveKey: proveKey(loaded.line, line, slotValue, slotProof),
+    proveKey: proveKey(loaded.line, line, slotValue, slotProof, {
+      chainId: line.chainId,
+      admitting: parsed.receipt.contract,
+      signedDomain: null,
+      admissionBlock: null,
+      previousAnchorBlock: null,
+      showingAnchorBlock: null,
+      paymentBlock: line.blockNumber,
+    }, {
+      sha256: loaded.sha256,
+      keccak: loaded.keccak,
+      ecdsa: loaded.ecdsa,
+    }, {
+      showingHour,
+      receiptHour: showingHour,
+    }),
     sigmaOk: () => sigmaOk(loaded.line, loaded.ecdsa, line.bytes, slotValue),
   };
   return verdictOf(runV13(receipt, blankWorld(history, {
     ...base,
     finalizedNumber,
     events,
+    priorStatus,
     codeHash,
     anchorFrom,
     anchorTo,
@@ -602,6 +773,9 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     chainGenesis,
     canonical,
     payment,
+    rotationExplains,
+    ownRetired,
+    rpcReason,
     rpcConfigured: true,
   }), hooks), version);
 }
@@ -613,6 +787,85 @@ function idleHooks() {
     proveKey: () => false,
     sigmaOk: () => false,
   };
+}
+
+function receiptLogs(raw: unknown[]): PaymentView['logs'] {
+  const rows: { logIndex: number; row: Record<string, unknown> }[] = [];
+  for (const item of raw) {
+    const row = asRecord(item);
+    if (!row || typeof row.address !== 'string' || !Array.isArray(row.topics)) continue;
+    const logIndex = parseQty(row.logIndex);
+    if (logIndex == null) continue;
+    rows.push({ logIndex, row });
+  }
+  rows.sort((a, b) => a.logIndex - b.logIndex);
+  if (rows.length === 0) return [];
+  const blockOf = (row: Record<string, unknown>) => (typeof row.blockHash === 'string' ? row.blockHash.toLowerCase() : '');
+  const txOf = (row: Record<string, unknown>) => (typeof row.transactionHash === 'string' ? row.transactionHash.toLowerCase() : '');
+  const block0 = blockOf(rows[0].row);
+  const tx0 = txOf(rows[0].row);
+  for (let i = 0; i < rows.length; i += 1) {
+    if (i > 0 && rows[i].logIndex !== rows[i - 1].logIndex + 1) return [];
+    const block = blockOf(rows[i].row);
+    const tx = txOf(rows[i].row);
+    if (block0 && block && block !== block0) return [];
+    if (tx0 && tx && tx !== tx0) return [];
+  }
+  return rows.map((item, index) => ({
+    index,
+    address: String(item.row.address),
+    topics: (item.row.topics as unknown[]).filter((topic): topic is string => typeof topic === 'string'),
+    data: typeof item.row.data === 'string' ? item.row.data : '0x',
+  }));
+}
+
+async function fetchRotation(urls: string[], address: string, finalized: number): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (let from = 0; from <= finalized; from += LOG_SPAN + 1) {
+    const to = Math.min(finalized, from + LOG_SPAN);
+    const result = await rpc(urls, 'eth_getLogs', [{
+      address,
+      fromBlock: hexQty(from),
+      toBlock: hexQty(to),
+      topics: [ROTATION_TOPIC0],
+    }]);
+    if (Array.isArray(result)) out.push(...result);
+  }
+  return out;
+}
+
+function rotationChain(logs: unknown[], checkpoint: string, anchorFrom: string): boolean {
+  const steps: { version: bigint; oldAddr: string; newAddr: string }[] = [];
+  for (const item of logs) {
+    const rec = asRecord(item);
+    if (!rec || typeof rec.data !== 'string') continue;
+    const body = rec.data.startsWith('0x') ? rec.data.slice(2) : rec.data;
+    if (!/^[0-9a-fA-F]{192}$/.test(body)) continue;
+    const oldAddr = `0x${body.slice(88, 128).toLowerCase()}`;
+    const newAddr = `0x${body.slice(152, 192).toLowerCase()}`;
+    steps.push({ version: BigInt(`0x${body.slice(0, 64)}`), oldAddr, newAddr });
+  }
+  steps.sort((a, b) => (a.version < b.version ? -1 : a.version > b.version ? 1 : 0));
+  let current = checkpoint.toLowerCase();
+  let moved = false;
+  for (const step of steps) {
+    if (step.oldAddr !== current) continue;
+    current = step.newAddr;
+    moved = true;
+  }
+  return moved && current === anchorFrom.toLowerCase();
+}
+
+function checkpointOf(payload: Record<string, unknown> | null, chainId: number, address: string): string | null {
+  const list = payload?.contracts;
+  if (!Array.isArray(list)) return null;
+  for (const item of list) {
+    const row = asRecord(item);
+    if (!row || row.chainId !== chainId) continue;
+    if (typeof row.address !== 'string' || row.address.toLowerCase() !== address.toLowerCase()) continue;
+    return typeof row.checkpoint === 'string' ? row.checkpoint.toLowerCase() : null;
+  }
+  return null;
 }
 
 function predecessorOf(payload: Record<string, unknown> | null, chainId: number, address: string): string | null {

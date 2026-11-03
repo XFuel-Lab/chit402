@@ -850,6 +850,8 @@ export interface CheckReceiptOptions {
   /** Default true. Exit 0 requires this check to have passed. */
   checkPayer?: boolean;
   rpcUrl?: string;
+  /** Two or more agreeing endpoints. One URL is not enough for a v13 anchor read. */
+  rpcUrls?: readonly string[];
   solanaRpcUrl?: string;
   /** Test seam. Not a CLI flag. */
   fetchImpl?: typeof fetch;
@@ -968,6 +970,7 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
       trustedKids,
       fetchImpl: options.fetchImpl,
       rpcUrl: options.rpcUrl,
+      rpcUrls: options.rpcUrls,
     }));
     return linesOutcome(verdict);
   }

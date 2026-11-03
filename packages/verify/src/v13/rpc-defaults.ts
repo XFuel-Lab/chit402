@@ -9,5 +9,7 @@ export const V13_RPC_DEFAULTS: Readonly<Record<number, readonly string[]>> = Obj
   ]),
   84532: Object.freeze([
     'https://sepolia.base.org',
+    'https://base-sepolia-rpc.publicnode.com',
+    'https://sepolia.base.llamarpc.com',
   ]),
 });

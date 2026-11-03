@@ -114,7 +114,7 @@ export interface ParsedReceipt {
   contract: string;
   proof: string[];
   slotValue: Uint8Array | null;
-  slotProof: { side: 'left' | 'right'; hash: string }[];
+  slotProof: string[];
   lineHex: string;
 }
 
@@ -161,6 +161,16 @@ export interface V13World {
   lineReason: string | null;
   /** Address a rotation log named. Never a trust input. */
   rotatedTo: string | null;
+  /** A well-formed rotation chain reaches the anchor sender. Not a pass. */
+  rotationExplains?: boolean;
+  /**
+   * Epoch e-1. `absent` is an empty successful read (genesis at epoch 1).
+   * `unreadable` is a null or failed read, including at epoch 1.
+   */
+  priorStatus?: 'absent' | 'present' | 'unreadable';
+  /** v0 reverts retired(); that is not retired. */
+  ownRetired?: 'no' | 'successor_unreadable';
+  rpcReason?: string | null;
   payment: PaymentView | null;
   canonical: 'ok' | 'unreachable' | 'unknown_block' | 'not_final' | 'reorged' | 'finality_unavailable';
 }
@@ -309,6 +319,12 @@ const MESSAGES: Record<string, string> = {
   issuer_history_not_extension: 'The issuer-history file is not a narrowing extension of the bundled snapshot.',
   issuer_history_invalid: 'The issuer-history document is invalid.',
   signature_invalid: 'The issuer-history signature is invalid.',
+  unknown_anchor_kind: 'The anchor kind is not recognised.',
+  checkpoint_rotated: 'update chit402-verify',
+  prior_epoch_missing: 'The previous epoch anchor could not be read.',
+  rpc_disagreement: 'The RPCs did not agree. The receipt could not be checked.',
+  verifier_runtime_missing: 'The verifier could not load its line codec.',
+  above_safe_integer: 'The receipt index or epoch is above the verifier cap.',
 };
 
 function messageOf(reason: string): string {
@@ -327,7 +343,9 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
   const lineBody = value.line.startsWith('0x') ? value.line.slice(2) : value.line;
   if (!/^[0-9a-f]{2048}$/.test(lineBody)) return { ok: false, exit: 1, reason: 'bad_receipt' };
   if (!isJsonInteger(value.index) || value.index < 0) return { ok: false, exit: 1, reason: 'bad_receipt' };
+  if (!Number.isSafeInteger(value.index)) return { ok: false, exit: 1, reason: 'above_safe_integer' };
   if (!isJsonInteger(value.epoch) || value.epoch < 0) return { ok: false, exit: 1, reason: 'bad_receipt' };
+  if (!Number.isSafeInteger(value.epoch)) return { ok: false, exit: 1, reason: 'above_safe_integer' };
   if (typeof value.contract !== 'string' || !normHex(value.contract, 20)) return { ok: false, exit: 1, reason: 'bad_receipt' };
   if (!Array.isArray(value.proof) || value.proof.length > 64) return { ok: false, exit: 1, reason: 'bad_receipt' };
   const proof: string[] = [];
@@ -349,15 +367,15 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
     }
     slotValue = raw;
   }
-  const slotProof: { side: 'left' | 'right'; hash: string }[] = [];
+  const slotProof: string[] = [];
   if (hasOwn(value, 'slotProof')) {
     if (!Array.isArray(value.slotProof)) return { ok: false, exit: 1, reason: 'bad_receipt' };
     for (const step of value.slotProof) {
-      if (!isPlain(step)) return { ok: false, exit: 1, reason: 'bad_receipt' };
-      if (step.side !== 'left' && step.side !== 'right') return { ok: false, exit: 1, reason: 'bad_receipt' };
-      const hash = typeof step.hash === 'string' ? normHash(step.hash) : null;
+      if (isPlain(step) && hasOwn(step, 'side')) return { ok: false, exit: 1, reason: 'bad_receipt' };
+      const raw = typeof step === 'string' ? step : (isPlain(step) && typeof step.hash === 'string' ? step.hash : '');
+      const hash = normHash(raw);
       if (!hash) return { ok: false, exit: 1, reason: 'bad_receipt' };
-      slotProof.push({ side: step.side, hash });
+      slotProof.push(hash);
     }
   }
   return {
@@ -630,10 +648,23 @@ export function paymentStatus(line: LineView, payment: PaymentView): 'wrong_bloc
   }
   if (line.method === METHOD_PERMIT2) {
     if (!payment.txTo || payment.txTo.toLowerCase() !== PERMIT2_ADDRESS) return 'payment_mismatch';
-    const input = payment.input.startsWith('0x') ? payment.input : `0x${payment.input}`;
-    if (!input.toLowerCase().startsWith(PERMIT2_SELECTOR)) return 'payment_mismatch';
-    const nonce = line.nonce.slice(2).toLowerCase();
-    if (!input.toLowerCase().includes(nonce)) return 'payment_mismatch';
+    const body = (payment.input.startsWith('0x') ? payment.input.slice(2) : payment.input).toLowerCase();
+    if (!body.startsWith(PERMIT2_SELECTOR.slice(2))) return 'payment_mismatch';
+    if (body.length < 8 + 64 * 7) return 'payment_mismatch';
+    const wordAt = (n: number) => body.slice(8 + n * 64, 8 + (n + 1) * 64);
+    const token = `0x${wordAt(0).slice(24)}`;
+    const nonce = `0x${wordAt(2)}`;
+    const owner = `0x${wordAt(6).slice(24)}`;
+    let amount: bigint;
+    try {
+      amount = BigInt(`0x${wordAt(1)}`);
+    } catch {
+      return 'payment_mismatch';
+    }
+    if (token !== usdc) return 'payment_mismatch';
+    if (amount !== line.value) return 'payment_mismatch';
+    if (nonce !== line.nonce.toLowerCase()) return 'payment_mismatch';
+    if (owner !== line.from.toLowerCase()) return 'payment_mismatch';
     return 'ok';
   }
   return 'payment_mismatch';
@@ -665,34 +696,55 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   const applied = applyNarrowing(listed.pins, narrowing.rows);
   if (!applied.ok) return fail(1, applied.reason, world, { key_window: 'fail' }, messageOf(applied.reason));
   if (!world.line) {
+    if (world.lineReason === 'verifier_runtime_missing') {
+      return fail(2, 'verifier_runtime_missing', world, { anchor: 'could_not_check' }, messageOf('verifier_runtime_missing'));
+    }
     return fail(1, 'bad_line', world, { shape: 'fail' }, world.lineReason || messageOf('bad_line'));
   }
   const pin = applied.pins.find((item) => item.chainId === world.line?.chainId && item.address === parsed.receipt.contract) ?? null;
   if (!pin) return fail(2, 'contract_not_pinned', world, { anchor: 'could_not_check' }, messageOf('contract_not_pinned'));
   if (!world.rpcConfigured) return fail(2, 'rpc_unconfigured', world, { anchor: 'could_not_check' }, messageOf('rpc_unconfigured'));
+  if (world.rpcReason === 'rpc_disagreement') return fail(2, 'rpc_disagreement', world, { anchor: 'could_not_check' }, messageOf('rpc_disagreement'));
   if (world.canonical === 'unreachable') return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
   if (world.finalizedNumber == null) return fail(2, 'finality_unavailable', world, { anchor: 'could_not_check' }, messageOf('finality_unavailable'));
-  const head = firstCovering(world.events, parsed.receipt.index, world.finalizedNumber);
+  const mine = world.events.filter((event) => event.address.toLowerCase() === parsed.receipt.contract);
+  const head = firstCovering(mine, parsed.receipt.index, world.finalizedNumber);
   if (!head) return fail(2, 'pre_anchor', world, { anchor: 'could_not_check', log_inclusion: 'could_not_check' }, messageOf('pre_anchor'));
   const sized = treeSizeFromHead(head.size);
   if (!sized.ok) return fail(1, 'tree_size_above_cap', world, { log_inclusion: 'fail' }, messageOf('tree_size_above_cap'));
+  if (head.kind !== 0 && head.kind !== 1) {
+    return fail(1, 'unknown_anchor_kind', world, { anchor: 'fail' }, messageOf('unknown_anchor_kind'));
+  }
   if (head.epoch !== BigInt(parsed.receipt.epoch)) {
     return fail(1, 'not_first_anchor', world, { anchor: 'fail' }, messageOf('not_first_anchor'));
   }
-  const priors = world.events.filter((event) => event.epoch === head.epoch - 1n && event.blockNumber <= (world.finalizedNumber as number));
+  if (head.epoch > 0n && world.priorStatus === 'unreadable') {
+    return fail(2, 'prior_epoch_missing', world, { anchor: 'could_not_check' }, messageOf('prior_epoch_missing'));
+  }
+  const priors = mine.filter((event) => event.epoch === head.epoch - 1n && event.blockNumber <= (world.finalizedNumber as number));
   priors.sort((a, b) => b.logIndex - a.logIndex);
   const prior = priors[0];
+  if (head.epoch > 1n && !prior) {
+    return fail(2, 'prior_epoch_missing', world, { anchor: 'could_not_check' }, messageOf('prior_epoch_missing'));
+  }
   if (head.epoch > 0n && prior && prior.size > BigInt(parsed.receipt.index)) {
     return fail(1, 'not_first_anchor', world, { anchor: 'fail' }, messageOf('not_first_anchor'));
   }
   const sender = trustedSender(pin, world.rotatedTo);
   if (!world.anchorFrom || !world.anchorTo || world.anchorFrom.toLowerCase() !== sender.toLowerCase() || world.anchorTo.toLowerCase() !== pin.address) {
+    if (!world.anchorFrom || !world.anchorTo) {
+      return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
+    }
+    if (world.anchorTo.toLowerCase() === pin.address && world.rotationExplains === true) {
+      return fail(2, 'checkpoint_rotated', world, { anchor: 'could_not_check' }, 'update chit402-verify');
+    }
     return fail(1, 'anchor_sender_mismatch', world, { anchor: 'fail' }, messageOf('anchor_sender_mismatch'));
   }
   if (!world.codeHash) return fail(2, 'code_unreadable', world, { anchor: 'could_not_check' }, messageOf('code_unreadable'));
   if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {
     return fail(1, 'code_hash_mismatch', world, { anchor: 'fail' }, messageOf('code_hash_mismatch'));
   }
+  // A genesisHourStart() revert is v0 (no getter). The pin's bounds stand.
   if (world.chainGenesis != null && world.chainGenesis !== pin.genesisHourStart) {
     return fail(1, 'hour_outside_coverage', world, { anchor: 'fail' }, messageOf('hour_outside_coverage'));
   }
@@ -708,11 +760,14 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
     if (world.successor === 'unreadable') return fail(2, 'successor_unreadable', world, { anchor: 'could_not_check' }, messageOf('successor_unreadable'));
     if (world.successor !== 'match') return fail(1, 'lineage_successor_mismatch', world, { anchor: 'fail' }, messageOf('lineage_successor_mismatch'));
   }
+  if (world.ownRetired === 'successor_unreadable') {
+    return fail(2, 'successor_unreadable', world, { anchor: 'could_not_check' }, messageOf('successor_unreadable'));
+  }
   const leaf = hooks.leafHash(world.line.bytes);
   if (!leaf.ok) return fail(1, 'bad_line', world, { shape: 'fail' }, messageOf('bad_line'));
   const included = hooks.verifyInclusion(bytesToHex(leaf.hash), parsed.receipt.index, sized.size, head.root, parsed.receipt.proof);
   if (!included.ok) return fail(1, 'not_in_log', world, { log_inclusion: 'fail' }, messageOf('not_in_log'));
-  const hourly = firstHourly(world.events, parsed.receipt.index, world.finalizedNumber);
+  const hourly = firstHourly(mine, parsed.receipt.index, world.finalizedNumber);
   const stateRoot = hourly ? hourly.stateRoot : head.stateRoot;
   const proven = hooks.proveKey(stateRoot);
   if (!proven && !hourly) {
