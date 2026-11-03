@@ -26,6 +26,6 @@ test('cs2 hpke seal suite (gateway CI hook)', () => {
   const passed = out.match(/^# pass (\d+)$/m);
   const failed = out.match(/^# fail (\d+)$/m);
   assert.ok(passed, out.slice(-2000));
-  assert.equal(passed[1], '19');
+  assert.equal(passed[1], '23');
   assert.equal(failed && failed[1], '0');
 });

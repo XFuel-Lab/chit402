@@ -133,7 +133,10 @@ export function deriveKeyPair(ikm) {
   prk.fill(0);
   if (!sk) return fail('bad_key');
   const pk = x25519.getPublicKey(sk);
-  if (!pk) return fail('bad_key');
+  if (!pk) {
+    sk.fill(0);
+    return fail('bad_key');
+  }
   return { ok: true, sk, pk };
 }
 
@@ -165,6 +168,7 @@ function encapWith(pkR, skE, skS) {
     }
     sharedDh = concat([dhER, dhSR]);
     kemContext = concat([pkE, pkR, pkS]);
+    dhER.fill(0);
     dhSR.fill(0);
   } else {
     sharedDh = dhER;
@@ -172,7 +176,10 @@ function encapWith(pkR, skE, skS) {
   }
   const shared = extractAndExpand(sharedDh, kemContext);
   sharedDh.fill(0);
-  if (!shared) return fail('open_failed');
+  if (!shared) {
+    pkE.fill(0);
+    return fail('open_failed');
+  }
   return { ok: true, shared, enc: pkE };
 }
 
@@ -181,15 +188,25 @@ function decapWith(enc, skR, pkS) {
   if (!(skR instanceof Uint8Array) || skR.length !== 32) return fail('bad_key');
   const pkR = x25519.getPublicKey(skR);
   const dhRE = dh(skR, enc);
-  if (!pkR || !dhRE) return fail('open_failed');
+  if (!pkR || !dhRE) {
+    if (dhRE) dhRE.fill(0);
+    return fail('open_failed');
+  }
   let sharedDh;
   let kemContext;
   if (pkS) {
-    if (!(pkS instanceof Uint8Array) || pkS.length !== 32) return fail('bad_key');
+    if (!(pkS instanceof Uint8Array) || pkS.length !== 32) {
+      dhRE.fill(0);
+      return fail('bad_key');
+    }
     const dhRS = dh(skR, pkS);
-    if (!dhRS) return fail('open_failed');
+    if (!dhRS) {
+      dhRE.fill(0);
+      return fail('open_failed');
+    }
     sharedDh = concat([dhRE, dhRS]);
     kemContext = concat([enc, pkR, pkS]);
+    dhRE.fill(0);
     dhRS.fill(0);
   } else {
     sharedDh = dhRE;
@@ -221,7 +238,13 @@ export function keySchedule(mode, sharedSecret, info, psk, pskId) {
   const key = labeledExpand(SUITE_HPKE, secret, 'key', keyScheduleContext, NK);
   const baseNonce = labeledExpand(SUITE_HPKE, secret, 'base_nonce', keyScheduleContext, NN);
   const exporterSecret = labeledExpand(SUITE_HPKE, secret, 'exp', keyScheduleContext, NH);
-  if (!key || !baseNonce || !exporterSecret) return fail('open_failed');
+  if (!key || !baseNonce || !exporterSecret) {
+    if (secret) secret.fill(0);
+    if (key) key.fill(0);
+    if (baseNonce) baseNonce.fill(0);
+    if (exporterSecret) exporterSecret.fill(0);
+    return fail('open_failed');
+  }
   return {
     ok: true,
     keyScheduleContext,
@@ -248,6 +271,11 @@ function wipeSchedule(ctx) {
   for (const name of ['key', 'baseNonce', 'exporterSecret', 'secret', 'sharedSecret']) {
     if (ctx[name]) ctx[name].fill(0);
   }
+}
+
+/** Drop key-schedule secrets. One-shot seal and open call this, and so does every multi-shot caller after its last use. */
+export function releaseContext(ctx) {
+  wipeSchedule(ctx);
 }
 
 /**
@@ -290,7 +318,10 @@ export function computeNonce(baseNonce, seq) {
     out[i] = x;
     n = Math.floor(n / 256);
   }
-  if (n !== 0) return null;
+  if (n !== 0) {
+    out.fill(0);
+    return null;
+  }
   return out;
 }
 
@@ -327,7 +358,7 @@ export function sealBase(pkR, info, aad, pt, esk) {
   const setup = setupS({ pkR, skE: esk, info, mode: MODE_BASE });
   if (!setup.ok) return setup;
   const sealed = contextSeal(setup, 0, aad, pt);
-  wipeSchedule(setup);
+  releaseContext(setup);
   if (!sealed.ok) return sealed;
   return { ok: true, enc: setup.enc, ct: sealed.ct };
 }
@@ -337,7 +368,7 @@ export function openBase(enc, skR, info, aad, ct) {
   const setup = setupR({ enc, skR, info, mode: MODE_BASE });
   if (!setup.ok) return setup;
   const opened = contextOpen(setup, 0, aad, ct);
-  wipeSchedule(setup);
+  releaseContext(setup);
   if (!opened.ok) return opened;
   return { ok: true, pt: opened.pt };
 }

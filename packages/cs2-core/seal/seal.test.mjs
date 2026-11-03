@@ -6,7 +6,7 @@
  * same assertion.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { dirname, join } from 'node:path';
@@ -19,7 +19,7 @@ import { expand, extract } from '@noble/hashes/hkdf.js';
 import { hmac } from '@noble/hashes/hmac.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { x25519 } from '@noble/curves/ed25519.js';
-import { readOpenAttempts, resetOpenAttempts } from './core.js';
+import { readAeadCalls, readOpenAttempts, resetProbes } from './probe.js';
 import {
   DUMMY_RECIPIENT_PK,
   DK_BYTES,
@@ -51,6 +51,7 @@ import {
   contextOpen,
   contextSeal,
   deriveKeyPair,
+  releaseContext,
   sealBase,
   setupR,
   setupS,
@@ -282,15 +283,6 @@ test('RFC 9180 X25519 HKDF-SHA256 ChaCha20-Poly1305 vectors', () => {
       psk,
       pskId,
     });
-    assert.equal(send.ok, true, `setupS ${vec.mode} ${send.reason || ''}`);
-    assert.equal(hex(send.enc), vec.enc, `enc ${vec.mode}`);
-    assert.equal(hex(send.sharedSecret), vec.shared_secret, `ss ${vec.mode}`);
-    assert.equal(hex(send.keyScheduleContext), vec.key_schedule_context, `ksc ${vec.mode}`);
-    assert.equal(hex(send.secret), vec.secret, `secret ${vec.mode}`);
-    assert.equal(hex(send.key), vec.key, `key ${vec.mode}`);
-    assert.equal(hex(send.baseNonce), vec.base_nonce, `nonce ${vec.mode}`);
-    assert.equal(hex(send.exporterSecret), vec.exporter_secret, `exp ${vec.mode}`);
-
     const recv = setupR({
       mode: vec.mode,
       enc: fromHex(vec.enc),
@@ -300,30 +292,46 @@ test('RFC 9180 X25519 HKDF-SHA256 ChaCha20-Poly1305 vectors', () => {
       psk,
       pskId,
     });
-    assert.equal(recv.ok, true, `setupR ${vec.mode}`);
-    assert.equal(hex(recv.key), vec.key);
+    try {
+      assert.equal(send.ok, true, `setupS ${vec.mode} ${send.reason || ''}`);
+      assert.equal(hex(send.enc), vec.enc, `enc ${vec.mode}`);
+      assert.equal(hex(send.sharedSecret), vec.shared_secret, `ss ${vec.mode}`);
+      assert.equal(hex(send.keyScheduleContext), vec.key_schedule_context, `ksc ${vec.mode}`);
+      assert.equal(hex(send.secret), vec.secret, `secret ${vec.mode}`);
+      assert.equal(hex(send.key), vec.key, `key ${vec.mode}`);
+      assert.equal(hex(send.baseNonce), vec.base_nonce, `nonce ${vec.mode}`);
+      assert.equal(hex(send.exporterSecret), vec.exporter_secret, `exp ${vec.mode}`);
+      assert.equal(recv.ok, true, `setupR ${vec.mode}`);
+      assert.equal(hex(recv.key), vec.key);
 
-    assert.equal(vec.encryptions.length, 257);
-    for (let i = 0; i < vec.encryptions.length; i += 1) {
-      const row = vec.encryptions[i];
-      const aad = fromHex(row.aad);
-      const pt = fromHex(row.pt);
-      assert.equal(hex(computeNonce(send.baseNonce, i)), row.nonce, `nonce ${vec.mode}:${i}`);
-      const ct = contextSeal(send, i, aad, pt);
-      assert.equal(ct.ok, true);
-      assert.equal(hex(ct.ct), row.ct, `ct ${vec.mode}:${i}`);
-      const back = contextOpen(recv, i, aad, fromHex(row.ct));
-      assert.equal(back.ok, true);
-      assert.equal(hex(back.pt), row.pt);
-      const flipped = fromHex(row.ct);
-      flipped[0] ^= 0x01;
-      const rejected = contextOpen(recv, i, aad, flipped);
-      assert.equal(JSON.stringify(rejected), '{"ok":false,"reason":"open_failed"}');
-    }
-    for (const row of vec.exports) {
-      const exported = contextExport(recv, fromHex(row.exporter_context), row.L);
-      assert.equal(exported.ok, true);
-      assert.equal(hex(exported.bytes), row.exported_value, `export ${vec.mode}`);
+      assert.equal(vec.encryptions.length, 257);
+      for (let i = 0; i < vec.encryptions.length; i += 1) {
+        const row = vec.encryptions[i];
+        const aad = fromHex(row.aad);
+        const pt = fromHex(row.pt);
+        assert.equal(hex(computeNonce(send.baseNonce, i)), row.nonce, `nonce ${vec.mode}:${i}`);
+        const ct = contextSeal(send, i, aad, pt);
+        assert.equal(ct.ok, true);
+        assert.equal(hex(ct.ct), row.ct, `ct ${vec.mode}:${i}`);
+        const back = contextOpen(recv, i, aad, fromHex(row.ct));
+        assert.equal(back.ok, true);
+        assert.equal(hex(back.pt), row.pt);
+        const flipped = fromHex(row.ct);
+        flipped[0] ^= 0x01;
+        const rejected = contextOpen(recv, i, aad, flipped);
+        assert.equal(JSON.stringify(rejected), '{"ok":false,"reason":"open_failed"}');
+      }
+      for (const row of vec.exports) {
+        const exported = contextExport(recv, fromHex(row.exporter_context), row.L);
+        assert.equal(exported.ok, true);
+        assert.equal(hex(exported.bytes), row.exported_value, `export ${vec.mode}`);
+      }
+    } finally {
+      releaseContext(send);
+      releaseContext(recv);
+      eph.sk.fill(0);
+      recip.sk.fill(0);
+      if (sender) sender.sk.fill(0);
     }
   }
 
@@ -351,8 +359,59 @@ test('RFC 9180 X25519 HKDF-SHA256 ChaCha20-Poly1305 vectors', () => {
   assertNoMaterial(zeroPk, [probe.sk]);
 });
 
+const PINNED_TARBALLS = Object.freeze({
+  '@noble/ciphers': '4a398bcc280c8742d474f9162f6d3c153e52ab1078e8ab592b4720410fb3c3e9',
+  '@noble/curves': '55279c71b0201d6c0e58d0206d15825359e02a3932f326ba7b7909ac2d334aa9',
+  '@noble/hashes': 'e1946149b780017b2564fcc092cb01c04e1d7f20627d0296c17da8868f4436dc',
+});
+
+const PINNED_FILES = Object.freeze([
+  'node_modules/@noble/ciphers/LICENSE',
+  'node_modules/@noble/ciphers/_arx.js',
+  'node_modules/@noble/ciphers/_poly1305.js',
+  'node_modules/@noble/ciphers/chacha.js',
+  'node_modules/@noble/ciphers/package.json',
+  'node_modules/@noble/ciphers/utils.js',
+  'node_modules/@noble/curves/LICENSE',
+  'node_modules/@noble/curves/abstract/curve.js',
+  'node_modules/@noble/curves/abstract/edwards.js',
+  'node_modules/@noble/curves/abstract/fft.js',
+  'node_modules/@noble/curves/abstract/frost.js',
+  'node_modules/@noble/curves/abstract/hash-to-curve.js',
+  'node_modules/@noble/curves/abstract/modular.js',
+  'node_modules/@noble/curves/abstract/montgomery.js',
+  'node_modules/@noble/curves/abstract/oprf.js',
+  'node_modules/@noble/curves/ed25519.js',
+  'node_modules/@noble/curves/package.json',
+  'node_modules/@noble/curves/utils.js',
+  'node_modules/@noble/hashes/LICENSE',
+  'node_modules/@noble/hashes/_md.js',
+  'node_modules/@noble/hashes/_u64.js',
+  'node_modules/@noble/hashes/hkdf.js',
+  'node_modules/@noble/hashes/hmac.js',
+  'node_modules/@noble/hashes/package.json',
+  'node_modules/@noble/hashes/sha2.js',
+  'node_modules/@noble/hashes/utils.js',
+]);
+
+const PINS_SHA256 = '67854087de05eecdd299d8dc94a340f6c3cebad669f5350944fc421efc7b8201';
+
+function walkFiles(dir, prefix) {
+  const out = [];
+  for (const name of readdirSync(dir)) {
+    const abs = join(dir, name);
+    const rel = prefix ? `${prefix}/${name}` : name;
+    if (statSync(abs).isDirectory()) out.push(...walkFiles(abs, rel));
+    else out.push(rel);
+  }
+  return out;
+}
+
 test('vendored primitives are hash-pinned and free of Node-only crypto', () => {
-  const pins = JSON.parse(readFileSync(join(HERE, 'vendor/PINS.json'), 'utf8'));
+  const pinsPath = join(HERE, 'vendor/PINS.json');
+  const pinsBytes = new Uint8Array(readFileSync(pinsPath));
+  assert.equal(hex(sha256(pinsBytes)), PINS_SHA256);
+  const pins = JSON.parse(new TextDecoder().decode(pinsBytes));
   assert.equal(pins.schema, 'chit402.cs2.seal.vendor-pins.v1');
   assert.equal(pins.alg, 'sha256');
   const packages = [...pins.packages].sort((a, b) => a.name.localeCompare(b.name));
@@ -362,11 +421,13 @@ test('vendored primitives are hash-pinned and free of Node-only crypto', () => {
     '@noble/hashes@2.4.0',
   ]);
   for (const pkg of packages) {
+    assert.equal(pkg.tarball_sha256, PINNED_TARBALLS[pkg.name], pkg.name);
     assert.match(pkg.integrity, /^sha512-[A-Za-z0-9+/]+=*$/);
-    assert.match(pkg.tarball_sha256, /^[0-9a-f]{64}$/);
   }
   const names = Object.keys(pins.files).sort();
-  assert.deepEqual(names, Object.keys(pins.files).slice().sort());
+  assert.deepEqual(names, [...PINNED_FILES]);
+  const onDisk = walkFiles(join(HERE, 'node_modules/@noble'), 'node_modules/@noble').sort();
+  assert.deepEqual(onDisk, names);
   for (const name of names) {
     const bytes = new Uint8Array(readFileSync(join(HERE, name)));
     assert.equal(hex(sha256(bytes)), pins.files[name], name);
@@ -789,13 +850,13 @@ test('fresh seals do not reuse dk, ephemeral keys, or keystream', () => {
 test('openLineAny always opens both slots', () => {
   const sealed = sealLine(sampleLine(), x25519Public(BOOK_SK), x25519Public(RECOVERY_SK));
   assert.equal(sealed.ok, true);
-  resetOpenAttempts();
+  resetProbes();
   const opened = openLineAny(sealed.sealed, BOOK_SK);
   assert.equal(opened.ok, true);
   assert.equal(opened.slot, 0);
   assert.equal(hex(opened.dkCommitment), hex(sealed.dkCommitment));
   assert.equal(readOpenAttempts(), 2);
-  resetOpenAttempts();
+  resetProbes();
   const recovery = openLineAny(sealed.sealed, RECOVERY_SK);
   assert.equal(recovery.ok, true);
   assert.equal(recovery.slot, 1);
@@ -831,5 +892,135 @@ test('receiver-side zero-DH check refuses low-order encapsulated keys', () => {
     });
     assertClosed(result, 'open_failed');
     assertNoMaterial(result, [probe.sk, enc]);
+  }
+});
+
+function dkLabelHash(dk) {
+  const labeled = new Uint8Array(2 + dk.length);
+  labeled[0] = 0x64;
+  labeled[1] = 0x6b;
+  labeled.set(dk, 2);
+  return sha256(labeled);
+}
+
+function blobUnderRetiredFallback(line) {
+  const dk = new Uint8Array(32).fill(0x11);
+  const ct = aeadSeal(dk, new Uint8Array(12), dkLabelHash(dk), line);
+  dk.fill(0);
+  assert.ok(ct);
+  assert.equal(ct.length, LINE_CT_BYTES);
+  const blob = new Uint8Array(SEALED_BYTES);
+  blob.set(ct, 0);
+  globalThis.crypto.getRandomValues(blob.subarray(LINE_CT_BYTES));
+  return blob;
+}
+
+test('a line sealed under the retired public fallback key does not open', () => {
+  const line = sampleLine();
+  const blob = blobUnderRetiredFallback(line);
+  const key = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(key);
+  assertClosed(openLine(blob, key, 0), 'open_failed');
+  assertClosed(openLine(blob, key, 1), 'open_failed');
+  assertClosed(openLineAny(blob, key), 'open_failed');
+  assertClosed(openLine(blob, BOOK_SK, 0), 'open_failed');
+  key.fill(0);
+});
+
+test('a failed unwrap cannot return a line sealed under the fallback draw', () => {
+  const line = sampleLine();
+  const blob = blobUnderRetiredFallback(line);
+  const key = new Uint8Array(32);
+  globalThis.crypto.getRandomValues(key);
+  const cryptoObj = globalThis.crypto;
+  const saved = cryptoObj.getRandomValues;
+  cryptoObj.getRandomValues = (buf) => {
+    buf.fill(0x11);
+    return buf;
+  };
+  try {
+    const opened = openLine(blob, key, 0);
+    assertClosed(opened, 'open_failed');
+    assert.equal(Object.hasOwn(opened, 'line'), false);
+    assertClosed(openLine(blob, key, 1), 'open_failed');
+    assertClosed(openLineAny(blob, key), 'open_failed');
+  } finally {
+    cryptoObj.getRandomValues = saved;
+    key.fill(0);
+  }
+});
+
+test('a failed slot unwrap still runs the line AEAD', () => {
+  const sealed = sealLine(sampleLine(), x25519Public(BOOK_SK), x25519Public(RECOVERY_SK));
+  assert.equal(sealed.ok, true);
+  const wrong = new Uint8Array(32).fill(0x5a);
+  resetProbes();
+  assertClosed(openLine(sealed.sealed, wrong, 0), 'open_failed');
+  assert.equal(readAeadCalls(), 1);
+  resetProbes();
+  assertClosed(openLine(sealed.sealed, wrong, 1), 'open_failed');
+  assert.equal(readAeadCalls(), 1);
+});
+
+test('the seed entry and the probe counters are not imported outside tests and vector.js', () => {
+  const repo = join(HERE, '../../..');
+  const seedName = 'sealLine' + 'WithSeed';
+  const fromSeed = 'seal' + 'FromSeed';
+  const retired = 'FALLBACK' + '_DK';
+  const allowSeedName = new Set([
+    'packages/cs2-core/seal/vector.js',
+    'packages/cs2-core/seal/seal.test.mjs',
+  ]);
+  const allowFromSeed = new Set([
+    'packages/cs2-core/seal/core.js',
+    'packages/cs2-core/seal/vector.js',
+  ]);
+  const allowProbe = new Set([
+    'packages/cs2-core/seal/core.js',
+    'packages/cs2-core/seal/probe.js',
+    'packages/cs2-core/seal/seal.test.mjs',
+  ]);
+  const allowCoreImport = new Set([
+    'packages/cs2-core/seal/index.js',
+    'packages/cs2-core/seal/vector.js',
+  ]);
+  const files = [];
+  const skip = new Set(['node_modules', '.git', 'dist', 'coverage']);
+  const walk = (dir) => {
+    for (const name of readdirSync(dir)) {
+      if (skip.has(name)) continue;
+      const abs = join(dir, name);
+      if (statSync(abs).isDirectory()) walk(abs);
+      else if (/\.(js|mjs|cjs|ts|tsx)$/.test(name)) files.push(abs);
+    }
+  };
+  walk(repo);
+  assert.ok(files.length > 10);
+  for (const abs of files) {
+    const rel = abs.slice(repo.length + 1).replaceAll('\\', '/');
+    const src = readFileSync(abs, 'utf8').replace(/\r\n/g, '\n');
+    if (src.includes(seedName)) assert.ok(allowSeedName.has(rel), rel);
+    if (src.includes(fromSeed)) assert.ok(allowFromSeed.has(rel), rel);
+    if (src.includes(retired)) assert.fail(rel);
+    if (rel === 'packages/cs2-core/seal/core.js') {
+      assert.equal(/fill\(0x11\)/.test(src), false);
+    }
+    if (/from\s+['"][^'"]*probe\.js['"]/.test(src)) assert.ok(allowProbe.has(rel), rel);
+    if (/from\s+['"][^'"]*vector\.js['"]/.test(src)) {
+      assert.equal(rel, 'packages/cs2-core/seal/seal.test.mjs');
+    }
+    if (rel.startsWith('packages/cs2-core/seal/') && /from\s+['"]\.\/core\.js['"]/.test(src)) {
+      assert.ok(allowCoreImport.has(rel), rel);
+    }
+    if (!rel.startsWith('packages/cs2-core/seal/') && /seal\/core\.js/.test(src)) {
+      assert.fail(rel);
+    }
+    const readsCounters = /readOpenAttempts|readAeadCalls|resetProbes|resetOpenAttempts/.test(src);
+    if (readsCounters) {
+      assert.ok(
+        rel === 'packages/cs2-core/seal/probe.js' || rel === 'packages/cs2-core/seal/seal.test.mjs',
+        rel,
+      );
+    }
   }
 });

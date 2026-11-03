@@ -129,6 +129,7 @@
       "file": "packages/cs2-core/seal/core.js",
       "find": "pt.fill(0);\n      return fail('open_failed');",
       "replace": "pt.fill(0);\n      return shape;",
+      "nth": 2,
       "note": "a bad plaintext shape is no longer a uniform open failure"
     },
     {
@@ -229,6 +230,20 @@
       "find": "dk = random32();",
       "replace": "dk = hashParts(line);",
       "note": "dk is a hash of the line"
+    },
+    {
+      "id": "G31_drop_recovered",
+      "file": "packages/cs2-core/seal/core.js",
+      "find": "if (!recovered || !pt)",
+      "replace": "if (!pt)",
+      "note": "a failed unwrap can return plaintext from the fallback key"
+    },
+    {
+      "id": "G33_skip_line_aead",
+      "file": "packages/cs2-core/seal/core.js",
+      "find": "const dk = recovered ? opened.pt : random32();\n  if (!dk) return fail('bad_random');\n  try {",
+      "replace": "if (!recovered) return fail('open_failed');\n  const dk = opened.pt;\n  try {",
+      "note": "a failed unwrap returns before the line AEAD"
     },
     {
       "id": "G14_esk0_fixed",

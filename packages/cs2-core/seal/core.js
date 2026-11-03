@@ -21,6 +21,7 @@
 
 import { sha256 } from '@noble/hashes/sha2.js';
 import { aeadOpen, aeadSeal, openBase, sealBase } from './hpke.js';
+import { noteAead, noteOpen } from './probe.js';
 
 export const SCHEMA = 'chit402.cs2.seal.v1';
 
@@ -42,8 +43,6 @@ const DK_LABEL = ascii('dk');
 const LEAF_LABEL = ascii('line');
 const DUMMY_LABEL = ascii('chit402-dummy-x25519-v1');
 const ZERO_NONCE = new Uint8Array(12);
-const FALLBACK_DK = new Uint8Array(32).fill(0x11);
-let openAttempts = 0;
 
 export const REASONS = Object.freeze([
   'bad_type',
@@ -90,14 +89,6 @@ function hashParts(...parts) {
     at += part.length;
   }
   return sha256(buf);
-}
-
-export function readOpenAttempts() {
-  return openAttempts;
-}
-
-export function resetOpenAttempts() {
-  openAttempts = 0;
 }
 
 function copy32(value) {
@@ -194,25 +185,25 @@ function wipe(buf) {
 
 /**
  * Production seal. Draws a fresh dk and two fresh ephemeral keys.
- * A fourth argument is refused. Vectors pass seeds through sealLineWithSeed.
+ * A fourth argument is refused. Vectors pass seeds through vector.js.
  * @param {Uint8Array} line
  * @param {Uint8Array} bookPk
  * @param {Uint8Array | null | undefined} recoveryPk
  */
 export function sealLine(line, bookPk, recoveryPk) {
   if (arguments.length > 3) return fail('bad_type');
-  return sealLineWithSeed(line, bookPk, recoveryPk);
+  return sealFromSeed(line, bookPk, recoveryPk);
 }
 
 /**
- * Deterministic seal for vectors. Not re-exported from the package root.
+ * Deterministic seal. vector.js is the only supported caller.
  * recoveryPk omitted or null selects the dummy recipient.
  * @param {Uint8Array} line
  * @param {Uint8Array} bookPk
  * @param {Uint8Array | null | undefined} recoveryPk
  * @param {{ dk?: Uint8Array, esk?: [Uint8Array, Uint8Array] }} [seed]
  */
-export function sealLineWithSeed(line, bookPk, recoveryPk, seed) {
+export function sealFromSeed(line, bookPk, recoveryPk, seed) {
   const shape = lineShape(line);
   if (!shape.ok) return shape;
   const book = copy32(bookPk);
@@ -302,7 +293,7 @@ function readSlot(sealed, slot) {
  * @param {number} slot
  */
 export function openLine(sealed, sk, slot) {
-  openAttempts += 1;
+  noteOpen();
   if (!(sealed instanceof Uint8Array)) return fail('bad_type');
   if (sealed.length !== SEALED_BYTES) return fail('bad_length');
   if (slot !== 0 && slot !== 1) return fail('bad_type');
@@ -312,10 +303,13 @@ export function openLine(sealed, sk, slot) {
   const opened = openBase(enc, key.bytes, INFO, slotAad(slot), ct);
   key.bytes.fill(0);
   const recovered = opened.ok && opened.pt && opened.pt.length === DK_BYTES;
-  const dk = recovered ? opened.pt : FALLBACK_DK.slice();
+  // A failed unwrap still runs the line AEAD, under a dk drawn for this call.
+  const dk = recovered ? opened.pt : random32();
+  if (!dk) return fail('bad_random');
   try {
     const aad = hashParts(DK_LABEL, dk);
     const lineCt = sealed.subarray(0, LINE_CT_BYTES);
+    noteAead();
     const pt = aeadOpen(dk, ZERO_NONCE, aad, lineCt);
     const commit = hashParts(DK_LABEL, dk);
     if (!recovered || !pt) {

@@ -1,6 +1,10 @@
 /**
- * Deterministic seal used by vectors and tests. Not exported from the
+ * Deterministic seal used by vectors and tests. Not part of the
  * package root.
  */
 
-export { sealLineWithSeed } from './core.js';
+import { sealFromSeed } from './core.js';
+
+export function sealLineWithSeed(line, bookPk, recoveryPk, seed) {
+  return sealFromSeed(line, bookPk, recoveryPk, seed);
+}
