@@ -20,6 +20,7 @@ export {
   USED_BYTES,
   dkCommitment,
   lineLeaf,
+  lineLeafFromCommitment,
   openLine,
   openLineAny,
   sealLine,

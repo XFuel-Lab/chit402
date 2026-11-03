@@ -1,0 +1,13 @@
+{
+  "schema": "chit402.cs2.seal.aead-collision.v1",
+  "aead": "ChaCha20-Poly1305",
+  "note": "One ciphertext and tag open under two data keys and their H(\"dk\"||dk) AADs. The plaintexts differ and are not lines. ChaCha20-Poly1305 is not key-committing; the leaf is.",
+  "nonce": "000000000000000000000000",
+  "dk1": "0101010101010101010101010101010101010101010101010101010101010101",
+  "dk2": "5b03030303030303030303030303030303030303030303030303030303030303",
+  "aad1": "36e1dd5eb83b2359d8da42aed03ab36027d2da6557d0b41936c52c3dcfd4f42c",
+  "aad2": "cd3d57e3781c8116736e5a74a34c6cc0bbf0834f3c6174f8ab5d012f7643a824",
+  "ciphertext": "1647f75291a0fac9428230641224feb801010101010101010101010101010101d99432b1926c858f545d8a02b404fadb",
+  "pt1": "1760ba837ff2ec0b467959e9bc80a5eae88a6e0edc056ccd3b87ba069f37f125",
+  "pt2": "c518b6891217e3b50996a4d3fdf65ed4ef5958665010a65aeacdb8c3789889c1"
+}

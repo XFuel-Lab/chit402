@@ -34,6 +34,7 @@ import {
   USED_BYTES as sealUsedBytes,
   dkCommitment,
   lineLeaf,
+  lineLeafFromCommitment,
   openLine,
   openLineAny,
   sealLine,
@@ -764,6 +765,10 @@ test('the leaf binds C, the dk commitment, and the sealed blob', () => {
   assert.equal(hex(leaf.bytes), hex(oracle));
   const doc = JSON.parse(readFileSync(join(HERE, 'vectors/seal.json'), 'utf8'));
   assert.equal(hex(leaf.bytes), doc.cases[0].leaf);
+  const fromOpened = lineLeafFromCommitment(commit.C, sealed.sealed, sealed.dkCommitment);
+  assert.equal(fromOpened.ok, true);
+  assert.equal(hex(fromOpened.bytes), doc.cases[0].leaf);
+  assert.equal(hex(lineLeaf(commit.C, sealed.sealed, DK).bytes), hex(fromOpened.bytes));
   const otherC = commit.C.slice();
   otherC[0] ^= 0x01;
   assert.notEqual(hex(lineLeaf(otherC, sealed.sealed, DK).bytes), hex(leaf.bytes));
@@ -915,6 +920,64 @@ function blobUnderRetiredFallback(line) {
   return blob;
 }
 
+test('decryption is not authenticity; only the leaf binds the blob to the book', () => {
+  const bookPk = x25519Public(BOOK_SK);
+  const line = sampleLine();
+  const other = otherLine();
+  const commit = commitments(line);
+  assert.equal(commit.ok, true);
+  const honest = sealLineWithSeed(line, bookPk, x25519Public(RECOVERY_SK), {
+    dk: DK.slice(),
+    esk: [ESK[0].slice(), ESK[1].slice()],
+  });
+  assert.equal(honest.ok, true);
+  const doc = JSON.parse(readFileSync(join(HERE, 'vectors/seal.json'), 'utf8'));
+  const bookLeaf = lineLeafFromCommitment(commit.C, honest.sealed, honest.dkCommitment);
+  assert.equal(bookLeaf.ok, true);
+  assert.equal(hex(bookLeaf.bytes), doc.cases[0].leaf);
+  const openedHonest = openLine(honest.sealed, BOOK_SK, 0);
+  assert.equal(openedHonest.ok, true);
+  assert.equal(
+    hex(lineLeafFromCommitment(commit.C, honest.sealed, openedHonest.dkCommitment).bytes),
+    doc.cases[0].leaf,
+  );
+
+  const pasted = sealLineWithSeed(other, bookPk, null, {
+    dk: fromHex('45'.repeat(32)),
+    esk: [fromHex('52'.repeat(32)), fromHex('62'.repeat(32))],
+  });
+  assert.equal(pasted.ok, true);
+  const spliced = honest.sealed.slice();
+  spliced.set(pasted.sealed.subarray(0, LINE_CT_BYTES), 0);
+  assertClosed(openLine(spliced, BOOK_SK, 0), 'open_failed');
+
+  const tampered = honest.sealed.slice();
+  tampered[LINE_CT_BYTES + SLOT_BYTES] ^= 0x01;
+  const openedTampered = openLine(tampered, BOOK_SK, 0);
+  assert.equal(openedTampered.ok, true);
+  assert.equal(hex(openedTampered.line), hex(line));
+  const tamperedLeaf = lineLeafFromCommitment(commit.C, tampered, openedTampered.dkCommitment);
+  assert.equal(tamperedLeaf.ok, true);
+  assert.notEqual(hex(tamperedLeaf.bytes), hex(bookLeaf.bytes));
+
+  const strangerDk = fromHex('46'.repeat(32));
+  const forged = sealLineWithSeed(other, bookPk, null, {
+    dk: strangerDk,
+    esk: [fromHex('53'.repeat(32)), fromHex('63'.repeat(32))],
+  });
+  assert.equal(forged.ok, true);
+  const forgedOpen = openLine(forged.sealed, BOOK_SK, 0);
+  assert.equal(forgedOpen.ok, true);
+  assert.equal(hex(forgedOpen.line), hex(other));
+  assert.equal(Object.hasOwn(forgedOpen, 'line'), true);
+  const otherCommit = commitments(other);
+  assert.equal(otherCommit.ok, true);
+  const forgedLeaf = lineLeafFromCommitment(otherCommit.C, forged.sealed, forgedOpen.dkCommitment);
+  assert.equal(forgedLeaf.ok, true);
+  assert.equal(hex(forgedLeaf.bytes), hex(lineLeaf(otherCommit.C, forged.sealed, strangerDk).bytes));
+  assert.notEqual(hex(forgedLeaf.bytes), hex(bookLeaf.bytes));
+});
+
 test('a line sealed under the retired public fallback key does not open', () => {
   const line = sampleLine();
   const blob = blobUnderRetiredFallback(line);
@@ -1023,4 +1086,75 @@ test('the seed entry and the probe counters are not imported outside tests and v
       );
     }
   }
+});
+
+test('a two-dk ChaCha20-Poly1305 collision is not a line', () => {
+  const doc = JSON.parse(readFileSync(join(HERE, 'vectors/aead-collision.json'), 'utf8'));
+  assert.equal(doc.schema, 'chit402.cs2.seal.aead-collision.v1');
+  const dk1 = fromHex(doc.dk1);
+  const dk2 = fromHex(doc.dk2);
+  const nonce = fromHex(doc.nonce);
+  const ct = fromHex(doc.ciphertext);
+  assert.notEqual(hex(dk1), hex(dk2));
+  const aad1 = sha256(Buffer.concat([Buffer.from('dk'), dk1]));
+  const aad2 = sha256(Buffer.concat([Buffer.from('dk'), dk2]));
+  assert.equal(hex(aad1), doc.aad1);
+  assert.equal(hex(aad2), doc.aad2);
+  const pt1 = aeadOpen(dk1, nonce, aad1, ct);
+  const pt2 = aeadOpen(dk2, nonce, aad2, ct);
+  assert.ok(pt1 && pt2);
+  assert.equal(hex(pt1), doc.pt1);
+  assert.equal(hex(pt2), doc.pt2);
+  assert.notEqual(hex(pt1), hex(pt2));
+  assert.equal(aeadOpen(dk1, nonce, aad2, ct), null);
+  assert.notEqual(pt1.length, LINE_BYTES);
+  assert.notEqual(pt2.length, LINE_BYTES);
+  const blob = new Uint8Array(SEALED_BYTES);
+  blob.set(ct.subarray(0, Math.min(ct.length, LINE_CT_BYTES)));
+  assertClosed(openLine(blob, BOOK_SK, 0), 'open_failed');
+  assertClosed(openLine(blob, fromHex(doc.dk1), 0), 'open_failed');
+});
+
+test('the HPKE context refuses a reused sequence and an invalid mode', () => {
+  const probe = deriveKeyPair(fromHex('09'.repeat(32)));
+  assert.equal(probe.ok, true);
+  const badMode = setupS({ mode: 4, pkR: probe.pk, skE: probe.sk });
+  assertClosed(badMode, 'bad_key');
+  const badPskMode = setupS({
+    mode: 9,
+    pkR: probe.pk,
+    skE: probe.sk,
+    psk: new Uint8Array(32).fill(2),
+    pskId: Uint8Array.of(1),
+  });
+  assertClosed(badPskMode, 'bad_key');
+  const info = new Uint8Array(0);
+  const aad = new Uint8Array(0);
+  const pt = Uint8Array.of(1, 2, 3, 4);
+  const send = setupS({ mode: MODE_BASE, pkR: probe.pk, skE: fromHex('11'.repeat(32)), info });
+  assert.equal(send.ok, true);
+  const first = contextSeal(send, 0, aad, pt);
+  assert.equal(first.ok, true);
+  assertClosed(contextSeal(send, 0, aad, pt), 'open_failed');
+  const second = contextSeal(send, 1, aad, pt);
+  assert.equal(second.ok, true);
+  const third = contextSeal(send, 2, aad, pt);
+  assert.equal(third.ok, true);
+  const recv = setupR({ mode: MODE_BASE, enc: send.enc, skR: probe.sk, info });
+  assert.equal(recv.ok, true);
+  const opened = contextOpen(recv, 0, aad, first.ct);
+  assert.equal(opened.ok, true);
+  assert.equal(hex(opened.pt), hex(pt));
+  assertClosed(contextOpen(recv, 0, aad, first.ct), 'open_failed');
+  const flipped = third.ct.slice();
+  flipped[0] ^= 0x01;
+  assertClosed(contextOpen(recv, 2, aad, flipped), 'open_failed');
+  const retry = contextOpen(recv, 2, aad, third.ct);
+  assert.equal(retry.ok, true);
+  assert.equal(hex(retry.pt), hex(pt));
+  const later = contextOpen(recv, 1, aad, second.ct);
+  assert.equal(later.ok, true);
+  releaseContext(send);
+  releaseContext(recv);
+  probe.sk.fill(0);
 });

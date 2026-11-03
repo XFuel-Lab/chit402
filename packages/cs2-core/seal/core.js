@@ -141,19 +141,20 @@ export function sealedCommitment(sealed) {
 }
 
 /**
- * Leaf H(0x00 ‖ "line" ‖ C ‖ H("dk" ‖ dk) ‖ H(ct ‖ slots)).
- * C is the line codec's 32-byte commitment. dk is wiped locally.
+ * Leaf H(0x00 ‖ "line" ‖ C ‖ dkCommitment ‖ H(ct ‖ slots)).
+ * C is the line codec's 32-byte commitment. dkCommitment is H("dk" ‖ dk),
+ * the value openLine returns, so the check does not need the raw dk.
  * @param {Uint8Array} c
  * @param {Uint8Array} sealed
- * @param {Uint8Array} dk
+ * @param {Uint8Array} dkCommitmentBytes
  */
-export function lineLeaf(c, sealed, dk) {
+export function lineLeafFromCommitment(c, sealed, dkCommitmentBytes) {
   const commit = copy32(c);
   if (!commit.ok) return commit;
+  const dkHash = copy32(dkCommitmentBytes);
+  if (!dkHash.ok) return dkHash;
   const ct = sealedCommitment(sealed);
   if (!ct.ok) return ct;
-  const dkHash = dkCommitment(dk);
-  if (!dkHash.ok) return dkHash;
   const bytes = hashParts(Uint8Array.of(0x00), LEAF_LABEL, commit.bytes, dkHash.bytes, ct.bytes);
   return {
     ok: true,
@@ -161,6 +162,19 @@ export function lineLeaf(c, sealed, dk) {
     dkCommitment: dkHash.bytes,
     sealedCommitment: ct.bytes,
   };
+}
+
+/**
+ * Leaf from the raw dk. dk is wiped locally. Same bytes as
+ * lineLeafFromCommitment with H("dk" ‖ dk).
+ * @param {Uint8Array} c
+ * @param {Uint8Array} sealed
+ * @param {Uint8Array} dk
+ */
+export function lineLeaf(c, sealed, dk) {
+  const dkHash = dkCommitment(dk);
+  if (!dkHash.ok) return dkHash;
+  return lineLeafFromCommitment(c, sealed, dkHash.bytes);
 }
 
 function slotAad(slot) {
@@ -287,6 +301,11 @@ function readSlot(sealed, slot) {
 
 /**
  * Open one slot. slot is 0 (book) or 1 (recovery).
+ * ok means this secret key decrypted a line. It does not mean the line is
+ * authentic, and it does not mean the blob is in the book. Anyone who has
+ * the book public key can seal a line that decrypts here. The proof is the
+ * leaf: recompute lineLeafFromCommitment from the opened line's C, this
+ * blob, and dkCommitment, and compare that to the leaf stored in the book.
  * Cryptographic failure is always open_failed.
  * @param {Uint8Array} sealed
  * @param {Uint8Array} sk

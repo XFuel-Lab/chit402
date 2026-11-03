@@ -226,6 +226,9 @@ function decapWith(enc, skR, pkS) {
  * @param {Uint8Array} pskId
  */
 export function keySchedule(mode, sharedSecret, info, psk, pskId) {
+  if (mode !== MODE_BASE && mode !== MODE_PSK && mode !== MODE_AUTH && mode !== MODE_AUTH_PSK) {
+    return fail('bad_key');
+  }
   const gotPsk = psk.length !== 0;
   const gotId = pskId.length !== 0;
   if (gotPsk !== gotId) return fail('bad_key');
@@ -325,21 +328,40 @@ export function computeNonce(baseNonce, seq) {
   return out;
 }
 
+function seqAlreadyUsed(ctx, seq) {
+  return ctx.usedSeq instanceof Set && ctx.usedSeq.has(seq);
+}
+
+function markSeqUsed(ctx, seq) {
+  if (!(ctx.usedSeq instanceof Set)) ctx.usedSeq = new Set();
+  ctx.usedSeq.add(seq);
+}
+
 export function contextSeal(ctx, seq, aad, pt) {
   const nonce = computeNonce(ctx.baseNonce, seq);
   if (!nonce) return fail('open_failed');
+  if (seqAlreadyUsed(ctx, seq)) {
+    nonce.fill(0);
+    return fail('open_failed');
+  }
   const ct = aeadSeal(ctx.key, nonce, aad, pt);
   nonce.fill(0);
   if (!ct) return fail('open_failed');
+  markSeqUsed(ctx, seq);
   return { ok: true, ct };
 }
 
 export function contextOpen(ctx, seq, aad, ct) {
   const nonce = computeNonce(ctx.baseNonce, seq);
   if (!nonce) return fail('open_failed');
+  if (seqAlreadyUsed(ctx, seq)) {
+    nonce.fill(0);
+    return fail('open_failed');
+  }
   const pt = aeadOpen(ctx.key, nonce, aad, ct);
   nonce.fill(0);
   if (!pt) return fail('open_failed');
+  markSeqUsed(ctx, seq);
   return { ok: true, pt };
 }
 
