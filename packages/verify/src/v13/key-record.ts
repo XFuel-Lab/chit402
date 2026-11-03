@@ -19,6 +19,11 @@ export const PAYTO_CONTROL_TYPE = 'PayToControl(address payTo,uint8 keyAlg,bytes
 export const REVOKE_TYPE = 'Revoke(address payTo,bytes32 keyHash)';
 export const REVOKE_BY_KEY_TYPE = 'RevokeByKey(bytes32 keyHash)';
 
+/** PayTo slot. The line codec already uses this kind. */
+export const KIND_PAYTO_SLOT = 0x01;
+/** Key slot. Id is the 32-byte keyHash. The line codec does not accept this kind yet. */
+export const KIND_KEY_SLOT = 0x05;
+
 /** Disclosed ChitAnchor runtime code hash. A pin still carries its own codeHash. */
 export const EXAMPLE_ANCHOR_CODE_HASH = '0xcd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080';
 
@@ -118,6 +123,100 @@ export interface KeyGate {
  * Allowed algorithm, then a point on that curve, then SHA-256(keyAlg || key).
  * A missing or unknown algorithm never becomes a hash.
  */
+/**
+ * Text form is `0x` plus 64 lowercase hex characters. Anything else is
+ * refused and is not rewritten.
+ */
+export function parseKeyHash(value: unknown): Uint8Array | null {
+  if (typeof value !== 'string' || !/^0x[0-9a-f]{64}$/.test(value)) return null;
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i += 1) out[i] = Number.parseInt(value.slice(2 + i * 2, 4 + i * 2), 16);
+  return out;
+}
+
+export function formatKeyHash(bytes: Uint8Array): string | null {
+  if (bytes.length !== 32) return null;
+  let hex = '0x';
+  for (let i = 0; i < bytes.length; i += 1) hex += bytes[i].toString(16).padStart(2, '0');
+  return hex;
+}
+
+/** SHA-256("chit402-state-v1" ‖ 0x05 ‖ chainId ‖ keyHash). chainId is 8 bytes. */
+export function keySlotKey(chainId: number, keyHash: Uint8Array, sha256: Sha): Uint8Array | null {
+  if (!Number.isSafeInteger(chainId) || chainId < 0 || keyHash.length !== 32) return null;
+  const domain = new Uint8Array(17);
+  const label = 'chit402-state-v1';
+  for (let i = 0; i < label.length; i += 1) domain[i] = label.charCodeAt(i);
+  const chain = new Uint8Array(8);
+  let value = BigInt(chainId);
+  for (let i = 7; i >= 0; i -= 1) {
+    chain[i] = Number(value & 0xffn);
+    value >>= 8n;
+  }
+  const body = new Uint8Array(domain.length + 1 + chain.length + keyHash.length);
+  body.set(domain, 0);
+  body[domain.length] = KIND_KEY_SLOT;
+  body.set(chain, domain.length + 1);
+  body.set(keyHash, domain.length + 1 + chain.length);
+  return sha256(body);
+}
+
+export interface SlotProof {
+  siblings: string[] | null;
+}
+
+export interface KeyStatusInput {
+  block: number;
+  payToProof: SlotProof | null;
+  keyProof: SlotProof | null;
+  registration: {
+    admissionBlock: number;
+    expiry: bigint;
+    payToSignature: Uint8Array | null;
+    keySignature: Uint8Array | null;
+    popOk: boolean;
+  } | null;
+  /** Slot Revoke on the payTo slot. Null means the proof shows none. */
+  slotRevokeBlock: number | null;
+  /**
+   * Key-slot tombstone. Null means the proof shows no tombstone.
+   * A present object with a missing, zero, or out-of-bounds block is invalid.
+   */
+  tombstone: { revokedAtBlock: number | null; outOfBounds: boolean } | null;
+}
+
+/**
+ * Status of key k in payTo P at block b, from two proofs under one state root.
+ * A missing proof is unproven. There is no cross-payTo consent check.
+ */
+export function keyStatus(input: KeyStatusInput): {
+  proven: boolean;
+  reason: 'unproven' | 'invalid_record' | 'revoked' | 'registered_after_tombstone' | null;
+} {
+  if (!input.payToProof || input.payToProof.siblings == null) return { proven: false, reason: 'unproven' };
+  if (!input.keyProof || input.keyProof.siblings == null) return { proven: false, reason: 'unproven' };
+  const reg = input.registration;
+  if (!reg || !reg.payToSignature || reg.payToSignature.length === 0) return { proven: false, reason: 'unproven' };
+  if (!reg.keySignature || reg.keySignature.length !== 64 || !reg.popOk) return { proven: false, reason: 'unproven' };
+  const tomb = input.tombstone;
+  if (tomb) {
+    if (tomb.revokedAtBlock == null || tomb.revokedAtBlock <= 0 || tomb.outOfBounds) {
+      return { proven: false, reason: 'invalid_record' };
+    }
+    if (reg.admissionBlock > tomb.revokedAtBlock) {
+      return { proven: false, reason: 'registered_after_tombstone' };
+    }
+    if (tomb.revokedAtBlock <= input.block) return { proven: false, reason: 'revoked' };
+  }
+  if (input.slotRevokeBlock != null && input.slotRevokeBlock <= input.block) {
+    return { proven: false, reason: 'revoked' };
+  }
+  if (!(reg.admissionBlock <= input.block && BigInt(input.block) < reg.expiry)) {
+    return { proven: false, reason: 'unproven' };
+  }
+  return { proven: true, reason: null };
+}
+
 export function keyHashOf(
   alg: number | null | undefined,
   key: Uint8Array | null | undefined,

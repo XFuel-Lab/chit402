@@ -42,7 +42,10 @@ import {
   chitDomainSeparator,
   judgePayTo,
   keyHashOf,
+  keySlotKey,
+  keyStatus,
   lowS,
+  parseKeyHash,
   pointOnCurve,
   revokeByKeyDigest,
 } from '../dist/v13/key-record.js';
@@ -1374,6 +1377,53 @@ test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecke
   });
   assert.equal(unbound.reason, 'bad_signature');
   assert.equal(EXAMPLE_ANCHOR_CODE_HASH, '0xcd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080');
+});
+
+test('key status needs both proofs, and a tombstone applies only forward', () => {
+  const text = `0x${'ab'.repeat(32)}`;
+  const parsed = parseKeyHash(text);
+  assert.ok(parsed);
+  assert.equal(parseKeyHash('ab'.repeat(32)), null);
+  assert.equal(parseKeyHash(`0x${'AB'.repeat(32)}`), null);
+  assert.equal(parseKeyHash(`0x${'ab'.repeat(31)}`), null);
+  assert.equal(parseKeyHash(`0x${'ab'.repeat(33)}`), null);
+  const slot = keySlotKey(84532, parsed, sha256);
+  assert.equal(slot.length, 32);
+  const registration = {
+    admissionBlock: 90,
+    expiry: 200n,
+    payToSignature: new Uint8Array([1]),
+    keySignature: new Uint8Array(64),
+    popOk: true,
+  };
+  const base = {
+    block: 100,
+    payToProof: { siblings: [] },
+    keyProof: { siblings: [] },
+    registration,
+    slotRevokeBlock: null,
+    tombstone: null,
+  };
+  assert.equal(keyStatus(base).proven, true);
+  assert.equal(keyStatus({ ...base, payToProof: null }).reason, 'unproven');
+  assert.equal(keyStatus({ ...base, keyProof: { siblings: null } }).reason, 'unproven');
+  assert.equal(keyStatus({ ...base, registration: { ...registration, payToSignature: null } }).reason, 'unproven');
+  assert.equal(keyStatus({ ...base, registration: { ...registration, keySignature: null } }).reason, 'unproven');
+  assert.equal(keyStatus({ ...base, registration: { ...registration, popOk: false } }).reason, 'unproven');
+  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: 100, outOfBounds: false } }).reason, 'revoked');
+  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: 150, outOfBounds: false } }).proven, true);
+  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: null, outOfBounds: false } }).reason, 'invalid_record');
+  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: 0, outOfBounds: false } }).reason, 'invalid_record');
+  assert.equal(keyStatus({ ...base, tombstone: { revokedAtBlock: 80, outOfBounds: true } }).reason, 'invalid_record');
+  assert.equal(keyStatus({
+    ...base,
+    block: 50,
+    registration: { ...registration, admissionBlock: 120 },
+    tombstone: { revokedAtBlock: 100, outOfBounds: false },
+  }).reason, 'registered_after_tombstone');
+  assert.equal(keyStatus({ ...base, slotRevokeBlock: 100 }).reason, 'revoked');
+  assert.equal(keyStatus({ ...base, slotRevokeBlock: 150 }).proven, true);
+  assert.equal(Object.hasOwn(base, 'otherPayTo'), false);
 });
 
 test('D23 the CLI refuses a bad shape and an unpinned contract', () => {
