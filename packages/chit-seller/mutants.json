@@ -169,15 +169,15 @@
     {
       "id": "duplicate_payment",
       "file": "packages/chit-seller/sigma.mjs",
-      "find": "if (!input.store.claim(payClaim)) return deny('duplicate_sigma', onRefuse);",
-      "replace": "if (false && !input.store.claim(payClaim)) return deny('duplicate_sigma', onRefuse);",
+      "find": "if (!(await claimed(input.store, payClaim))) return deny('duplicate_sigma', onRefuse);",
+      "replace": "if (false && !(await claimed(input.store, payClaim))) return deny('duplicate_sigma', onRefuse);",
       "note": "the same payment id signs twice"
     },
     {
       "id": "duplicate_auth",
       "file": "packages/chit-seller/sigma.mjs",
-      "find": "if (!input.store.claim(authClaim)) {",
-      "replace": "if (false && !input.store.claim(authClaim)) {",
+      "find": "if (!(await claimed(input.store, authClaim))) {",
+      "replace": "if (false && !(await claimed(input.store, authClaim))) {",
       "note": "the same authorization signs a second transfer"
     },
     {
@@ -234,7 +234,7 @@
       "file": "packages/chit-seller/eip712.mjs",
       "find": "const signed = signDigest(digest.bytes, input.privateKey, SECP256K1);",
       "nth": 1,
-      "replace": "const signed = signDigest(digest.bytes, input.privateKey, input.k, P256);",
+      "replace": "const signed = signDigest(digest.bytes, input.privateKey, P256);",
       "note": "PayToControl is signed on P-256"
     },
     {

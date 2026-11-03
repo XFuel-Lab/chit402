@@ -3,22 +3,42 @@
  * A caller cannot replace the contract. Token and payee are fixed per seller
  * at construction, not taken from the authorization.
  *
- * Chain 84532 bundles three RPCs. A signature needs two of them to agree.
+ * TEST ONLY. The aa… and bb… addresses are placeholders, not ChitAnchor
+ * addresses. productionPinList() refuses them. Replace them before any release.
+ *
+ * Chain 84532 bundles three RPCs. A signature needs two distinct readers to agree.
  */
+
+const PLACEHOLDER_AA = 'aa'.repeat(20);
+const PLACEHOLDER_BB = 'bb'.repeat(20);
+
+export function isPlaceholderAddress(address) {
+  const hex = String(address ?? '').toLowerCase().replace(/^0x/, '');
+  return hex === PLACEHOLDER_AA || hex === PLACEHOLDER_BB;
+}
 
 export const PINNED_CONTRACTS = Object.freeze([
   Object.freeze({
     chainId: 84532,
-    address: 'aa'.repeat(20),
+    address: PLACEHOLDER_AA,
     genesisHourStart: 1800000000,
     retireHour: 1800036000,
+    testOnly: true,
   }),
   Object.freeze({
     chainId: 84532,
-    address: 'bb'.repeat(20),
+    address: PLACEHOLDER_BB,
     genesisHourStart: 1800036000,
+    testOnly: true,
   }),
 ]);
+
+/** Production refuses the placeholder pins. Null until real addresses are pinned. */
+export function productionPinList() {
+  const real = PINNED_CONTRACTS.filter((pin) => pin.testOnly !== true && !isPlaceholderAddress(pin.address));
+  if (real.length === 0 || real.length !== PINNED_CONTRACTS.length) return null;
+  return real;
+}
 
 export const BUNDLED_RPC_URLS = Object.freeze({
   84532: Object.freeze([

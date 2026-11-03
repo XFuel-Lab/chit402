@@ -27,8 +27,11 @@ export {
   TIME_UNIT,
   HOUR_SECONDS,
   expiryAllows,
+  ALG_REGISTRY,
+  LAUNCH_ALGS,
+  KEY_ALG_P256,
   KEY_ALG_SECP256K1,
-  canonicalSecp256k1Key,
+  canonicalKey,
   keyHash,
   tombstoned,
 } from '../cs2-core/eip712/index.mjs';

@@ -4,7 +4,7 @@
  */
 
 import { createHmac } from 'node:crypto';
-import { bytesToBig } from '../cs2-core/ecdsa/bytes.js';
+import { bigToBytes, bytesToBig } from '../cs2-core/ecdsa/bytes.js';
 
 function hmac(key, parts) {
   const mac = createHmac('sha256', key);
@@ -61,4 +61,11 @@ export function rfc6979Nonce(messageHash, privateKey, order) {
     V = hmac(K, [V]);
   }
   return null;
+}
+
+export function nonceFor(digest, scalar, order) {
+  if (!(digest instanceof Uint8Array) || digest.length !== 32) return null;
+  const x = typeof scalar === 'bigint' ? bigToBytes(scalar, 32) : scalar;
+  if (!(x instanceof Uint8Array) || x.length !== 32) return null;
+  return rfc6979Nonce(digest, x, order);
 }

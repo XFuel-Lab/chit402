@@ -197,9 +197,9 @@ export async function readCanonicalPayment(reader, payment) {
   // Keep every AuthorizationUsed. A settle can carry two calls, and the
   // nonce select below has to find the one this authorization named.
   const auths = [];
-  for (const entry of receipt.logs) {
-    const auth = authUsedAt(entry);
-    if (auth) auths.push(auth);
+  for (let i = 0; i < receipt.logs.length; i += 1) {
+    const auth = authUsedAt(receipt.logs[i]);
+    if (auth) auths.push({ ...auth, logIndex: i });
   }
   return {
     ok: true,
@@ -226,6 +226,7 @@ export async function selectNonce(observed, nonceHex) {
   let hit = null;
   for (const auth of observed.auths) {
     if (sameHex(auth.nonce, want) && sameHex(auth.token, observed.token)) {
+      if (auth.logIndex !== observed.localLogIndex - 1) continue;
       hit = auth;
       break;
     }
@@ -277,6 +278,17 @@ export async function readAgreedPayment(readers, payment) {
   if (!Array.isArray(readers)) return refuse('chain_unread');
   const chainId = parseUint(payment && payment.chainId, 64);
   if (chainId == null) return refuse('bad_uint');
+  const seen = new Set();
+  const unique = [];
+  for (const reader of readers) {
+    const id = reader && typeof reader.rpcUrl === 'string' && reader.rpcUrl.length > 0
+      ? `url:${reader.rpcUrl}`
+      : reader;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    unique.push(reader);
+  }
+  readers = unique;
   if (chainId === 84532n && readers.length < 3) return refuse('chain_unread');
   if (readers.length < 2) return refuse('chain_unread');
   const groups = new Map();
@@ -328,6 +340,7 @@ export function createRpcReader(rpcUrl, { fetchImpl = globalThis.fetch, timeoutM
     return data.result;
   }
   return {
+    rpcUrl,
     getChainId() {
       return rpc('eth_chainId', []);
     },

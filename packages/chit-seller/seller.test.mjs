@@ -3,7 +3,9 @@
  * The chain is a fake reader. Nothing here contacts a network.
  */
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +14,8 @@ import { bigToBytes, bytesToBig, bytesToHex, hexToBytes } from '../cs2-core/ecds
 import { P256, SECP256K1 } from '../cs2-core/ecdsa/curves.js';
 import { publicPoint, signRawDigest } from '../cs2-core/ecdsa/sign.js';
 import { sigmaDigest } from '../cs2-core/line/index.mjs';
-import { selectNonce } from './chain.mjs';
+import { readAgreedPayment, selectNonce } from './chain.mjs';
+import { productionPinList } from './pins.mjs';
 import { createMemoryStore } from './testing/memory-store.mjs';
 import {
   BOOK_ACTION,
@@ -37,6 +40,10 @@ import {
   REVOKE_BY_KEY_TYPE,
   REVOKE_TYPE,
   revokeRecordId,
+  ALG_REGISTRY,
+  KEY_ALG_P256,
+  KEY_ALG_SECP256K1,
+  canonicalKey,
   keyHash,
   signPayToControl,
   signRevoke,
@@ -102,11 +109,20 @@ function authLog(authorizer, nonce) {
 
 function defaultLogs() {
   return [
-    transferLog(PAYER, PAYEE, 1n),
-    transferLog(PAYER, PAYEE, PRICE),
     authLog(PAYER, NONCE_A),
+    transferLog(PAYER, PAYEE, PRICE),
     authLog(PAYER, NONCE_B),
+    transferLog(PAYER, PAYEE, 1n),
   ];
+}
+
+function readersOf(reader, n = 3) {
+  return Array.from({ length: n }, () => ({
+    getChainId: () => reader.getChainId(),
+    getBlockByHash: (hash) => reader.getBlockByHash(hash),
+    getBlockByNumber: (tag) => reader.getBlockByNumber(tag),
+    getReceipt: (hash) => reader.getReceipt(hash),
+  }));
 }
 
 function world(opts = {}) {
@@ -198,7 +214,7 @@ function seller(reader, extra = {}) {
     store: extra.store || createMemoryStore(),
     token: extra.token || TOKEN,
     payee: extra.payee || PAYEE,
-    readers: extra.readers || [reader, reader, reader],
+    readers: extra.readers || readersOf(reader),
   });
 }
 
@@ -287,9 +303,8 @@ test('a payee mismatch produces no sigma', async () => {
 test('a price above the call produces no sigma', async () => {
   const reader = world({
     logs: [
-      transferLog(PAYER, PAYEE, 1n),
-      transferLog(PAYER, PAYEE, PRICE + 1n),
       authLog(PAYER, NONCE_A),
+      transferLog(PAYER, PAYEE, PRICE + 1n),
     ],
   });
   const signed = await seller(reader).sign({
@@ -304,9 +319,8 @@ test('a price above the call produces no sigma', async () => {
 test('a price below the call produces no sigma', async () => {
   const reader = world({
     logs: [
-      transferLog(PAYER, PAYEE, 1n),
-      transferLog(PAYER, PAYEE, PRICE - 1n),
       authLog(PAYER, NONCE_A),
+      transferLog(PAYER, PAYEE, PRICE - 1n),
     ],
   });
   const signed = await seller(reader).sign({
@@ -340,8 +354,8 @@ test('a zero nonce produces no sigma', async () => {
 
 test('the second AuthorizationUsed nonce in the settle still matches', async () => {
   const signed = await seller(world()).sign({
-    payment: payment(),
-    authorization: authorization({ nonce: `0x${NONCE_B}` }),
+    payment: payment({ localLogIndex: 3 }),
+    authorization: authorization({ price: '1', nonce: `0x${NONCE_B}` }),
     K,
     alg: 1,
   });
@@ -351,9 +365,8 @@ test('the second AuthorizationUsed nonce in the settle still matches', async () 
 test('a transfer from a different address produces no sigma', async () => {
   const reader = world({
     logs: [
-      transferLog(OTHER_ADDR, PAYEE, 1n),
-      transferLog(OTHER_ADDR, PAYEE, PRICE),
       authLog(PAYER, NONCE_A),
+      transferLog(OTHER_ADDR, PAYEE, PRICE),
     ],
   });
   const signed = await seller(reader).sign({
@@ -368,9 +381,8 @@ test('a transfer from a different address produces no sigma', async () => {
 test('an AuthorizationUsed authorizer that is not the payer produces no sigma', async () => {
   const reader = world({
     logs: [
-      transferLog(PAYER, PAYEE, 1n),
-      transferLog(PAYER, PAYEE, PRICE),
       authLog(OTHER_ADDR, NONCE_A),
+      transferLog(PAYER, PAYEE, PRICE),
     ],
   });
   const signed = await seller(reader).sign({
@@ -511,7 +523,24 @@ test('the same payment id with a second nonce is refused', async () => {
     K,
     alg: 1,
   });
-  assertRefusal(second, 'duplicate_sigma');
+  assertRefusal(second, 'nonce_mismatch');
+});
+
+test('the payment claim is refused even when the authorization claim would succeed', async () => {
+  const pays = new Set();
+  const store = {
+    claim(id) {
+      if (!id.startsWith('pay:')) return true;
+      if (pays.has(id)) return false;
+      pays.add(id);
+      return true;
+    },
+    release() {},
+    has() { return false; },
+  };
+  const who = seller(world(), { store });
+  assertSigned(await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 }));
+  assertRefusal(await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 }), 'duplicate_sigma');
 });
 
 test('a second sigma for the same payment id is refused', async () => {
@@ -524,11 +553,17 @@ test('a second sigma for the same payment id is refused', async () => {
 });
 
 test('one authorization cannot sign a second transfer', async () => {
-  const who = seller(world());
+  const logs = [
+    authLog(PAYER, NONCE_A),
+    transferLog(PAYER, PAYEE, PRICE),
+    authLog(PAYER, NONCE_A),
+    transferLog(PAYER, PAYEE, 1n),
+  ];
+  const who = seller(world({ logs }));
   const first = await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 });
   assertSigned(first);
   const second = await who.sign({
-    payment: payment({ localLogIndex: 0 }),
+    payment: payment({ localLogIndex: 3 }),
     authorization: authorization({ price: '1' }),
     K,
     alg: 1,
@@ -578,23 +613,23 @@ test('a transaction hash without a log index is refused before the chain read', 
 test('a multi-transfer settle binds the log index and the value', async () => {
   const who = seller(world());
   const first = await who.sign({
-    payment: payment({ localLogIndex: 0 }),
-    authorization: authorization({ price: '1', nonce: `0x${NONCE_A}` }),
+    payment: payment({ localLogIndex: 3 }),
+    authorization: authorization({ price: '1', nonce: `0x${NONCE_B}` }),
     K,
     alg: 1,
   });
   assertSigned(first);
   const second = await who.sign({
     payment: payment({ localLogIndex: 1 }),
-    authorization: authorization({ price: PRICE.toString(), nonce: `0x${NONCE_B}` }),
+    authorization: authorization(),
     K,
     alg: 1,
   });
   assertSigned(second);
   assert.notEqual(first.paymentId, second.paymentId);
   const wrongValue = await seller(world()).sign({
-    payment: payment({ localLogIndex: 0 }),
-    authorization: authorization({ price: PRICE.toString(), nonce: `0x${NONCE_A}` }),
+    payment: payment({ localLogIndex: 3 }),
+    authorization: authorization({ price: PRICE.toString(), nonce: `0x${NONCE_B}` }),
     K,
     alg: 1,
   });
@@ -626,7 +661,7 @@ test('RFC 6979 nonces differ across payments and a caller nonce is refused', asy
   const first = await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 });
   assertSigned(first);
   const second = await who.sign({
-    payment: payment({ localLogIndex: 0 }),
+    payment: payment({ localLogIndex: 3 }),
     authorization: authorization({ price: '1', nonce: `0x${NONCE_B}` }),
     K,
     alg: 1,
@@ -687,7 +722,7 @@ function pins() {
 }
 
 function k1Compressed(scalar) {
-  const pub = publicPoint(scalar, SECP256K1);
+  const pub = publicPoint(scalar, P256);
   const out = new Uint8Array(33);
   out[0] = (pub[64] & 1) ? 3 : 2;
   out.set(pub.subarray(1, 33), 1);
@@ -751,14 +786,14 @@ test('two contracts on one chainId produce different PayToControl digests', () =
   assert.notEqual(bookA.hex, bookB.hex);
 });
 
-test('PayToControl signs under the pinned contract for the hour and verifies there', () => {
+test('PayToControl signs under the pinned contract for the hour and verifies there', async () => {
   const { key, input } = controlInput(HOUR_A);
   assert.equal(bytesToHex(key), eipVector.key);
-  const signed = signPayToControl(input);
+  const signed = await signPayToControl(input);
   assert.equal(signed.ok, true, signed.reason);
   assert.equal(bytesToHex(signed.digest), eipVector.digest_a);
   assert.equal(bytesToHex(signed.signature), eipVector.signature_a);
-  assert.equal(signed.signature.length, SIGNATURE_LENGTH_PREFIX_BYTES + EOA_SIGNATURE_BYTES);
+  assert.equal(signed.signature.length, (SIGNATURE_LENGTH_PREFIX_BYTES + EOA_SIGNATURE_BYTES) + (SIGNATURE_LENGTH_PREFIX_BYTES + 64));
   const yParity = signed.signature[SIGNATURE_LENGTH_PREFIX_BYTES + EOA_SIGNATURE_BYTES - 1];
   assert.ok(yParity === 0 || yParity === 1);
   assert.equal(signed.record.domain.name, DOMAIN_NAME);
@@ -779,9 +814,9 @@ test('PayToControl signs under the pinned contract for the hour and verifies the
   assert.equal(still.ok, true);
 });
 
-test('a PayToControl signature rejects a tamper, high-S, a legacy y byte, and a bad alg', () => {
+test('a PayToControl signature rejects a tamper, high-S, a legacy y byte, and a bad alg', async () => {
   const { key, input } = controlInput(HOUR_A);
-  const signed = signPayToControl(input);
+  const signed = await signPayToControl(input);
   const flipped = new Uint8Array(signed.signature);
   flipped[10] ^= 0x01;
   assertRefusal(verifyPayToControl({ ...input, signature: flipped }), 'bad_signature');
@@ -805,21 +840,21 @@ test('a PayToControl signature rejects a tamper, high-S, a legacy y byte, and a 
   assertRefusal(verifyPayToControl({ ...input, signature: longer }), 'bad_signature');
   const shorter = encodeSignatureField(inner.subarray(0, EOA_SIGNATURE_BYTES - 1));
   assertRefusal(verifyPayToControl({ ...input, signature: shorter }), 'bad_signature');
-  assertRefusal(signPayToControl({ ...input, keyAlg: 2 }), 'bad_alg');
-  assertRefusal(signPayToControl({
+  assertRefusal(await signPayToControl({ ...input, keyAlg: 2 }), 'bad_alg');
+  assertRefusal(await signPayToControl({
     ...input,
     payTo: `0x${'00'.repeat(20)}`,
     store: createMemoryStore(),
   }), 'bad_payment');
-  assertRefusal(signPayToControl({ ...input, key: new Uint8Array(65) }), 'bad_length');
+  assertRefusal(await signPayToControl({ ...input, key: new Uint8Array(65) }), 'bad_length');
   const uncompressed = new Uint8Array(key);
   uncompressed[0] = 0x04;
-  assertRefusal(signPayToControl({ ...input, key: uncompressed }), 'bad_length');
+  assertRefusal(await signPayToControl({ ...input, key: uncompressed }), 'bad_length');
   assertRefusal(verifyPayToControl({ ...input, key: uncompressed, signature: signed.signature }), 'bad_length');
-  assertRefusal(signPayToControl({ ...input, hourStart: HOUR_A + 1n }), 'bad_hour');
-  assertRefusal(signPayToControl({ ...input, hourStart: HOUR_A - 7200n }), 'contract_unpinned');
-  assertRefusal(signPayToControl({ ...input, pinnedContracts: pins() }), 'bad_payment');
-  assertRefusal(signPayToControl({ ...input, expiry: HOUR_A }), 'bad_payment');
+  assertRefusal(await signPayToControl({ ...input, hourStart: HOUR_A + 1n }), 'bad_hour');
+  assertRefusal(await signPayToControl({ ...input, hourStart: HOUR_A - 7200n }), 'contract_unpinned');
+  assertRefusal(await signPayToControl({ ...input, pinnedContracts: pins() }), 'bad_payment');
+  assertRefusal(await signPayToControl({ ...input, expiry: HOUR_A }), 'bad_payment');
   assertRefusal(verifyPayToControl({
     ...input,
     hourStart: HOUR_B,
@@ -828,7 +863,7 @@ test('a PayToControl signature rejects a tamper, high-S, a legacy y byte, and a 
   }), 'bad_payment');
 });
 
-test('revoke is signed by the payTo and its id is slot plus keyHash', () => {
+test('revoke is signed by the payTo and its id is slot plus keyHash', async () => {
   const { key, input } = controlInput(HOUR_A);
   const hashed = keyHash(1, key);
   assert.equal(hashed.ok, true);
@@ -849,21 +884,51 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', () => {
     keyHash: hashed.bytes,
     signature: revoke.signature,
   }).ok, true);
+  const wide = new Uint8Array(66);
+  wide.set(revoke.signature.subarray(2));
+  assertRefusal(verifyRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: input.payTo,
+    keyHash: hashed.bytes,
+    signature: encodeSignatureField(wide),
+  }), 'bad_signature');
+  const highRevoke = new Uint8Array(revoke.signature);
+  const rs = highRevoke.subarray(2, 66);
+  rs.set(bigToBytes(SECP256K1.order - bytesToBig(rs.subarray(32)), 32), 32);
+  highRevoke[66] ^= 1;
+  assertRefusal(verifyRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: input.payTo,
+    keyHash: hashed.bytes,
+    signature: highRevoke,
+  }), 'bad_signature');
+  const legacyRevoke = new Uint8Array(revoke.signature);
+  legacyRevoke[66] = revoke.signature[66] + 27;
+  assertRefusal(verifyRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: input.payTo,
+    keyHash: hashed.bytes,
+    signature: legacyRevoke,
+  }), 'bad_signature');
   const slot = '03'.repeat(32);
   const id = revokeRecordId(slot, hashed.bytes);
   assert.equal(id.ok, true);
   assert.equal(id.hex, revokeRecordId(slot, hashed.bytes).hex);
   assert.notEqual(id.hex, revokeRecordId(slot, '04'.repeat(32)).hex);
   assert.equal(id.bytes.length, 64);
-  const byKey = signRevokeByKey({
+  const byKey = await signRevokeByKey({
     chainId: CHAIN,
     keyHash: hashed.bytes,
+    key,
+    keyAlg: 1,
     hourStart: HOUR_A,
     privateKey: input.privateKey,
   });
   assert.equal(byKey.ok, true, byKey.reason);
-  const yParity = byKey.signature[SIGNATURE_LENGTH_PREFIX_BYTES + EOA_SIGNATURE_BYTES - 1];
-  assert.ok(yParity === 0 || yParity === 1);
+  assert.equal(byKey.signature.length, 64);
   assert.equal(verifyRevokeByKey({
     chainId: CHAIN,
     keyHash: hashed.bytes,
@@ -872,9 +937,11 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', () => {
     hourStart: HOUR_A,
     signature: byKey.signature,
   }).ok, true);
-  assertRefusal(signRevokeByKey({
+  assertRefusal(await signRevokeByKey({
     chainId: CHAIN,
     keyHash: `0x${'04'.repeat(32)}`,
+    key,
+    keyAlg: 1,
     hourStart: HOUR_A,
     privateKey: input.privateKey,
   }), 'bad_payment');
@@ -886,15 +953,34 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', () => {
     hourStart: HOUR_A,
     signature: byKey.signature,
   }), 'bad_signature');
-  const later = verifyRevokeByKey({
+  const laterHour = HOUR_B + 3600n * 5000n;
+  const laterSigned = await signRevokeByKey({
     chainId: CHAIN,
     keyHash: hashed.bytes,
     key,
     keyAlg: 1,
     hourStart: HOUR_B,
-    signature: byKey.signature,
+    privateKey: input.privateKey,
+    store: createMemoryStore(),
+  });
+  assert.equal(laterSigned.ok, true, laterSigned.reason);
+  const later = verifyRevokeByKey({
+    chainId: CHAIN,
+    keyHash: hashed.bytes,
+    key,
+    keyAlg: 1,
+    hourStart: laterHour,
+    signature: laterSigned.signature,
   });
   assert.equal(later.ok, true);
+  assertRefusal(verifyRevokeByKey({
+    chainId: CHAIN,
+    keyHash: hashed.bytes,
+    key,
+    keyAlg: 1,
+    hourStart: HOUR_A,
+    signature: laterSigned.signature,
+  }), 'bad_signature');
 });
 
 function concatBytes(left, right) {
@@ -963,7 +1049,7 @@ test('the rpc reader loads the payment by block hash and the finalized tag', asy
     return { ok: true, json: async () => ({ jsonrpc: '2.0', id: 1, result }) };
   };
   const reader = createRpcReader('http://rpc.test/local', { fetchImpl });
-  const who = seller(reader, { readers: [reader, reader, reader] });
+  const who = seller(reader, { readers: readersOf(reader) });
   const again = await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 });
   assertSigned(again);
   assert.equal(bytesToHex(again.sigma), sigmaVector.sigma);
@@ -1019,7 +1105,7 @@ test('a reader failure does not echo the thrown text', async () => {
     json: async () => ({ error: { message: SELLER_KEY } }),
   });
   const rpc = createRpcReader('http://rpc.test/local', { fetchImpl });
-  const viaRpc = await seller(rpc, { readers: [rpc, rpc, rpc] }).sign({
+  const viaRpc = await seller(rpc, { readers: readersOf(rpc) }).sign({
     payment: payment(),
     authorization: authorization(),
     K,
@@ -1057,26 +1143,26 @@ test('a refusal is logged as the reason alone', async () => {
 test('topic, width, nonce, pin, and signature-field gaps', async () => {
   const short = transferLog(PAYER, PAYEE, PRICE);
   short.data = `0x${padUint(PRICE).slice(2)}`;
-  assertRefusal(await seller(world({ logs: [transferLog(PAYER, PAYEE, 1n), short, authLog(PAYER, NONCE_A)] })).sign({
+  assertRefusal(await seller(world({ logs: [authLog(PAYER, NONCE_A), short] })).sign({
     payment: payment(), authorization: authorization(), K, alg: 1,
   }), 'bad_payment');
   const wrongTransfer = transferLog(PAYER, PAYEE, PRICE);
   wrongTransfer.topics[0] = `0x${'ab'.repeat(32)}`;
-  assertRefusal(await seller(world({ logs: [transferLog(PAYER, PAYEE, 1n), wrongTransfer, authLog(PAYER, NONCE_A)] })).sign({
+  assertRefusal(await seller(world({ logs: [authLog(PAYER, NONCE_A), wrongTransfer] })).sign({
     payment: payment(), authorization: authorization(), K, alg: 1,
   }), 'bad_payment');
   const four = transferLog(PAYER, PAYEE, PRICE);
   four.topics = [...four.topics, `0x${'00'.repeat(32)}`];
-  assertRefusal(await seller(world({ logs: [transferLog(PAYER, PAYEE, 1n), four, authLog(PAYER, NONCE_A)] })).sign({
+  assertRefusal(await seller(world({ logs: [authLog(PAYER, NONCE_A), four] })).sign({
     payment: payment(), authorization: authorization(), K, alg: 1,
   }), 'bad_payment');
   const wrongAuth = authLog(PAYER, NONCE_A);
   wrongAuth.topics[0] = `0x${'cd'.repeat(32)}`;
-  assertRefusal(await seller(world({ logs: [transferLog(PAYER, PAYEE, 1n), transferLog(PAYER, PAYEE, PRICE), wrongAuth] })).sign({
+  assertRefusal(await seller(world({ logs: [wrongAuth, transferLog(PAYER, PAYEE, PRICE)] })).sign({
     payment: payment(), authorization: authorization(), K, alg: 1,
   }), 'nonce_mismatch');
   const foreign = { ...authLog(PAYER, NONCE_A), address: OTHER_ADDR };
-  assertRefusal(await seller(world({ logs: [transferLog(PAYER, PAYEE, 1n), transferLog(PAYER, PAYEE, PRICE), foreign] })).sign({
+  assertRefusal(await seller(world({ logs: [foreign, transferLog(PAYER, PAYEE, PRICE)] })).sign({
     payment: payment(), authorization: authorization(), K, alg: 1,
   }), 'nonce_mismatch');
   assertRefusal(await seller(world()).sign({
@@ -1097,17 +1183,25 @@ test('topic, width, nonce, pin, and signature-field gaps', async () => {
 });
 
 test('a duplicate authorization releases the payment claim', async () => {
+  const logs = [
+    authLog(PAYER, NONCE_A),
+    transferLog(PAYER, PAYEE, PRICE),
+    authLog(PAYER, NONCE_A),
+    transferLog(PAYER, PAYEE, 1n),
+    authLog(PAYER, NONCE_B),
+    transferLog(PAYER, PAYEE, 1n),
+  ];
   const store = createMemoryStore();
-  const who = seller(world(), { store });
+  const who = seller(world({ logs }), { store });
   assertSigned(await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 }));
   assertRefusal(await who.sign({
-    payment: payment({ localLogIndex: 0 }),
+    payment: payment({ localLogIndex: 3 }),
     authorization: authorization({ price: '1' }),
     K,
     alg: 1,
   }), 'duplicate_sigma');
   assertSigned(await who.sign({
-    payment: payment({ localLogIndex: 0 }),
+    payment: payment({ localLogIndex: 5 }),
     authorization: authorization({ price: '1', nonce: `0x${NONCE_B}` }),
     K,
     alg: 1,
@@ -1124,16 +1218,15 @@ test('verifySigma rejects a sigma that is not exactly 64 bytes', async () => {
 
 test('trailing signature bytes and a caller token are refused', async () => {
   const { key, input } = controlInput(HOUR_A);
-  const signed = signPayToControl(input);
+  const signed = await signPayToControl(input);
   assert.equal(signed.ok, true, signed.reason);
   const trailing = new Uint8Array(signed.signature.length + 1);
   trailing.set(signed.signature);
   assertRefusal(verifyPayToControl({ ...input, signature: trailing }), 'bad_signature');
   const bad = '99'.repeat(20);
   const logs = [
-    transferLog(PAYER, PAYEE, 1n, bad),
-    transferLog(PAYER, PAYEE, PRICE, bad),
     { ...authLog(PAYER, NONCE_A), address: bad },
+    transferLog(PAYER, PAYEE, PRICE, bad),
   ];
   assertRefusal(await seller(world({ logs })).sign({
     payment: payment(),
@@ -1158,12 +1251,12 @@ test('trailing signature bytes and a caller token are refused', async () => {
 test('a chain payee or token that is not the pin is refused', async () => {
   const otherPayee = transferLog(PAYER, OTHER_ADDR, PRICE);
   assertRefusal(await seller(world({
-    logs: [transferLog(PAYER, PAYEE, 1n), otherPayee, authLog(PAYER, NONCE_A)],
+    logs: [authLog(PAYER, NONCE_A), otherPayee],
   })).sign({ payment: payment(), authorization: authorization(), K, alg: 1 }), 'payee_mismatch');
   const otherToken = transferLog(PAYER, PAYEE, PRICE, OTHER_ADDR);
   const otherAuth = { ...authLog(PAYER, NONCE_A), address: OTHER_ADDR };
   assertRefusal(await seller(world({
-    logs: [transferLog(PAYER, PAYEE, 1n, OTHER_ADDR), otherToken, otherAuth],
+    logs: [otherAuth, otherToken],
   })).sign({ payment: payment(), authorization: authorization(), K, alg: 1 }), 'token_mismatch');
 });
 
@@ -1221,5 +1314,258 @@ test('sigma is signed on P-256, not secp256k1', async () => {
   assert.equal(wrongCurve.ok, false);
   assert.equal(bytesToHex(signed.sigma), sigmaVector.sigma);
   assert.equal(readFileSync(join(here, 'index.mjs'), 'utf8').includes('setNonceHookForTests'), false);
+  assert.equal(readFileSync(join(here, 'index.mjs'), 'utf8').includes('signSigma'), false);
   assert.equal(readFileSync(join(here, 'index.mjs'), 'utf8').includes('evmFinality'), false);
+  assert.equal(existsSync(join(here, 'nonce-hook.mjs')), false);
+});
+
+test('a deep import of an internal module fails', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chit-exports-'));
+  try {
+    const nm = join(dir, 'node_modules');
+    mkdirSync(nm);
+    symlinkSync(here, join(nm, 'chit-seller'));
+    symlinkSync(join(here, '../cs2-core'), join(nm, 'cs2-core'));
+    const script = `
+      const paths = [
+        'chit-seller/sigma.mjs',
+        'chit-seller/nonce-hook.mjs',
+        'chit-seller/eip712.mjs',
+        'chit-seller/rfc6979.mjs',
+        'cs2-core/eip712/key-hash.mjs',
+        'cs2-core/eip712/registry.mjs',
+      ];
+      let failed = 0;
+      for (const spec of paths) {
+        try {
+          await import(spec);
+        } catch (err) {
+          if (err && (err.code === 'ERR_PACKAGE_PATH_NOT_EXPORTED' || err.code === 'ERR_MODULE_NOT_FOUND')) failed += 1;
+          else throw err;
+        }
+      }
+      if (failed !== paths.length) process.exit(1);
+      await import('chit-seller');
+      await import('cs2-core/eip712');
+    `;
+    writeFileSync(join(dir, 'probe.mjs'), script);
+    const run = spawnSync(process.execPath, ['probe.mjs'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an async store signs one sigma and a failed claim is a refusal', async () => {
+  const held = new Set();
+  const asyncStore = {
+    async claim(id) {
+      if (held.has(id)) return false;
+      held.add(id);
+      return true;
+    },
+    async release(id) { held.delete(id); },
+    async has(id) { return held.has(id); },
+  };
+  const who = seller(world(), { store: asyncStore });
+  const req = { payment: payment(), authorization: authorization(), K, alg: 1 };
+  assertSigned(await who.sign(req));
+  assertRefusal(await who.sign(req), 'duplicate_sigma');
+  const { input } = controlInput(HOUR_A);
+  const refusing = {
+    claim() { return Promise.resolve(false); },
+    release() { return Promise.resolve(); },
+    has() { return Promise.resolve(false); },
+  };
+  const hashed = keyHash(1, input.key);
+  assertRefusal(await signRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: hashed.bytes,
+    key: input.key,
+    keyAlg: 1,
+    privateKey: input.privateKey,
+    store: refusing,
+  }), 'bad_payment');
+});
+
+test('a third party cannot tombstone a key', async () => {
+  const { key, input } = controlInput(HOUR_A);
+  const victim = keyHash(1, key);
+  const attackerKey = k1Compressed(0xbadn);
+  assertRefusal(await signRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: victim.bytes,
+    key: attackerKey,
+    keyAlg: 1,
+    privateKey: 0xbadn,
+  }), 'bad_payment');
+  const digest = hashChit('RevokeByKey', { keyHash: victim.bytes }, BigInt(CHAIN), CONTRACT_A);
+  assert.equal(digest.ok, true);
+  const forged = signRawDigest(digest.bytes, 0xbadn, 12345n, P256);
+  assertRefusal(verifyRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: victim.bytes,
+    key,
+    keyAlg: 1,
+    signature: forged.raw,
+  }), 'bad_signature');
+  assertRefusal(verifyRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: victim.bytes,
+    key: attackerKey,
+    keyAlg: 1,
+    signature: forged.raw,
+  }), 'bad_signature');
+  const own = await signRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: victim.bytes,
+    key,
+    keyAlg: 1,
+    privateKey: input.privateKey,
+  });
+  assert.equal(own.ok, true, own.reason);
+  assert.equal(verifyRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: victim.bytes,
+    key,
+    keyAlg: 1,
+    signature: own.signature,
+  }).ok, true);
+  assertRefusal(verifyRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: victim.bytes,
+    key,
+    signature: own.signature,
+  }), 'bad_alg');
+});
+
+test('off-curve keys and tombstones are refused, and the same key may bind a second payTo', async () => {
+  const { key, input } = controlInput(HOUR_A);
+  const off = new Uint8Array(33);
+  off[0] = 2;
+  off[32] = 1;
+  assert.equal(canonicalKey(1, off).reason, 'bad_key');
+  assertRefusal(await signPayToControl({ ...input, key: off, store: createMemoryStore() }), 'bad_key');
+  const hashed = keyHash(1, key);
+  assertRefusal(await signPayToControl({
+    ...input,
+    tombstones: [hashed.bytes],
+    store: createMemoryStore(),
+  }), 'bad_payment');
+  const held = createMemoryStore();
+  const first = await signPayToControl({ ...input, store: held });
+  assert.equal(first.ok, true, first.reason);
+  assertRefusal(await signPayToControl({ ...input, store: held }), 'bad_payment');
+  const second = await signPayToControl({ ...input, store: held, operatorOverride: true });
+  assert.equal(second.ok, true, second.reason);
+  assert.equal(verifyPayToControl({ ...input, signature: second.signature }).ok, true);
+  assertRefusal(verifyPayToControl({
+    ...input,
+    signature: second.signature.subarray(0, SIGNATURE_LENGTH_PREFIX_BYTES + EOA_SIGNATURE_BYTES),
+  }), 'bad_signature');
+  const other = k1Compressed(3n);
+  const wrong = new Uint8Array(second.signature);
+  const otherSigned = await signPayToControl({
+    ...input,
+    key: other,
+    keyPrivateKey: 3n,
+    store: createMemoryStore(),
+  });
+  assert.equal(otherSigned.ok, true, otherSigned.reason);
+  wrong.set(otherSigned.signature.subarray(SIGNATURE_LENGTH_PREFIX_BYTES + EOA_SIGNATURE_BYTES), SIGNATURE_LENGTH_PREFIX_BYTES + EOA_SIGNATURE_BYTES);
+  assertRefusal(verifyPayToControl({ ...input, signature: wrong }), 'bad_signature');
+  assertRefusal(await signPayToControl({ ...input, key: other, store: createMemoryStore() }), 'bad_key');
+  const tomb = {
+    claim() { return true; },
+    release() {},
+    has(id) { return id.startsWith('tomb:'); },
+  };
+  assertRefusal(await signPayToControl({ ...input, store: tomb }), 'bad_payment');
+  assertRefusal(await signPayToControl({ ...input, keyAlg: 2, key: new Uint8Array(65), store: createMemoryStore() }), 'bad_alg');
+  const prefixed = new Uint8Array(key);
+  prefixed[0] = 4;
+  assertRefusal(await signPayToControl({ ...input, key: prefixed, expiry: 'x', store: createMemoryStore() }), 'bad_length');
+  assertRefusal(await signPayToControl({ ...input, key: prefixed, expiry: HOUR_A, store: createMemoryStore() }), 'bad_length');
+});
+
+test('quorum counts distinct readers and pairs an AuthorizationUsed with its Transfer', async () => {
+  const one = world();
+  const same = createSeller({
+    privateKey: SELLER_KEY,
+    store: createMemoryStore(),
+    token: TOKEN,
+    payee: PAYEE,
+    readers: [one, one, one],
+  });
+  assertRefusal(await same.sign({ payment: payment(), authorization: authorization(), K, alg: 1 }), 'chain_unread');
+  const pair = await readAgreedPayment([world(), world()], payment());
+  assert.equal(pair.reason, 'chain_unread');
+  const four = authLog(PAYER, NONCE_A);
+  four.topics = [...four.topics, `0x${'00'.repeat(32)}`];
+  assertRefusal(await seller(world({ logs: [four, transferLog(PAYER, PAYEE, PRICE)] })).sign({
+    payment: payment(), authorization: authorization(), K, alg: 1,
+  }), 'nonce_mismatch');
+  const distant = [authLog(PAYER, NONCE_A), transferLog(PAYER, OTHER_ADDR, 5n), transferLog(PAYER, PAYEE, PRICE)];
+  assertRefusal(await seller(world({ logs: distant })).sign({
+    payment: payment({ localLogIndex: 2 }), authorization: authorization(), K, alg: 1,
+  }), 'nonce_mismatch');
+  const cheap = world({ logs: [authLog(PAYER, NONCE_A), transferLog(PAYER, PAYEE, PRICE - 1n)] });
+  const dear = world({ logs: [authLog(PAYER, NONCE_A), transferLog(PAYER, PAYEE, PRICE)] });
+  const quiet = world({ missingHash: true });
+  assert.equal((await readAgreedPayment([cheap, dear, quiet], payment())).reason, 'chain_unread');
+  const otherNonce = world({ logs: [authLog(PAYER, NONCE_B), transferLog(PAYER, PAYEE, PRICE)] });
+  assert.equal((await readAgreedPayment([dear, otherNonce, quiet], payment())).reason, 'chain_unread');
+  assertRefusal(await seller(world({
+    logs: [authLog(PAYER, NONCE_A), transferLog(PAYER, OTHER_ADDR, PRICE)],
+  })).sign({
+    payment: payment(),
+    authorization: authorization({ payee: `0x${OTHER_ADDR}` }),
+    K,
+    alg: 1,
+  }), 'payee_mismatch');
+  assert.equal(productionPinList(), null);
+  assert.equal(contractForHour([{
+    chainId: CHAIN,
+    address: `0x${'aa'.repeat(20)}`,
+    genesisHourStart: HOUR_A,
+  }], CHAIN, HOUR_A).reason, 'bad_payment');
+  assertRefusal(createSeller({
+    privateKey: SELLER_KEY, store: createMemoryStore(), token: TOKEN, payee: PAYEE, readers: readersOf(world()), k: 7n,
+  }), 'bad_key');
+  assertRefusal(await seller(world()).sign({
+    payment: payment(), authorization: authorization(), K, alg: 1, k: 7n,
+  }), 'bad_key');
+  const { input } = controlInput(HOUR_A);
+  assertRefusal(await signPayToControl({ ...input, k: 7n }), 'bad_key');
+  assertRefusal(await signPayToControl({ ...input, digest: new Uint8Array(32) }), 'bad_payment');
+  const pop = JSON.parse(readFileSync(join(here, '../cs2-core/eip712/vectors/pop.json'), 'utf8'));
+  const popKey = hexToBytes(pop.key);
+  assertRefusal(await signPayToControl({
+    ...input,
+    key: popKey,
+    keyPrivateKey: BigInt(`0x${pop.scalar}`),
+    store: createMemoryStore(),
+  }), 'bad_key');
+  assertRefusal(createSeller({
+    privateKey: pop.scalar,
+    store: createMemoryStore(),
+    token: TOKEN,
+    payee: PAYEE,
+    readers: readersOf(world()),
+  }), 'bad_key');
+  const prefixed = encodeSignatureField(new Uint8Array(64));
+  assert.equal(prefixed[0], 0);
+  assert.equal(prefixed[1], 64);
+  const core = await import('../cs2-core/eip712/index.mjs');
+  assert.deepEqual(ALG_REGISTRY, core.ALG_REGISTRY);
+  assert.equal(KEY_ALG_P256, 0x01);
+  assert.equal(KEY_ALG_SECP256K1, 0x02);
+  assert.equal('signSigma' in (await import('./index.mjs')), false);
 });

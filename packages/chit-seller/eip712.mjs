@@ -7,10 +7,15 @@
  * under an earlier contract is verified under that contract. It is not
  * re-signed.
  *
- * The signature field is a uint16 length prefix plus 65 bytes, low-S,
+ * PayToControl and Revoke are signed by the payTo account on secp256k1.
+ * Their signature field is a uint16 length prefix plus 65 bytes, low-S,
  * yParity 0 or 1. ERC-1271 is not verified. Any other inner length is
- * refused. The seller P-256 key is the signed `key` on PayToControl, and
- * the key that signs RevokeByKey.
+ * refused.
+ *
+ * PayToControl.key and RevokeByKey are the seller P-256 key (keyAlg 0x01).
+ * RevokeByKey is a 64-byte low-S r‖s over the EIP-712 digest, checked
+ * against that carried key. It is signed only when the operator calls
+ * signRevokeByKey. A failed check tombstones nothing.
  */
 
 import { keccak256 } from '../cs2-core/ecdsa/keccak.js';
@@ -32,10 +37,10 @@ import {
   chitDomain,
 } from './typed-data.mjs';
 import { encodeSignatureField, readSignatureField } from './signature-field.mjs';
-import { expiryAllows, keyHash, tombstoned } from '../cs2-core/eip712/index.mjs';
+import { canonicalKey, deniedKeyHash, expiryAllows, keyHash, possessionPreimage, verifyPossession, tombstoned } from '../cs2-core/eip712/index.mjs';
 import { contractForHour } from './pinned-contract.mjs';
 import { PINNED_CONTRACTS } from './pins.mjs';
-import { nonceFor } from './nonce-hook.mjs';
+import { nonceFor } from './rfc6979.mjs';
 import { compressP256 } from './sigma.mjs';
 
 const text = new TextEncoder();
@@ -176,6 +181,7 @@ export function hashTypedData(domain, types, primary, message) {
 function admitting(input) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) return refuse('bad_type');
   if (Object.hasOwn(input, 'k')) return refuse('bad_key');
+  if (Object.hasOwn(input, 'digest')) return refuse('bad_payment');
   if (Object.hasOwn(input, 'verifyingContract') || Object.hasOwn(input, 'pinnedContracts')) {
     return refuse('bad_payment');
   }
@@ -226,6 +232,8 @@ function parsePayToControl(input, admitted) {
   if (!key.ok) return key;
   const expiry = parseUint(input.expiry, 64);
   if (expiry == null) return refuse('bad_uint');
+  const canon = canonicalKey(input.keyAlg, key.bytes);
+  if (!canon.ok) return canon;
   return {
     ok: true,
     chainId: admitted.chainId,
@@ -303,7 +311,7 @@ function signDigest(digest, privateKey, curve) {
   const sig = signRawDigest(digest, d, nonce, curve);
   const signature = encodeSignatureField(concat([sig.raw, Uint8Array.of(sig.yParity)]));
   if (!signature) return refuse('bad_signature');
-  return { ok: true, signature, yParity: sig.yParity };
+  return { ok: true, signature, raw: sig.raw, yParity: sig.yParity };
 }
 
 function openCanonical(signatureField, curve) {
@@ -329,15 +337,78 @@ function verifyPayToSigner(digest, signatureField, payTo) {
   return { ok: true, signer };
 }
 
-function controlReady(input, parsed, admit) {
+function controlReady(input, parsed) {
   if (!expiryAllows(parsed.hourStart, parsed.message.expiry)) return refuse('bad_payment');
   const hashed = keyHash(parsed.message.keyAlg, parsed.message.key);
   if (!hashed.ok) return hashed;
+  if (deniedKeyHash(hashed.hex)) return refuse('bad_key');
   if (tombstoned(input.tombstones, hashed.hex)) return refuse('bad_payment');
-  if (admit && input.store && (input.store.has(`tomb:${hashed.hex}`) || input.store.has(`used:${hashed.hex}`))) {
-    return refuse('bad_payment');
-  }
   return hashed;
+}
+
+async function storeBool(promise) {
+  try {
+    return await promise;
+  } catch {
+    return undefined;
+  }
+}
+
+async function bindingOpen(input, hex, chainId) {
+  const store = input.store;
+  if (!store) return { ok: true };
+  const any = await storeBool(store.has(`bound:${hex}`));
+  const here = await storeBool(store.has(`bound:${chainId}:${hex}`));
+  if (any === true && here !== true) return refuse('bad_payment');
+  if (input.operatorOverride !== true) {
+    const open = await storeBool(store.has(`open:${hex}`));
+    if (open !== false) return refuse('bad_payment');
+  }
+  if (any !== true) {
+    const bound = await takeClaim(store, `bound:${hex}`);
+    if (!bound.ok) return bound;
+  }
+  if (here !== true) {
+    const tagged = await takeClaim(store, `bound:${chainId}:${hex}`);
+    if (!tagged.ok) return tagged;
+  }
+  if (input.operatorOverride !== true) {
+    const took = await takeClaim(store, `open:${hex}`);
+    if (!took.ok) return took;
+  }
+  return { ok: true };
+}
+
+async function keyClear(store, hex) {
+  if (!store) return { ok: true };
+  const tomb = await storeBool(store.has(`tomb:${hex}`));
+  if (tomb !== false) return refuse('bad_payment');
+  return { ok: true };
+}
+
+function sameBytes(left, right) {
+  if (!(left instanceof Uint8Array) || !(right instanceof Uint8Array) || left.length !== right.length) return false;
+  let diff = 0;
+  for (let i = 0; i < left.length; i += 1) diff |= left[i] ^ right[i];
+  return diff === 0;
+}
+
+function splitPossession(field) {
+  if (!(field instanceof Uint8Array) || field.length < 4) return refuse('bad_signature');
+  const payLen = (field[0] << 8) | field[1];
+  if (payLen !== 65 || field.length < 2 + payLen + 2) return refuse('bad_signature');
+  const payTo = field.subarray(0, 2 + payLen);
+  const rest = field.subarray(2 + payLen);
+  const keyLen = (rest[0] << 8) | rest[1];
+  if (keyLen !== 64 || rest.length !== 2 + keyLen) return refuse('bad_signature');
+  return { ok: true, payTo, key: rest.subarray(2) };
+}
+
+async function takeClaim(store, id) {
+  if (!store) return { ok: true };
+  const took = await storeBool(store.claim(id));
+  if (took !== true) return refuse('bad_payment');
+  return { ok: true };
 }
 
 export function payToControlDigest(input) {
@@ -345,29 +416,45 @@ export function payToControlDigest(input) {
   if (!admitted.ok) return admitted;
   const parsed = parsePayToControl(input, admitted);
   if (!parsed.ok) return parsed;
-  const ready = controlReady(input, parsed, false);
+  const ready = controlReady(input, parsed);
   if (!ready.ok) return ready;
   return digestOf(PAYTO_CONTROL, parsed);
 }
 
-export function signPayToControl(input) {
+export async function signPayToControl(input) {
   try {
     const admitted = admitting(input);
     if (!admitted.ok) return admitted;
     const parsed = parsePayToControl(input, admitted);
     if (!parsed.ok) return parsed;
-    const ready = controlReady(input, parsed, true);
+    const ready = controlReady(input, parsed);
     if (!ready.ok) return ready;
+    const clear = await keyClear(input.store, ready.hex);
+    if (!clear.ok) return clear;
+    const opened = await bindingOpen(input, ready.hex, admitted.chainId);
+    if (!opened.ok) return opened;
     const digest = digestOf(PAYTO_CONTROL, parsed);
     if (!digest.ok) return digest;
-    const signed = signDigest(digest.bytes, input.privateKey, SECP256K1);
+    const payScalar = parseScalar(input.privateKey, SECP256K1.order);
+    const keyScalar = parseScalar(Object.hasOwn(input, 'keyPrivateKey') ? input.keyPrivateKey : input.privateKey, P256.order);
+    if (payScalar == null || keyScalar == null) return refuse('bad_key');
+    let owned;
+    try { owned = compressP256(publicPoint(keyScalar, P256)); } catch { return refuse('bad_key'); }
+    if (!sameBytes(owned, parsed.message.key)) return refuse('bad_key');
+    const signed = signDigest(digest.bytes, payScalar, SECP256K1);
     if (!signed.ok) return signed;
-    if (input.store) input.store.claim(`used:${ready.hex}`);
+    const preimage = possessionPreimage(digest.bytes);
+    if (!preimage) return refuse('bad_payment');
+    const possessed = signDigest(preimage, keyScalar, P256);
+    if (!possessed.ok || !(possessed.raw instanceof Uint8Array)) return possessed.ok ? refuse('bad_signature') : possessed;
+    const keyField = encodeSignatureField(possessed.raw);
+    if (!keyField) return refuse('bad_signature');
+    const signature = concat([signed.signature, keyField]);
     return {
       ok: true,
       digest: digest.bytes,
-      signature: signed.signature,
-      record: recordOf(PAYTO_CONTROL, parsed, signed.signature),
+      signature,
+      record: recordOf(PAYTO_CONTROL, parsed, signature),
     };
   } catch {
     return refuse('bad_key');
@@ -380,11 +467,19 @@ export function verifyPayToControl(input) {
     if (!admitted.ok) return admitted;
     const parsed = parsePayToControl(input, admitted);
     if (!parsed.ok) return parsed;
-    const ready = controlReady(input, parsed, false);
-    if (!ready.ok) return ready.reason === 'bad_length' || ready.reason === 'bad_alg' ? ready : refuse('bad_payment');
+    const ready = controlReady(input, parsed);
+    if (!ready.ok) return ready.reason === 'bad_length' || ready.reason === 'bad_alg' || ready.reason === 'bad_key' ? ready : refuse('bad_payment');
     const digest = digestOf(PAYTO_CONTROL, parsed);
     if (!digest.ok) return digest;
-    return verifyPayToSigner(digest.bytes, input.signature, parsed.message.payTo);
+    const parts = splitPossession(input.signature);
+    if (!parts.ok) return parts;
+    const payTo = verifyPayToSigner(digest.bytes, parts.payTo, parsed.message.payTo);
+    if (!payTo.ok) return payTo;
+    const canon = canonicalKey(parsed.message.keyAlg, parsed.message.key);
+    if (!canon.ok) return canon;
+    const possessed = verifyPossession(digest.bytes, canon.uncompressed, parts.key);
+    if (!possessed.ok) return refuse('bad_signature');
+    return payTo;
   } catch {
     return refuse('bad_signature');
   }
@@ -425,27 +520,32 @@ export function verifyRevoke(input) {
   }
 }
 
-export function signRevokeByKey(input) {
+export async function signRevokeByKey(input) {
   try {
     const admitted = admitting(input);
     if (!admitted.ok) return admitted;
     const parsed = parseRevokeByKey(input, admitted);
     if (!parsed.ok) return parsed;
-    const d = parseScalar(input.privateKey, SECP256K1.order);
+    if (!Object.hasOwn(input, 'keyAlg') || input.keyAlg == null) return refuse('bad_alg');
+    const d = parseScalar(input.privateKey, P256.order);
     if (d == null) return refuse('bad_key');
-    const hashed = keyHash(0x01, compressP256(publicPoint(d, SECP256K1)));
+    const carried = input.key || compressP256(publicPoint(d, P256));
+    const hashed = keyHash(input.keyAlg, carried);
     const hash = hashed.ok ? hashed.bytes : null;
     if (!hash || bytesToHex(hash) !== bytesToHex(parsed.message.keyHash)) return refuse('bad_payment');
     const digest = digestOf(REVOKE_BY_KEY, parsed);
     if (!digest.ok) return digest;
-    const signed = signDigest(digest.bytes, d, SECP256K1);
+    const preimage = possessionPreimage(digest.bytes);
+    if (!preimage) return refuse('bad_payment');
+    const signed = signDigest(preimage, d, P256);
     if (!signed.ok) return signed;
-    if (input.store && hashed.ok) input.store.claim(`tomb:${hashed.hex}`);
+    const taken = await takeClaim(input.store, `tomb:${hashed.hex}`);
+    if (!taken.ok) return taken;
     return {
       ok: true,
       digest: digest.bytes,
-      signature: signed.signature,
-      record: recordOf(REVOKE_BY_KEY, parsed, signed.signature),
+      signature: signed.raw,
+      record: recordOf(REVOKE_BY_KEY, parsed, signed.raw),
     };
   } catch {
     return refuse('bad_key');
@@ -458,13 +558,14 @@ export function verifyRevokeByKey(input) {
     if (!admitted.ok) return admitted;
     const parsed = parseRevokeByKey(input, admitted);
     if (!parsed.ok) return parsed;
-    const opened = openCanonical(input.signature, SECP256K1);
-    if (!opened.ok) return opened;
+    if (!Object.hasOwn(input, 'keyAlg') || input.keyAlg == null) return refuse('bad_alg');
+    const canon = canonicalKey(input.keyAlg, input.key);
+    if (!canon.ok) return canon;
     const digest = digestOf(REVOKE_BY_KEY, parsed);
     if (!digest.ok) return digest;
-    const pub = recoverPublicKey(digest.bytes, opened.r, opened.s, opened.yParity, SECP256K1);
-    if (!pub) return refuse('bad_signature');
-    const hashed = keyHash(input.keyAlg == null ? 0x01 : input.keyAlg, input.key || compressP256(pub));
+    const possessed = verifyPossession(digest.bytes, canon.uncompressed, input.signature);
+    if (!possessed.ok) return refuse(possessed.reason === 'bad_sigma' ? 'bad_signature' : possessed.reason);
+    const hashed = keyHash(input.keyAlg, canon.bytes);
     const hash = hashed.ok ? hashed.bytes : null;
     if (!hash || bytesToHex(hash) !== bytesToHex(parsed.message.keyHash)) return refuse('bad_signature');
     return { ok: true };

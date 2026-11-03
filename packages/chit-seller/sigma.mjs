@@ -18,7 +18,8 @@ import { addressHex, isZeroHex, parseScalar, sameAddress } from './hex.mjs';
 import { isLowS } from './low-s.mjs';
 import { matchAuthorization, matchObservedSettle, requireObservedTriple } from './match.mjs';
 import { createRpcReader, readAgreedPayment, selectNonce } from './chain.mjs';
-import { nonceFor } from './nonce-hook.mjs';
+import { nonceFor } from './rfc6979.mjs';
+import { checkSigma, deniedKeyHash, keyHash } from '../cs2-core/eip712/index.mjs';
 import { BUNDLED_RPC_URLS } from './pins.mjs';
 
 function deny(reason, onRefuse) {
@@ -84,30 +85,30 @@ async function signInner(input) {
 
   const payClaim = `pay:${bound.paymentId}`;
   const authClaim = `auth:${authKey.hex}`;
-  if (!input.store.claim(payClaim)) return deny('duplicate_sigma', onRefuse);
-  if (!input.store.claim(authClaim)) {
-    input.store.release(payClaim);
+  if (!(await claimed(input.store, payClaim))) return deny('duplicate_sigma', onRefuse);
+  if (!(await claimed(input.store, authClaim))) {
+    await released(input.store, payClaim);
     return deny('duplicate_sigma', onRefuse);
   }
 
   const d = parseScalar(input.privateKey, P256.order);
   const k = d == null ? null : nonceFor(digest.bytes, d, P256.order);
   if (d == null || k == null) {
-    input.store.release(payClaim);
-    input.store.release(authClaim);
+    await released(input.store, payClaim);
+    await released(input.store, authClaim);
     return deny('bad_key', onRefuse);
   }
   let sig;
   try {
     sig = signRawDigest(digest.bytes, d, k, P256);
   } catch {
-    input.store.release(payClaim);
-    input.store.release(authClaim);
+    await released(input.store, payClaim);
+    await released(input.store, authClaim);
     return deny('bad_key', onRefuse);
   }
   if (!isLowS(sig.s, P256)) {
-    input.store.release(payClaim);
-    input.store.release(authClaim);
+    await released(input.store, payClaim);
+    await released(input.store, authClaim);
     return deny('bad_sigma', onRefuse);
   }
   return {
@@ -119,7 +120,7 @@ async function signInner(input) {
   };
 }
 
-export async function signSigma(input) {
+async function signSigma(input) {
   try {
     return await signInner(input);
   } catch {
@@ -127,14 +128,26 @@ export async function signSigma(input) {
   }
 }
 
+async function claimed(store, id) {
+  try {
+    return (await store.claim(id)) === true;
+  } catch {
+    return false;
+  }
+}
+
+async function released(store, id) {
+  try {
+    await store.release(id);
+  } catch {
+    /* the refusal stands */
+  }
+}
+
 export function verifySigma({ digest, sigma, publicKey } = {}) {
   try {
     if (!(digest instanceof Uint8Array) || digest.length !== 32) return refuse('bad_length');
-    if (!(sigma instanceof Uint8Array) || sigma.length !== 64) return refuse('bad_sigma');
-    const r = sigma.subarray(0, 32);
-    const s = sigma.subarray(32, 64);
-    if (bytesToBig(r) <= 0n || bytesToBig(r) >= P256.order) return refuse('bad_sigma');
-    if (!isLowS(s, P256)) return refuse('bad_sigma');
+    if (!(sigma instanceof Uint8Array) || !checkSigma(sigma).ok) return refuse('bad_sigma');
     const parity = yParityByTrial(digest, sigma, publicKey, P256);
     if (parity !== 0 && parity !== 1) return refuse('bad_signature');
     return { ok: true };
@@ -167,6 +180,8 @@ export function createSeller({ privateKey, store, token, payee, readers } = {}) 
   }
   const compressedKey = compressP256(publicKey);
   if (!compressedKey) return refuse('bad_key');
+  const hashed = keyHash(1, compressedKey);
+  if (!hashed.ok || deniedKeyHash(hashed.hex)) return refuse('bad_key');
   return {
     publicKey,
     compressedKey,

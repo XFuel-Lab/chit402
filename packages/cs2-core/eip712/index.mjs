@@ -29,8 +29,30 @@ export {
 
 export { TIME_UNIT, HOUR_SECONDS, expiryAllows } from './time.mjs';
 export {
+  ALG_REGISTRY,
+  LAUNCH_ALGS,
+  KEY_ALG_P256,
   KEY_ALG_SECP256K1,
-  canonicalSecp256k1Key,
-  keyHash,
-  tombstoned,
-} from './key-hash.mjs';
+  canonicalKey,
+} from './registry.mjs';
+export { keyHash, parseKeyHash, formatKeyHash, tombstoned, DENIED_KEY_HASHES, deniedKeyHash } from './key-hash.mjs';
+export { possessionPreimage, verifyPossession } from './possession.mjs';
+export { checkSigma } from './sigma-range.mjs';
+export {
+  KIND_PAYTO,
+  KIND_KEY,
+  KIND_CHANNEL,
+  EXIT_UNPROVEN,
+  SLOT_DOMAIN,
+  KEY_STATUS_ACTIVE,
+  KEY_STATUS_UNPROVEN,
+  KEY_STATUS_INVALID,
+  KEY_STATUS_REVOKED,
+  keySlotKey,
+  checkTombstone,
+  tombstoneCovers,
+  checkAdmission,
+  deriveKeySlotKey,
+  readKeyLeaf,
+  keyStatus,
+} from './slots.mjs';

@@ -1,42 +1,27 @@
 /**
  * keyHash = SHA-256(keyAlg byte || key).
  *
- * keyAlg 0x01 is secp256k1. The key is 33-byte SEC1 compressed
- * (prefix 0x02 or 0x03). A 65-byte key, a 0x04 prefix, or any other
- * prefix is refused. This is the only function that computes a keyHash.
+ * The key is whatever canonicalKey accepts for that algorithm. At v13 that
+ * is a 33-byte compressed P-256 point. This is the only function that
+ * computes a keyHash.
  */
 
 import { createHash } from 'node:crypto';
-import { bytesToHex } from '../ecdsa/bytes.js';
+import { bytesToHex, hexToBytes } from '../ecdsa/bytes.js';
+import { canonicalKey } from './registry.mjs';
 
-export const KEY_ALG_SECP256K1 = 0x01;
+/** Public T4 vector key. Tooling must not register it or sign with it. */
+export const DENIED_KEY_HASHES = Object.freeze([
+  '70703a0707c1ba660d772d3b613966bf84599afa8059b29636a613fefbfa9390',
+]);
 
-function fail(reason) {
-  return { ok: false, reason };
-}
-
-function keyBytes(key) {
-  if (key instanceof Uint8Array) return key;
-  if (typeof key !== 'string') return null;
-  const body = key.startsWith('0x') ? key.slice(2) : key;
-  if (body.startsWith('0X') || body.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(body)) return null;
-  const out = new Uint8Array(body.length / 2);
-  for (let i = 0; i < out.length; i += 1) out[i] = Number.parseInt(body.slice(i * 2, i * 2 + 2), 16);
-  return out;
-}
-
-/** Admission and verify both use this. A bad encoding never becomes a keyHash. */
-export function canonicalSecp256k1Key(keyAlg, key) {
-  if (keyAlg !== KEY_ALG_SECP256K1) return fail('bad_alg');
-  const bytes = keyBytes(key);
-  if (!bytes) return fail('bad_length');
-  if (bytes.length !== 33) return fail('bad_length');
-  if (bytes[0] !== 0x02 && bytes[0] !== 0x03) return fail('bad_length');
-  return { ok: true, bytes };
+export function deniedKeyHash(hex) {
+  const body = String(hex ?? '').toLowerCase().replace(/^0x/, '');
+  return DENIED_KEY_HASHES.includes(body);
 }
 
 export function keyHash(keyAlg, key) {
-  const canon = canonicalSecp256k1Key(keyAlg, key);
+  const canon = canonicalKey(keyAlg, key);
   if (!canon.ok) return canon;
   const hash = createHash('sha256');
   hash.update(Uint8Array.of(keyAlg & 0xff));
@@ -45,15 +30,47 @@ export function keyHash(keyAlg, key) {
   return { ok: true, bytes, hex: bytesToHex(bytes) };
 }
 
-/** A revoked keyHash stays dead in every later slot. */
+/** Text form is 0x and 64 lowercase hex characters. Nothing else parses. */
+export function parseKeyHash(text) {
+  if (typeof text !== 'string' || text.length !== 66 || !text.startsWith('0x')) return null;
+  const body = text.slice(2);
+  if (body !== body.toLowerCase() || !/^[0-9a-f]{64}$/.test(body)) return null;
+  return hexToBytes(body);
+}
+
+/** Binary form is 32 raw bytes. The text form is never a normalized guess. */
+export function formatKeyHash(bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.length !== 32) return null;
+  return `0x${bytesToHex(bytes)}`;
+}
+
+function entryHex(item) {
+  if (item instanceof Uint8Array) {
+    if (item.length !== 32) return null;
+    return bytesToHex(item);
+  }
+  if (typeof item !== 'string') return null;
+  const parsed = parseKeyHash(item);
+  if (!parsed) return null;
+  return bytesToHex(parsed);
+}
+
+/** A revoked keyHash stays dead. A byte entry matches. An unreadable entry fails closed. */
 export function tombstoned(list, keyHashHex) {
   if (list == null) return false;
   const want = String(keyHashHex).toLowerCase().replace(/^0x/, '');
-  if (want.length !== 64) return false;
-  const items = list instanceof Set ? list : Array.isArray(list) ? list : null;
-  if (!items) return false;
+  if (want.length !== 64 || !/^[0-9a-f]+$/.test(want)) return false;
+  if (list instanceof Uint8Array) {
+    const hex = entryHex(list);
+    if (!hex) return true;
+    return hex === want;
+  }
+  const items = list instanceof Set || Array.isArray(list) ? list : null;
+  if (!items) return true;
   for (const item of items) {
-    if (String(item).toLowerCase().replace(/^0x/, '') === want) return true;
+    const hex = entryHex(item);
+    if (!hex) return true;
+    if (hex === want) return true;
   }
   return false;
 }

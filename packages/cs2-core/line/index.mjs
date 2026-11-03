@@ -20,6 +20,9 @@
  */
 
 import { createHash } from 'node:crypto';
+import { LAUNCH_ALGS } from '../eip712/registry.mjs';
+import { KIND_KEY } from '../eip712/slots.mjs';
+import { checkSigma as checkSigmaRange } from '../eip712/sigma-range.mjs';
 
 export const SCHEMA = 'chit402.cs2.line.v1';
 
@@ -44,6 +47,9 @@ export const KIND_PAYTO = 0x01;
 export const KIND_WALLET = 0x02;
 export const KIND_BOOK = 0x03;
 export const KIND_EPOCH = 0x04;
+export { KIND_KEY };
+/** Allocated for the channel slot. Not accepted until that slot is specified. */
+export const KIND_CHANNEL = 0x06;
 
 /** Implementation limit for emptyHash. Not a wire field. */
 export const MAX_EMPTY_DEPTH = 64;
@@ -62,14 +68,10 @@ const STATE_LEAF_PREFIX = 0x00;
 const STATE_NODE_PREFIX = 0x01;
 const STATE_EMPTY_PREFIX = 0x02;
 
-/** NIST P-256 order. Seller keys are compressed P-256, so σ is low-S on this n. */
-const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
-const P256_HALF_N = P256_N >> 1n;
+const ALG_SET = new Set(LAUNCH_ALGS);
 
-const ALG_SET = new Set([1]);
-
-/** Algorithms this codec accepts. A frozen array, not a live Set. */
-export const ALLOWED_ALGS = Object.freeze([1]);
+/** Algorithms this codec accepts. A frozen array, taken from the registry. */
+export const ALLOWED_ALGS = Object.freeze([...ALG_SET]);
 
 export function isAllowedAlg(alg) {
   return ALG_SET.has(alg);
@@ -80,6 +82,7 @@ const ID_LENGTH_BY_KIND = new Map([
   [KIND_WALLET, 20],
   [KIND_BOOK, 32],
   [KIND_EPOCH, 0],
+  [KIND_KEY, 32],
 ]);
 
 /** Ordered §S1 fields: name, width. Offsets are the running sum. */
@@ -372,11 +375,8 @@ function requireAlg(alg) {
 }
 
 function checkSigma(sigma64) {
-  if (sigma64.length !== 64) return fail('bad_length');
-  const r = readBe(sigma64, 0, 32);
-  const s = readBe(sigma64, 32, 32);
-  if (r < 1n || r >= P256_N) return fail('bad_sigma');
-  if (s < 1n || s > P256_HALF_N) return fail('bad_sigma');
+  const got = checkSigmaRange(sigma64);
+  if (!got.ok) return fail(got.reason === 'bad_sigma' && sigma64.length !== 64 ? 'bad_length' : 'bad_sigma');
   return { ok: true };
 }
 
@@ -673,7 +673,8 @@ function chainBytes(chainId) {
 
 /**
  * Slot key H("chit402-state-v1" ‖ kind ‖ chainId ‖ id).
- * Kinds 0x00 and 0x05–0xFF are rejected. Id width is 20 / 20 / 32 / 0.
+ * Kind 0x05 is the key slot, id 32. Id width is 20 / 20 / 32 / 0 / 32.
+ * Kinds 0x00 and 0x06–0xFF are reserved. 0x06 is the channel kind.
  * @param {{ kind: number, chainId: bigint | number | string, id: Uint8Array | string }} input
  */
 export function slotKey(input) {

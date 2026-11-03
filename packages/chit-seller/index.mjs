@@ -39,8 +39,12 @@ export {
   TIME_UNIT,
   HOUR_SECONDS,
   expiryAllows,
+  ALG_REGISTRY,
+  LAUNCH_ALGS,
+  KEY_ALG_P256,
+  KEY_ALG_SECP256K1,
+  canonicalKey,
   keyHash,
-  canonicalSecp256k1Key,
   tombstoned,
 } from './typed-data.mjs';
 export { contractForHour } from './pinned-contract.mjs';
@@ -64,7 +68,6 @@ export {
   verifyRevokeByKey,
 } from './eip712.mjs';
 export {
-  signSigma,
   verifySigma,
   createSeller,
   compressP256,
