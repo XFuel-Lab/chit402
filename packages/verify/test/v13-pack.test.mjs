@@ -10,16 +10,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
+const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+function npm(args, opts) {
+  return execFileSync(npmBin, args, {
+    ...opts,
+    shell: process.platform === 'win32',
+    windowsHide: true,
+  });
+}
 
 test('the packed verifier loads the v13 path', () => {
   const dir = mkdtempSync(join(tmpdir(), 'v13pack-'));
   try {
-    const listed = JSON.parse(execFileSync('npm', ['pack', '--json', '--silent'], {
-      cwd: pkg,
-      encoding: 'utf8',
-    }));
+    const raw = npm(['pack', '--json', '--silent'], { cwd: pkg, encoding: 'utf8' });
+    const listed = JSON.parse(raw.slice(raw.indexOf('[')));
     const tarball = join(pkg, listed[0].filename);
-    execFileSync('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], {
+    npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], {
       cwd: dir,
       encoding: 'utf8',
     });
