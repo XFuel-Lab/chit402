@@ -169,6 +169,7 @@ import { createOwnerView, resolveOwnerAudiences, ownerAudienceBootWarning, sendG
 import { publicHealthBody, publicStatsBody, renderPublicStatsHtml, healthIsDegraded } from './public-metrics.js';
 import {
   receiptFailureCount,
+  preSettleRefusalCount,
   escrowRefusalCounts,
   alertRowsDropped,
   flushEscrowAlertFolds,
@@ -4652,6 +4653,7 @@ export async function createApp() {
         anchorLagS: log?.anchor_lag_s ?? 0,
         unanchoredLeaves: log?.unanchored_leaves ?? 0,
         receiptFailures: receiptFailureCount(),
+        preSettleRefusals: preSettleRefusalCount(),
         issuanceCap: issuanceCapHealth(),
       }));
     } catch (err) {

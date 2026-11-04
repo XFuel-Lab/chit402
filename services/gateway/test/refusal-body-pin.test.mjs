@@ -3,7 +3,8 @@
  * and payer_post follow #664 at 8e55cad7, see their PINNED notes).
  *
  * The logging change adds a network and a bounded sub_reason to every
- * refusal's count and row. None of that may reach the response. For each
+ * refusal's count and row. None of that may reach the response. The
+ * facilitator /verify refusal also carries a sanitized hint. For each
  * refusal path this pins the status and the exact JSON body the server sends
  * (server.js: res.status(paymentErrorStatus(code)).json(paymentFailureBody(d))),
  * the decision's key list (server.js reads retryAfter, pendingId, verifyUrl
@@ -34,7 +35,13 @@ const PINNED = {
   auth_window: { status: 402, body: "{\"error\":\"settle_unconfirmed\",\"code\":\"settle_unconfirmed\"}", pendingCode: null, settles: 0 },
   auth_nonce: { status: 402, body: "{\"error\":\"settle_unconfirmed\",\"code\":\"settle_unconfirmed\"}", pendingCode: null, settles: 0 },
   auth_signature: { status: 402, body: "{\"error\":\"settle_unconfirmed\",\"code\":\"settle_unconfirmed\"}", pendingCode: null, settles: 0 },
-  facilitator_invalid: { status: 402, body: "{\"error\":\"verify_failed\",\"code\":\"verify_failed\"}", pendingCode: null, settles: 0 },
+  facilitator_invalid: {
+    status: 402,
+    body: "{\"error\":\"verify_failed\",\"code\":\"verify_failed\",\"hint\":{\"code\":\"insufficient_funds\",\"message\":\"The paying account cannot cover this amount.\"}}",
+    pendingCode: null,
+    settles: 0,
+    keys: `${DECISION_KEYS},hint`,
+  },
   settle_http: { status: 202, body: null, pendingCode: "settle_failed", settles: 1, holdClass: "resolvable" },
   chain_mismatch: { status: 409, body: null, pendingCode: "settle_unconfirmed", settles: 1, holdClass: "terminal", refund: true },
   chain_value_low: { status: 409, body: null, pendingCode: "settle_unconfirmed", settles: 1, holdClass: "terminal", refund: true },
@@ -68,7 +75,7 @@ for (const [name, pin] of Object.entries(PINNED)) {
     } else {
       assert.ok(pendingBody(pin.pendingCode, pin.refund === true).test(body), `${name}: body ${body} is not the pinned pending shape`);
     }
-    const keys = pin.holdClass ? `${DECISION_KEYS},holdClass` : DECISION_KEYS;
+    const keys = pin.keys || (pin.holdClass ? `${DECISION_KEYS},holdClass` : DECISION_KEYS);
     assert.equal(Object.keys(decision).join(','), keys, `${name}: decision keys`);
     if (pin.holdClass) assert.equal(decision.holdClass, pin.holdClass, `${name}: class`);
     if (pin.holdClass === 'resolvable') {

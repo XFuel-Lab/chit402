@@ -43,6 +43,7 @@ test('GET /health keeps only status, the last anchor, and free tier available', 
     'issuance',
     'last_anchored_root',
     'last_anchored_tx',
+    'pre_settle_refusals',
     'receipt_failures',
     'status',
     'unanchored_leaves',
@@ -50,4 +51,5 @@ test('GET /health keeps only status, the last anchor, and free tier available', 
   assert.deepEqual(Object.keys(body.issuance.cap).sort(), ['day_used', 'hour_used', 'state']);
   assert.equal(body.issuance.cap.state, 'off');
   assert.equal(typeof body.receipt_failures, 'number');
+  assert.equal(typeof body.pre_settle_refusals, 'number');
 });

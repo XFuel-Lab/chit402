@@ -1,7 +1,11 @@
 /**
  * Receipt-path failures for product review.
  * Rows are time, network, stage, reason, tx, outcome, request id.
- * Pre-settle refusals are day/network/reason counts, not rows.
+ * Pre-check refusals are day/network/reason counts, not rows.
+ * A settle-stage row whose phase is pre_settle is still recorded for ops.
+ * When its tx is null, nothing was submitted: the row is tagged preSettle
+ * and counted as pre_settle_refusals, not receipt_failures. A tx, any other
+ * phase, or any stage other than settle still counts as a receipt failure.
  * Memory keeps 5,000 rows. The JSONL file rotates at 5 MB.
  * No payer, no payload, no header.
  *
@@ -46,6 +50,7 @@ import path from 'node:path';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { PAYMENT_ERROR_CODES } from './x402-flags.js';
 import { facilitatorNetwork } from './x402-facilitator.js';
+import { verifyHintCode } from './verify-hint.js';
 
 const STAGES = new Set(['pre-check', 'settle', 'confirm', 'sign', 'log', 'anchor']);
 const OUTCOMES = new Set(['refused', 'pending', 'recovered']);
@@ -174,6 +179,8 @@ const breakdownHours = new Set();
 let breakdownPrunes = 0;
 const escrowCounts = new Map();
 let total = 0;
+/** Phase pre_settle rows with no tx. Not part of `total`. */
+let preSettleRefusals = 0;
 let loaded = false;
 /** Alert rows dropped from memory by RECEIPT_FAILURE_ALERT_ROW_CAP. */
 let alertDropped = 0;
@@ -207,6 +214,7 @@ function loadFile() {
   const parsed = [];
   let plainCount = 0;
   let alertCount = 0;
+  let preSettleFromFile = 0;
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     try {
@@ -219,13 +227,16 @@ function loadFile() {
           alertCount += 1;
         } else {
           plainCount += 1;
+          if (isPreSettleNoMoney(row)) preSettleFromFile += 1;
         }
         parsed.push({ row, alert });
       }
     } catch { /* skip a torn line */ }
   }
   // Alert rows stay out of the public total (see recordEscrowRefusal).
-  total += plainCount;
+  // Pre-settle rows with no tx stay in the plain list and move to their own counter.
+  total += plainCount - preSettleFromFile;
+  preSettleRefusals += preSettleFromFile;
   // Each list keeps its newest rows under its own cap. Rows are stamped in
   // file order, so the export keeps the original interleaving of plain and
   // alert rows across a reload.
@@ -313,7 +324,28 @@ function shape(input) {
     out.sub_reason = refusalSubReason(input.sub_reason ?? input.subReason);
     out.phase = refusalPhase(input.phase);
   }
+  // Tag only a settle-stage pre-settle row with no tx. A tx, or another stage, is not "nothing settled".
+  if (out.stage === 'settle' && out.phase === 'pre_settle' && out.tx == null) out.preSettle = true;
+  const detail = verifyHintCode(input.sub_detail ?? input.subDetail);
+  if (detail) out.sub_detail = detail;
   return out;
+}
+
+/** Settle-stage pre_settle with no transaction: money has not moved. */
+function isPreSettleNoMoney(row) {
+  return row?.stage === 'settle' && row?.phase === 'pre_settle' && (row.tx == null || row.tx === '');
+}
+
+/**
+ * Pre-check refusals stay counts, not rows. A settle/confirm/sign/log/anchor
+ * stage is a row even when the caller also set preSettle.
+ */
+function isCountOnlyPreSettle(input) {
+  const stage = input?.stage;
+  if (stage === 'settle' || stage === 'confirm' || stage === 'sign' || stage === 'log' || stage === 'anchor') {
+    return false;
+  }
+  return input?.preSettle === true || stage === 'pre-check';
 }
 
 function sanitizeTx(tx) {
@@ -412,14 +444,15 @@ function recordPreSettleRefusal(input) {
 
 export function recordReceiptFailure(input = {}) {
   try {
-    if (input?.preSettle === true || input?.stage === 'pre-check') {
+    if (isCountOnlyPreSettle(input)) {
       return recordPreSettleRefusal(input);
     }
     loadFile();
     const row = shape({ ...input, time: input.time || new Date().toISOString() });
     if (!row) return null;
     pushCapped(rows, row, RECEIPT_FAILURE_ROW_CAP);
-    total += 1;
+    if (isPreSettleNoMoney(row)) preSettleRefusals += 1;
+    else total += 1;
     const file = storeFile();
     if (file) appendLimited(file, row);
     return row;
@@ -680,6 +713,12 @@ export function receiptFailureCount() {
   return total;
 }
 
+/** Phase pre_settle rows with no tx. Public /health pre_settle_refusals. */
+export function preSettleRefusalCount() {
+  loadFile();
+  return preSettleRefusals;
+}
+
 /** Test seam for the 15 minute fold. Reset by resetReceiptFailuresForTests. */
 export function setEscrowAlertClockForTests(fn) {
   alertClock = typeof fn === 'function' ? fn : systemClock;
@@ -696,6 +735,7 @@ export function resetReceiptFailuresForTests() {
   breakdownPrunes = 0;
   escrowCounts.clear();
   total = 0;
+  preSettleRefusals = 0;
   alertDropped = 0;
   loaded = false;
 }
