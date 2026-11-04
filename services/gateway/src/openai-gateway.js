@@ -1862,6 +1862,7 @@ export function openAiFailurePayload(decision) {
         ...(failure.pending_id ? { pending_id: failure.pending_id } : {}),
         ...(failure.verify_url ? { verify_url: failure.verify_url } : {}),
         ...(failure.receipt_jws ? { receipt_jws: failure.receipt_jws } : {}),
+        ...(failure.hint ? { hint: failure.hint } : {}),
         ...(failure.status ? { status: failure.status } : {}),
       },
     },

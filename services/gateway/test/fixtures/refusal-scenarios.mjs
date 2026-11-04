@@ -56,7 +56,9 @@ export function paymentHeader({
 }
 
 /** Local facilitator. `settle` / `verify` pick the reply shape. */
-export function listenFacilitator({ settle = 'ok', verify = 'ok', tx = TX1, payer = PAYER, observe = null } = {}) {
+export function listenFacilitator({
+  settle = 'ok', verify = 'ok', tx = TX1, payer = PAYER, observe = null, invalidReason = 'insufficient_funds',
+} = {}) {
   const hits = { verify: 0, settle: 0 };
   const server = http.createServer((req, res) => {
     req.resume();
@@ -69,7 +71,7 @@ export function listenFacilitator({ settle = 'ok', verify = 'ok', tx = TX1, paye
         if (settle === 'http500') { res.statusCode = 500; return res.end('{"error":"boom"}'); }
         return res.end(JSON.stringify({ success: true, settled: true, transaction: tx, txRef: tx, network: 'base', payer }));
       }
-      if (verify === 'invalid') return res.end(JSON.stringify({ valid: false, isValid: false, invalidReason: 'insufficient_funds' }));
+      if (verify === 'invalid') return res.end(JSON.stringify({ valid: false, isValid: false, invalidReason }));
       return res.end(JSON.stringify({ valid: true, isValid: true, payer }));
     });
   });

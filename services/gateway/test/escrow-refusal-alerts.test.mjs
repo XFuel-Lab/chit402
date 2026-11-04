@@ -784,7 +784,9 @@ test('public /health carries no numeric refusal data: a flood of alerts and skip
   assert.deepEqual(Object.keys(after).sort(), Object.keys(clean).sort(), 'no new key');
   assert.deepEqual(numericLeaves(after), numericLeaves(clean), 'every number on /health is unchanged');
   assert.equal(after.receipt_failures, clean.receipt_failures);
-  assert.equal(/escrow|refus|fixed_head|quarantine_sign|payer_binding/i.test(JSON.stringify(after)), false, 'no refusal key or code');
+  assert.equal(after.pre_settle_refusals, clean.pre_settle_refusals);
+  const healthText = JSON.stringify(after).replaceAll('pre_settle_refusals', '');
+  assert.equal(/escrow|refus|fixed_head|quarantine_sign|payer_binding/i.test(healthText), false, 'no refusal key or code');
   // The ops route has them all.
   const ops = await (await fetch(`${base}/v1/ops/receipt-failures`, { headers: { authorization: 'Bearer owner-test-token' } })).json();
   assert.equal(ops.escrow_refusals.payer_binding.no_payer, 600);

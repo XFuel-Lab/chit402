@@ -46,6 +46,7 @@ export function publicHealthBody({
   anchorLagS = 0,
   unanchoredLeaves = 0,
   receiptFailures = 0,
+  preSettleRefusals = 0,
   issuanceCap = null,
 } = {}) {
   const body = {
@@ -56,6 +57,7 @@ export function publicHealthBody({
     anchor_lag_s: publicCount(anchorLagS),
     unanchored_leaves: publicCount(unanchoredLeaves),
     receipt_failures: publicCount(receiptFailures),
+    pre_settle_refusals: publicCount(preSettleRefusals),
     issuance: {
       cap: issuanceCap || { hour_used: 0, day_used: 0, state: 'off' },
     },

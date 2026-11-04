@@ -5,6 +5,7 @@
 import logger from './logger.js';
 import { getAddress } from 'ethers';
 import { isSolanaNetwork, fromCaip2Network } from './x402-facilitator.js';
+import { publicVerifyHint } from './verify-hint.js';
 
 export const PAYMENT_ERROR_CODES = Object.freeze([
   'challenge_required',
@@ -203,10 +204,11 @@ export function paymentFailureBody(decision) {
     return { error: base.error, code: base.code, message: 'Do not pay again.' };
   }
   if (!view.refundOwed && view.status !== 202) {
+    const hint = publicVerifyHint(decision?.hint);
     if (typeof decision?.receiptJws === 'string' && decision.receiptJws) {
-      return { ...base, receipt_jws: decision.receiptJws };
+      return hint ? { ...base, receipt_jws: decision.receiptJws, hint } : { ...base, receipt_jws: decision.receiptJws };
     }
-    return base;
+    return hint ? { ...base, hint } : base;
   }
   const body = { error: base.error, code: base.code };
   const pending = decision?.pendingId || decision?.pending_id;

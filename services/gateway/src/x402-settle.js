@@ -20,6 +20,7 @@ import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-re
 import { testSwitchesOn } from './test-switch.js';
 import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusalDetail, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
 import { recordReceiptFailure, refusalNetworkName, refusalSubReason } from './receipt-failures.js';
+import { publicVerifyHint, verifyHint } from './verify-hint.js';
 import { arcAssetAllowed, arcRefused, evmRpcUrlFor, isArcId } from './arc-rail.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
 import {
@@ -829,7 +830,14 @@ export async function settleBoundPayment({
   const verified = await verifyPayment(paymentHeader, gwOpts);
   if (!verified.valid) {
     release();
-    return refused(req, clientPaymentCode(verified.reason || 'verify_failed'), { network: net, sub: 'facilitator_invalid', phase: 'pre_settle' });
+    const hint = verifyHint(verified.invalidReason);
+    return refused(req, clientPaymentCode(verified.reason || 'verify_failed'), {
+      network: net,
+      sub: 'facilitator_invalid',
+      phase: 'pre_settle',
+      hint,
+      subDetail: hint.code,
+    });
   }
   if (typeof active.noteVerifiedPayment === 'function') {
     try { active.noteVerifiedPayment(nonce, headerDigest(paymentHeader)); } catch { /* store */ }
@@ -1191,9 +1199,12 @@ function refused(req, reason, extra = {}) {
     ? reason
     : clientPaymentCode(reason);
   // pre_settle: /settle was not called. A /verify refusal is pre_settle
-  // too, though its row has stage settle (extra.phase).
+  // too, though its row has stage settle (extra.phase). The response and
+  // the row both say preSettle whenever that phase is pre_settle.
   const phase = extra.phase || (extra.preSettle ? 'pre_settle' : 'post_submit');
+  const preSettle = phase === 'pre_settle';
   const sub = refusalSubReason(extra.sub);
+  const hint = publicVerifyHint(extra.hint);
   if (extra.capture !== false) {
     recordReceiptFailure({
       network: extra.network || null,
@@ -1202,9 +1213,10 @@ function refused(req, reason, extra = {}) {
       tx: extra.tx || null,
       outcome: extra.outcome || 'refused',
       requestId: req?.id || null,
-      preSettle: extra.preSettle === true,
+      preSettle,
       sub_reason: sub,
       phase,
+      subDetail: extra.subDetail,
     });
   }
   recordRefusal(code, userAgentOf(req), refusalMeta(extra.network, sub, phase));
@@ -1212,11 +1224,12 @@ function refused(req, reason, extra = {}) {
     kind: 'failed',
     reason: code,
     code,
-    preSettle: extra.preSettle === true,
+    preSettle,
     retryAfter: extra.retryAfter,
     pendingId: extra.pendingId || null,
     verifyUrl: extra.verifyUrl || null,
   };
+  if (hint) out.hint = hint;
   if (extra.holdClass === 'resolvable' || extra.holdClass === 'terminal') out.holdClass = extra.holdClass;
   return out;
 }

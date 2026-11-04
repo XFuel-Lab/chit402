@@ -18,6 +18,7 @@ import {
   SOLANA_NETWORKS,
   decodePaymentHeader,
 } from './x402-facilitator.js';
+import { boundedInvalidReason } from './verify-hint.js';
 
 export { toCaip2Network, fromCaip2Network, usdcFor, isSolanaNetwork, isEvmNetwork };
 
@@ -1309,7 +1310,7 @@ function checkBinding(opts) {
  *
  * @param {string} paymentHeader  X-PAYMENT header value from the client
  * @param {Object} [opts]  { gatewayUrl, apiKey, store, nonce, challenge }
- * @returns {Promise<{valid:boolean, txRef?:string, reason?:string, unbound?:boolean}>}
+ * @returns {Promise<{valid:boolean, txRef?:string, reason?:string, invalidReason?:string|null, unbound?:boolean}>}
  */
 export async function verifyPayment(paymentHeader, opts = {}) {
   if (!paymentHeader) return { valid: false, reason: 'missing_payment_header' };
@@ -1367,7 +1368,14 @@ export async function verifyPayment(paymentHeader, opts = {}) {
     });
     if (!res.ok) return { valid: false, reason: `gateway_http_${res.status}`, unbound };
     const data = await res.json();
-    return { valid: !!data.valid, txRef: data.txRef || data.transaction || null, reason: data.reason, unbound };
+    const valid = !!data.valid;
+    return {
+      valid,
+      txRef: data.txRef || data.transaction || null,
+      reason: data.reason,
+      unbound,
+      ...(valid ? {} : { invalidReason: boundedInvalidReason(data.invalidReason) }),
+    };
   } catch (err) {
     logger.warn({ err: err.message }, 'x402 verifyPayment failed');
     return { valid: false, reason: 'gateway_error', unbound };

@@ -3,6 +3,7 @@ import { arcNetwork, arcCaip } from './arc-rail.js';
 import { getAddress } from 'ethers';
 import { resolveFacilitatorBearer } from './cdp-jwt.js';
 import { isProductionProcess } from './production-process.js';
+import { boundedInvalidReason } from './verify-hint.js';
 
 /**
  * Real x402 facilitator client (Base Sepolia + Base mainnet).
@@ -1122,8 +1123,9 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
         },
         'x402 facilitator verify HTTP error',
       );
-      // Upstream text stays in the log. The client sees a closed code.
-      return { valid: false, reason: 'verify_failed' };
+      // Upstream text stays in the log. The client reason stays a closed code.
+      // invalidReason is passed through, length-capped, for the payer hint.
+      return { valid: false, reason: 'verify_failed', invalidReason: boundedInvalidReason(data.invalidReason) };
     }
     logBazaarResponses('/verify', extensionResponses, paymentPayload);
     if (!data.isValid) {
@@ -1142,6 +1144,7 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       valid: !!data.isValid,
       payer: data.payer || null,
       reason: data.isValid ? null : 'verify_failed',
+      ...(data.isValid ? {} : { invalidReason: boundedInvalidReason(data.invalidReason) }),
     };
   } catch (err) {
     // Log gateway host (not secrets), elapsedMs, and network for debugging.
