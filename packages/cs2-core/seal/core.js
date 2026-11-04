@@ -1,10 +1,10 @@
 /**
  * Line sealing. A fresh 32-byte dk encrypts the fixed 1,024-byte line
  * under ChaCha20-Poly1305 with a 12-byte zero nonce. dk is single-use,
- * so the nonce is not transmitted. The AAD is H("dk" ‖ dk). That hash
- * binds this ciphertext to its dk. Key commitment of an opened line is
- * the same hash together with the leaf recomputed from the line and the
- * fixed padding. ChaCha20-Poly1305 itself is not key-committing.
+ * so the nonce is not transmitted. The AAD is H("dk" ‖ dk).
+ * ChaCha20-Poly1305 is not a key commitment, and that AAD does not by
+ * itself bind one ciphertext to one dk. An opened line is committed by
+ * the leaf together with the fixed padding.
  *
  * dk is wrapped to exactly two HPKE base-mode slots (X25519,
  * HKDF-SHA256, ChaCha20-Poly1305). Slot 0 is the book key. Slot 1 is
@@ -88,7 +88,9 @@ function hashParts(...parts) {
     buf.set(part, at);
     at += part.length;
   }
-  return sha256(buf);
+  const digest = sha256(buf);
+  buf.fill(0);
+  return digest;
 }
 
 function copy32(value) {

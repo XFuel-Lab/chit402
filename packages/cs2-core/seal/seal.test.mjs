@@ -311,15 +311,15 @@ test('RFC 9180 X25519 HKDF-SHA256 ChaCha20-Poly1305 vectors', () => {
         const aad = fromHex(row.aad);
         const pt = fromHex(row.pt);
         assert.equal(hex(computeNonce(send.baseNonce, i)), row.nonce, `nonce ${vec.mode}:${i}`);
-        const ct = contextSeal(send, i, aad, pt);
+        const ct = contextSeal(send, aad, pt);
         assert.equal(ct.ok, true);
         assert.equal(hex(ct.ct), row.ct, `ct ${vec.mode}:${i}`);
-        const back = contextOpen(recv, i, aad, fromHex(row.ct));
+        const back = contextOpen(recv, aad, fromHex(row.ct));
         assert.equal(back.ok, true);
         assert.equal(hex(back.pt), row.pt);
         const flipped = fromHex(row.ct);
         flipped[0] ^= 0x01;
-        const rejected = contextOpen(recv, i, aad, flipped);
+        const rejected = contextOpen(recv, aad, flipped);
         assert.equal(JSON.stringify(rejected), '{"ok":false,"reason":"open_failed"}');
       }
       for (const row of vec.exports) {
@@ -567,7 +567,7 @@ test('wrong key, swapped slot, swapped ciphertext, and truncated blob fail close
   assert.equal(texts[0], texts[lengths.indexOf(1199)]);
 });
 
-test('key-committing AAD rejects a different dk binding', () => {
+test('a different dk label in the line AAD does not open', () => {
   const line = sampleLine();
   const sealed = repeatSeal(line);
   assert.equal(sealed.ok, true);
@@ -769,6 +769,15 @@ test('the leaf binds C, the dk commitment, and the sealed blob', () => {
   assert.equal(fromOpened.ok, true);
   assert.equal(hex(fromOpened.bytes), doc.cases[0].leaf);
   assert.equal(hex(lineLeaf(commit.C, sealed.sealed, DK).bytes), hex(fromOpened.bytes));
+  assertClosed(lineLeaf(commit.C, sealed.sealed, new Uint8Array(31)), 'bad_key');
+  assertClosed(lineLeafFromCommitment(commit.C, sealed.sealed, new Uint8Array(31)), 'bad_key');
+  assertClosed(lineLeafFromCommitment(commit.C, sealed.sealed, 'nope'), 'bad_type');
+  assertClosed(lineLeafFromCommitment(new Uint8Array(31), sealed.sealed, sealed.dkCommitment), 'bad_key');
+  const callerCommitment = sealed.dkCommitment.slice();
+  const aliased = lineLeafFromCommitment(commit.C, sealed.sealed, callerCommitment);
+  const kept = aliased.dkCommitment[0];
+  callerCommitment[0] ^= 0xff;
+  assert.equal(aliased.dkCommitment[0], kept);
   const otherC = commit.C.slice();
   otherC[0] ^= 0x01;
   assert.notEqual(hex(lineLeaf(otherC, sealed.sealed, DK).bytes), hex(leaf.bytes));
@@ -1088,38 +1097,52 @@ test('the seed entry and the probe counters are not imported outside tests and v
   }
 });
 
-test('a two-dk ChaCha20-Poly1305 collision is not a line', () => {
+test('a full-length two-dk collision opens one slot and fails the other on padding', () => {
   const doc = JSON.parse(readFileSync(join(HERE, 'vectors/aead-collision.json'), 'utf8'));
   assert.equal(doc.schema, 'chit402.cs2.seal.aead-collision.v1');
+  const sealed = fromHex(doc.sealed);
   const dk1 = fromHex(doc.dk1);
   const dk2 = fromHex(doc.dk2);
   const nonce = fromHex(doc.nonce);
-  const ct = fromHex(doc.ciphertext);
-  assert.notEqual(hex(dk1), hex(dk2));
+  const lineCt = sealed.subarray(0, LINE_CT_BYTES);
+  assert.equal(lineCt.length, 1040);
+  assert.equal(sealed.length, SEALED_BYTES);
   const aad1 = sha256(Buffer.concat([Buffer.from('dk'), dk1]));
   const aad2 = sha256(Buffer.concat([Buffer.from('dk'), dk2]));
-  assert.equal(hex(aad1), doc.aad1);
-  assert.equal(hex(aad2), doc.aad2);
-  const pt1 = aeadOpen(dk1, nonce, aad1, ct);
-  const pt2 = aeadOpen(dk2, nonce, aad2, ct);
+  const pt1 = aeadOpen(dk1, nonce, aad1, lineCt);
+  const pt2 = aeadOpen(dk2, nonce, aad2, lineCt);
   assert.ok(pt1 && pt2);
   assert.equal(hex(pt1), doc.pt1);
   assert.equal(hex(pt2), doc.pt2);
-  assert.notEqual(hex(pt1), hex(pt2));
-  assert.equal(aeadOpen(dk1, nonce, aad2, ct), null);
-  assert.notEqual(pt1.length, LINE_BYTES);
-  assert.notEqual(pt2.length, LINE_BYTES);
-  const blob = new Uint8Array(SEALED_BYTES);
-  blob.set(ct.subarray(0, Math.min(ct.length, LINE_CT_BYTES)));
-  assertClosed(openLine(blob, BOOK_SK, 0), 'open_failed');
-  assertClosed(openLine(blob, fromHex(doc.dk1), 0), 'open_failed');
+  assert.equal(pt1[0], 0x63);
+  assert.equal(pt1[1], 0x32);
+  assert.equal(pt2[0], 0x63);
+  assert.equal(pt2[1], 0x32);
+  assert.equal(pt1.subarray(USED_BYTES).every((b) => b === 0), true);
+  assert.equal(pt2.subarray(USED_BYTES).some((b) => b !== 0), true);
+  assert.equal(aeadOpen(dk1, nonce, aad2, lineCt), null);
+  const book = openLine(sealed, fromHex(doc.book_sk), 0);
+  assert.equal(book.ok, true);
+  assert.equal(hex(book.line), doc.pt1);
+  const commit = commitments(book.line);
+  assert.equal(commit.ok, true);
+  const leaf = lineLeafFromCommitment(commit.C, sealed, book.dkCommitment);
+  assert.equal(leaf.ok, true);
+  assert.equal(hex(leaf.bytes), hex(lineLeaf(commit.C, sealed, dk1).bytes));
+  assertClosed(openLine(sealed, fromHex(doc.recovery_sk), 1), 'open_failed');
+  const any = openLineAny(sealed, fromHex(doc.book_sk));
+  assert.equal(any.ok, true);
+  assert.equal(any.slot, 0);
+  assert.equal(hex(any.line), doc.pt1);
+  assertClosed(openLineAny(sealed, fromHex(doc.recovery_sk)), 'open_failed');
 });
 
 test('the HPKE context refuses a reused sequence and an invalid mode', () => {
   const probe = deriveKeyPair(fromHex('09'.repeat(32)));
   assert.equal(probe.ok, true);
-  const badMode = setupS({ mode: 4, pkR: probe.pk, skE: probe.sk });
-  assertClosed(badMode, 'bad_key');
+  for (const mode of [4, 7, 9, -1, 0.5, 256]) {
+    assertClosed(setupS({ mode, pkR: probe.pk, skE: probe.sk }), 'bad_key', `mode ${mode}`);
+  }
   const badPskMode = setupS({
     mode: 9,
     pkR: probe.pk,
@@ -1130,31 +1153,37 @@ test('the HPKE context refuses a reused sequence and an invalid mode', () => {
   assertClosed(badPskMode, 'bad_key');
   const info = new Uint8Array(0);
   const aad = new Uint8Array(0);
-  const pt = Uint8Array.of(1, 2, 3, 4);
   const send = setupS({ mode: MODE_BASE, pkR: probe.pk, skE: fromHex('11'.repeat(32)), info });
   assert.equal(send.ok, true);
-  const first = contextSeal(send, 0, aad, pt);
-  assert.equal(first.ok, true);
-  assertClosed(contextSeal(send, 0, aad, pt), 'open_failed');
-  const second = contextSeal(send, 1, aad, pt);
-  assert.equal(second.ok, true);
-  const third = contextSeal(send, 2, aad, pt);
-  assert.equal(third.ok, true);
+  const copy = { ...send };
+  assert.throws(() => contextSeal(copy, aad, Uint8Array.of(1)), /closed context/);
+  const first = contextSeal(send, aad, Uint8Array.of(1, 2, 3, 4));
+  const second = contextSeal(send, aad, Uint8Array.of(5, 6, 7, 8));
+  assert.equal(first.ok && second.ok, true);
+  assert.notEqual(hex(first.ct), hex(second.ct));
+  assert.throws(() => contextSeal(copy, aad, Uint8Array.of(1)), /closed context/);
   const recv = setupR({ mode: MODE_BASE, enc: send.enc, skR: probe.sk, info });
   assert.equal(recv.ok, true);
-  const opened = contextOpen(recv, 0, aad, first.ct);
+  assertClosed(contextOpen(recv, aad, second.ct), 'open_failed');
+  const opened = contextOpen(recv, aad, first.ct);
   assert.equal(opened.ok, true);
-  assert.equal(hex(opened.pt), hex(pt));
-  assertClosed(contextOpen(recv, 0, aad, first.ct), 'open_failed');
-  const flipped = third.ct.slice();
+  assert.equal(hex(opened.pt), hex(Uint8Array.of(1, 2, 3, 4)));
+  assertClosed(contextOpen(recv, aad, first.ct), 'open_failed');
+  const flipped = second.ct.slice();
   flipped[0] ^= 0x01;
-  assertClosed(contextOpen(recv, 2, aad, flipped), 'open_failed');
-  const retry = contextOpen(recv, 2, aad, third.ct);
+  assertClosed(contextOpen(recv, aad, flipped), 'open_failed');
+  const retry = contextOpen(recv, aad, second.ct);
   assert.equal(retry.ok, true);
-  assert.equal(hex(retry.pt), hex(pt));
-  const later = contextOpen(recv, 1, aad, second.ct);
-  assert.equal(later.ok, true);
+  assert.equal(hex(retry.pt), hex(Uint8Array.of(5, 6, 7, 8)));
+  assertClosed(contextExport(recv, new Uint8Array(0), (255 * 32) + 1), 'open_failed');
+  assertClosed(contextExport(recv, new Uint8Array(0), -1), 'open_failed');
+  assertClosed(contextExport(recv, new Uint8Array(0), 1.5), 'open_failed');
+  assertClosed(contextExport(recv, 'nope', 16), 'bad_type');
   releaseContext(send);
   releaseContext(recv);
+  assert.throws(() => contextSeal(send, aad, Uint8Array.of(9)), /closed context/);
+  assert.throws(() => contextOpen(recv, aad, first.ct), /closed context/);
+  assert.equal(send.key, undefined);
+  assert.equal(send.baseNonce, undefined);
   probe.sk.fill(0);
 });

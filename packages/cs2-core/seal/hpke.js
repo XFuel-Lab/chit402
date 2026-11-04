@@ -81,13 +81,29 @@ export function aeadOpen(key, nonce, aad, data) {
 function labeledExtract(suite, salt, label, ikm) {
   const labeled = concat([HPKE_V1, suite, ascii(label), ikm]);
   const usedSalt = salt.length === 0 ? undefined : salt;
-  return extract(sha256, labeled, usedSalt);
+  let out;
+  try {
+    out = extract(sha256, labeled, usedSalt);
+  } finally {
+    labeled.fill(0);
+  }
+  return out;
 }
 
 function labeledExpand(suite, prk, label, info, length) {
   const labeled = concat([u16(length), HPKE_V1, suite, ascii(label), info]);
-  const out = expand(sha256, prk, labeled, length);
-  return out ? out.slice() : out;
+  let out;
+  try {
+    out = expand(sha256, prk, labeled, length);
+  } catch {
+    labeled.fill(0);
+    return null;
+  }
+  labeled.fill(0);
+  if (!out) return null;
+  const copy = out.slice();
+  out.fill(0);
+  return copy;
 }
 
 /**
@@ -258,6 +274,9 @@ export function keySchedule(mode, sharedSecret, info, psk, pskId) {
   };
 }
 
+const STATE = Symbol('hpke');
+const SCHEDULE_FIELDS = ['key', 'baseNonce', 'exporterSecret', 'secret', 'sharedSecret', 'keyScheduleContext'];
+
 function scheduleRole(mode, shared, info, psk, pskId) {
   const sharedSecret = shared.slice();
   const sched = keySchedule(mode, shared, info, psk, pskId);
@@ -266,19 +285,65 @@ function scheduleRole(mode, shared, info, psk, pskId) {
     sharedSecret.fill(0);
     return sched;
   }
-  return { ok: true, ...sched, sharedSecret, seq: 0 };
+  const state = {
+    key: sched.key,
+    baseNonce: sched.baseNonce,
+    exporterSecret: sched.exporterSecret,
+    secret: sched.secret,
+    sharedSecret,
+    keyScheduleContext: sched.keyScheduleContext,
+    seq: 0,
+    dead: false,
+  };
+  const handle = { ok: true };
+  Object.defineProperty(handle, STATE, { value: state });
+  for (const name of SCHEDULE_FIELDS) {
+    Object.defineProperty(handle, name, {
+      enumerable: false,
+      get() {
+        if (state.dead) return undefined;
+        return state[name];
+      },
+    });
+  }
+  return handle;
 }
 
-function wipeSchedule(ctx) {
-  if (!ctx) return;
+function readState(ctx) {
+  if (!ctx || (typeof ctx !== 'object' && typeof ctx !== 'function')) return null;
+  const state = ctx[STATE];
+  return state || null;
+}
+
+function wipeSchedule(state) {
+  if (!state) return;
   for (const name of ['key', 'baseNonce', 'exporterSecret', 'secret', 'sharedSecret']) {
-    if (ctx[name]) ctx[name].fill(0);
+    if (state[name]) state[name].fill(0);
+    state[name] = null;
   }
 }
 
-/** Drop key-schedule secrets. One-shot seal and open call this, and so does every multi-shot caller after its last use. */
+/**
+ * Drop key-schedule secrets and close the context. A later seal or open
+ * throws. It does not encrypt under the zero key or the zero nonce.
+ */
 export function releaseContext(ctx) {
-  wipeSchedule(ctx);
+  const state = readState(ctx);
+  if (!state || state.dead) return;
+  wipeSchedule(state);
+  state.seq = null;
+  state.dead = true;
+}
+
+function liveState(ctx) {
+  const state = readState(ctx);
+  if (!state || state.dead || !state.key || !state.baseNonce) {
+    throw new Error('closed context');
+  }
+  if (!Number.isSafeInteger(state.seq) || state.seq < 0 || state.seq >= Number.MAX_SAFE_INTEGER) {
+    throw new Error('closed context');
+  }
+  return state;
 }
 
 /**
@@ -294,7 +359,8 @@ export function setupS(input) {
   if (!encap.ok) return encap;
   const role = scheduleRole(mode, encap.shared, info, psk, pskId);
   if (!role.ok) return role;
-  return { ...role, enc: encap.enc };
+  role.enc = encap.enc;
+  return role;
 }
 
 /**
@@ -328,46 +394,41 @@ export function computeNonce(baseNonce, seq) {
   return out;
 }
 
-function seqAlreadyUsed(ctx, seq) {
-  return ctx.usedSeq instanceof Set && ctx.usedSeq.has(seq);
-}
-
-function markSeqUsed(ctx, seq) {
-  if (!(ctx.usedSeq instanceof Set)) ctx.usedSeq = new Set();
-  ctx.usedSeq.add(seq);
-}
-
-export function contextSeal(ctx, seq, aad, pt) {
-  const nonce = computeNonce(ctx.baseNonce, seq);
-  if (!nonce) return fail('open_failed');
-  if (seqAlreadyUsed(ctx, seq)) {
-    nonce.fill(0);
-    return fail('open_failed');
-  }
-  const ct = aeadSeal(ctx.key, nonce, aad, pt);
+/** Seal the next sequence number. The caller does not choose it. */
+export function contextSeal(ctx, aad, pt) {
+  const state = liveState(ctx);
+  const nonce = computeNonce(state.baseNonce, state.seq);
+  if (!nonce) throw new Error('closed context');
+  const ct = aeadSeal(state.key, nonce, aad, pt);
   nonce.fill(0);
   if (!ct) return fail('open_failed');
-  markSeqUsed(ctx, seq);
+  state.seq += 1;
   return { ok: true, ct };
 }
 
-export function contextOpen(ctx, seq, aad, ct) {
-  const nonce = computeNonce(ctx.baseNonce, seq);
-  if (!nonce) return fail('open_failed');
-  if (seqAlreadyUsed(ctx, seq)) {
-    nonce.fill(0);
-    return fail('open_failed');
-  }
-  const pt = aeadOpen(ctx.key, nonce, aad, ct);
+/** Open the next sequence number. A failed tag does not advance it. */
+export function contextOpen(ctx, aad, ct) {
+  const state = liveState(ctx);
+  const nonce = computeNonce(state.baseNonce, state.seq);
+  if (!nonce) throw new Error('closed context');
+  const pt = aeadOpen(state.key, nonce, aad, ct);
   nonce.fill(0);
   if (!pt) return fail('open_failed');
-  markSeqUsed(ctx, seq);
+  state.seq += 1;
   return { ok: true, pt };
 }
 
-/** Export (RFC 9180 §5.3). L is the output length. */
+/** Export (RFC 9180 §5.3). L is the output length, at most 255 * Nh. */
 export function contextExport(ctx, exporterContext, length) {
-  const out = labeledExpand(SUITE_HPKE, ctx.exporterSecret, 'sec', exporterContext, length);
+  const state = liveState(ctx);
+  if (!(exporterContext instanceof Uint8Array)) return fail('bad_type');
+  if (!Number.isSafeInteger(length) || length < 0 || length > 255 * NH) return fail('open_failed');
+  let out;
+  try {
+    out = labeledExpand(SUITE_HPKE, state.exporterSecret, 'sec', exporterContext, length);
+  } catch {
+    return fail('open_failed');
+  }
   if (!out) return fail('open_failed');
   return { ok: true, bytes: out };
 }
@@ -379,7 +440,7 @@ export function contextExport(ctx, exporterContext, length) {
 export function sealBase(pkR, info, aad, pt, esk) {
   const setup = setupS({ pkR, skE: esk, info, mode: MODE_BASE });
   if (!setup.ok) return setup;
-  const sealed = contextSeal(setup, 0, aad, pt);
+  const sealed = contextSeal(setup, aad, pt);
   releaseContext(setup);
   if (!sealed.ok) return sealed;
   return { ok: true, enc: setup.enc, ct: sealed.ct };
@@ -389,7 +450,7 @@ export function sealBase(pkR, info, aad, pt, esk) {
 export function openBase(enc, skR, info, aad, ct) {
   const setup = setupR({ enc, skR, info, mode: MODE_BASE });
   if (!setup.ok) return setup;
-  const opened = contextOpen(setup, 0, aad, ct);
+  const opened = contextOpen(setup, aad, ct);
   releaseContext(setup);
   if (!opened.ok) return opened;
   return { ok: true, pt: opened.pt };

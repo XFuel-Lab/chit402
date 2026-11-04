@@ -9,7 +9,7 @@
       "file": "packages/cs2-core/seal/core.js",
       "find": "const DK_LABEL = ascii('dk');",
       "replace": "const DK_LABEL = ascii('dx');",
-      "note": "key-committing AAD uses the wrong label"
+      "note": "the dk label in the line AAD is wrong"
     },
     {
       "id": "S02_info_domain",
@@ -304,8 +304,8 @@
     {
       "id": "H12_export_label",
       "file": "packages/cs2-core/seal/hpke.js",
-      "find": "ctx.exporterSecret, 'sec', exporterContext, length",
-      "replace": "ctx.exporterSecret, 'export', exporterContext, length",
+      "find": "state.exporterSecret, 'sec', exporterContext, length",
+      "replace": "state.exporterSecret, 'export', exporterContext, length",
       "note": "exporter label is not sec"
     },
     {
