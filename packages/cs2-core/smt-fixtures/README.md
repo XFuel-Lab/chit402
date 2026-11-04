@@ -1,6 +1,6 @@
 # State SMT fixtures
 
-One depth-256 sparse Merkle tree. Every proof in this directory verifies against `root.bin`. `#685` checks these bytes exactly; do not regenerate them unless the tree encoding changes.
+One depth-256 sparse Merkle tree. Every proof in this directory verifies against `root.bytes`. `#685` checks these bytes exactly; do not regenerate them unless the tree encoding changes.
 
 ## Tree
 
