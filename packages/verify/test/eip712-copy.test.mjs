@@ -41,7 +41,8 @@ function filesUnder(root) {
 }
 
 function sha256(abs) {
-  return createHash('sha256').update(readFileSync(abs)).digest('hex');
+  const bytes = readFileSync(abs).toString('utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
 test(`eip712 copy matches ${A75}`, () => {
