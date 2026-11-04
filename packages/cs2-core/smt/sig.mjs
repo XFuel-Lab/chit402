@@ -1,15 +1,19 @@
 /**
- * EIP-712 digests for wallet and book slot records.
+ * EIP-712 digests for slot rules 3, 4 and 7.
  *
  * Domain is { name: "Chit402", version: "13", chainId, verifyingContract }.
  * verifyingContract is the ChitAnchor that admits the record. It comes from
  * the caller's pinned contract list for the admission hour. A signature under
- * a different contract does not verify here.
+ * a different contract, including the old domain with version "1" and no
+ * verifyingContract, does not verify here.
  *
- * WalletJoin, WalletLeave, WalletStop, and BookCreate are not exported by
- * the frozen eip712 module, so each type string is defined once below.
- * A 65-byte signature is r ‖ s ‖ yParity. yParity is 0 or 1. s must be low-S.
- * ERC-1271 is not verified in this module.
+ * Hashing inside the typed data is keccak256. keyHash, possession, the
+ * domain strings, and kind 0x05 slot keys come from the frozen eip712
+ * module. CrossPayTo, WalletJoin, WalletLeave, WalletStop, and BookCreate
+ * are not exported there, so each is defined once below. A 65-byte
+ * signature is r ‖ s ‖ yParity. yParity is 0 or 1. s must be low-S.
+ * A signature that is not 65 bytes is not checked: ERC-1271 is not verified
+ * in this module.
  */
 
 import { createHash } from 'node:crypto';
@@ -17,12 +21,37 @@ import { P256, SECP256K1 } from '../ecdsa/curves.js';
 import { keccak256 } from '../ecdsa/keccak.js';
 import { recoverPublicKey } from '../ecdsa/recover.js';
 import { ethereumAddress } from '../ecdsa/address.js';
-import { bigToBytes, bytesToBig, concat, equalBytes, hexToBytes } from '../ecdsa/bytes.js';
-import { DOMAIN_NAME, DOMAIN_TYPE, DOMAIN_VERSION } from '../eip712/domain.mjs';
+import { bigToBytes, bytesToBig, bytesToHex, concat, equalBytes, hexToBytes } from '../ecdsa/bytes.js';
+import {
+  DOMAIN_NAME,
+  DOMAIN_TYPE,
+  DOMAIN_VERSION,
+  PAYTO_CONTROL_TYPE,
+  REVOKE_BY_KEY_TYPE,
+  REVOKE_TYPE,
+} from '../eip712/domain.mjs';
+import { keySlotKey } from '../eip712/kinds.mjs';
 import { canonicalKey } from '../eip712/registry.mjs';
+import { checkSigma, verifyPossession } from '../eip712/index.mjs';
+import { formatKeyHash, keyHash, parseKeyHash } from '../eip712/key-hash.mjs';
+import { deriveKeySlotKey } from '../key-status/status.mjs';
 
-export { DOMAIN_NAME, DOMAIN_TYPE, DOMAIN_VERSION };
+export {
+  DOMAIN_NAME,
+  DOMAIN_TYPE,
+  DOMAIN_VERSION,
+  PAYTO_CONTROL_TYPE,
+  REVOKE_BY_KEY_TYPE,
+  REVOKE_TYPE,
+  checkSigma,
+  deriveKeySlotKey,
+  formatKeyHash,
+  keyHash,
+  keySlotKey,
+  parseKeyHash,
+};
 
+export const CROSS_TYPE = 'CrossPayTo(address payTo,address otherPayTo,bytes32 keyHash)';
 export const WALLET_JOIN_TYPE = 'WalletJoin(address wallet,bytes32 bookCommitment,uint64 block)';
 export const WALLET_LEAVE_TYPE = 'WalletLeave(address wallet,uint64 block)';
 export const WALLET_STOP_TYPE = 'WalletStop(address wallet,bytes32 bookCommitment,uint64 block)';
@@ -71,6 +100,22 @@ function digestOf(chainId, contract, struct) {
   ]));
 }
 
+/** Bytes of the shared keyHash, or null when the registry rejects the key. */
+export function sellerKeyHash(alg, key) {
+  const got = keyHash(alg, key);
+  return got.ok ? got.bytes : null;
+}
+
+function possess(digest, alg, key, sig) {
+  const canon = canonicalKey(alg, key);
+  if (!canon.ok) return false;
+  return verifyPossession(digest, canon.uncompressed, sig).ok;
+}
+
+export function verifySellerSig(digest, sig, key) {
+  return possess(digest, 1, key, sig);
+}
+
 function parityOf(v) {
   if (v === 0 || v === 1) return v;
   return null;
@@ -104,6 +149,60 @@ function verifyP256Key(digest, sig, compressed) {
   const pub = recoverPublicKey(digest, parts.r, parts.s, parts.yParity, P256);
   if (!pub) return false;
   return equalBytes(pub, canon.uncompressed);
+}
+
+export function payToControlDigest(chainId, contract, payTo, alg, key, expiry) {
+  const struct = structHash(PAYTO_CONTROL_TYPE, [
+    padAddress(payTo),
+    padUint(BigInt(alg)),
+    keccak256(key),
+    padUint(expiry),
+  ]);
+  return digestOf(chainId, contract, struct);
+}
+
+export function verifyPayToControl(chainId, contract, payTo, alg, key, expiry, sig) {
+  return verifyK1(payToControlDigest(chainId, contract, payTo, alg, key, expiry), sig, payTo);
+}
+
+/** The seller key's own signature over the same PayToControl digest. 64-byte r‖s. */
+export function verifyKeyPossession(chainId, contract, payTo, alg, key, expiry, sig) {
+  return possess(payToControlDigest(chainId, contract, payTo, alg, key, expiry), alg, key, sig);
+}
+
+export function revokeDigest(chainId, contract, payTo, keyHash) {
+  const struct = structHash(REVOKE_TYPE, [padAddress(payTo), keyHash]);
+  return digestOf(chainId, contract, struct);
+}
+
+export function verifyPayToRevoke(chainId, contract, payTo, keyHash, sig) {
+  return verifyK1(revokeDigest(chainId, contract, payTo, keyHash), sig, payTo);
+}
+
+export function revokeByKeyDigest(chainId, contract, keyHash) {
+  const struct = structHash(REVOKE_BY_KEY_TYPE, [keyHash]);
+  return digestOf(chainId, contract, struct);
+}
+
+export function verifyKeyRevoke(chainId, contract, key, keyHashBytes, sig) {
+  return possess(revokeByKeyDigest(chainId, contract, keyHashBytes), 1, key, sig);
+}
+
+function sortedPair(a, b) {
+  const ha = bytesToHex(a);
+  const hb = bytesToHex(b);
+  return ha <= hb ? [a, b] : [b, a];
+}
+
+/** Both payTos sign this digest. Addresses are sorted so there is one message. */
+export function crossDigest(chainId, contract, addrA, addrB, keyHash) {
+  const [first, second] = sortedPair(addrA, addrB);
+  const struct = structHash(CROSS_TYPE, [padAddress(first), padAddress(second), keyHash]);
+  return digestOf(chainId, contract, struct);
+}
+
+export function verifyCrossSig(chainId, contract, addrA, addrB, keyHash, sig, signer) {
+  return verifyK1(crossDigest(chainId, contract, addrA, addrB, keyHash), sig, signer);
 }
 
 export function walletJoinDigest(chainId, contract, wallet, commitment, block) {
