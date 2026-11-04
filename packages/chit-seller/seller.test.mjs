@@ -346,9 +346,12 @@ test('a nonce mismatch produces no sigma', async () => {
 });
 
 test('a zero nonce produces no sigma', async () => {
-  const signed = await seller(world()).sign({
+  const zero = '00'.repeat(32);
+  const signed = await seller(world({
+    logs: [authLog(PAYER, zero), transferLog(PAYER, PAYEE, PRICE)],
+  })).sign({
     payment: payment(),
-    authorization: authorization({ nonce: `0x${'00'.repeat(32)}` }),
+    authorization: authorization({ nonce: `0x${zero}` }),
     K,
     alg: 1,
   });
@@ -896,6 +899,15 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', async () =
     keyHash: hashed.bytes,
     signature: revoke.signature,
   }).ok, true);
+  const trailingRevoke = new Uint8Array(revoke.signature.length + 1);
+  trailingRevoke.set(revoke.signature);
+  assertRefusal(verifyRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: input.payTo,
+    keyHash: hashed.bytes,
+    signature: trailingRevoke,
+  }), 'bad_signature');
   const wide = new Uint8Array(66);
   wide.set(revoke.signature.subarray(2));
   assertRefusal(verifyRevoke({
@@ -957,6 +969,16 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', async () =
     hourStart: HOUR_A,
     privateKey: input.keyPrivateKey,
   }), 'bad_payment');
+  const { keyAlg: omittedAlg, ...noAlg } = {
+    chainId: CHAIN,
+    keyHash: hashed.bytes,
+    key,
+    keyAlg: 1,
+    hourStart: HOUR_A,
+    privateKey: input.keyPrivateKey,
+    store: createMemoryStore(),
+  };
+  assertRefusal(await signRevokeByKey(noAlg), 'bad_alg');
   assertRefusal(verifyRevokeByKey({
     chainId: CHAIN,
     keyHash: hashed.bytes,
@@ -1189,8 +1211,13 @@ test('topic, width, nonce, pin, and signature-field gaps', async () => {
   );
   assert.equal(zeroAuth.reason, 'nonce_mismatch');
   const zeroSelect = await selectNonce({
-    ok: true, token: TOKEN, payer: PAYER, auths: [{ token: TOKEN, authorizer: PAYER, nonce: '00'.repeat(32) }],
+    ok: true,
+    token: TOKEN,
+    payer: PAYER,
+    localLogIndex: 1,
+    auths: [{ token: TOKEN, authorizer: PAYER, nonce: '00'.repeat(32), logIndex: 0 }],
   }, `0x${'00'.repeat(32)}`);
+  assert.equal(zeroSelect.ok, false);
   assert.equal(zeroSelect.reason, 'nonce_mismatch');
 });
 
@@ -1203,7 +1230,22 @@ test('a duplicate authorization releases the payment claim', async () => {
     authLog(PAYER, NONCE_B),
     transferLog(PAYER, PAYEE, 1n),
   ];
-  const store = createMemoryStore();
+  const held = new Set();
+  const claims = [];
+  const releases = [];
+  const store = {
+    claim(id) {
+      claims.push(id);
+      if (held.has(id)) return false;
+      held.add(id);
+      return true;
+    },
+    release(id) {
+      releases.push(id);
+      held.delete(id);
+    },
+    has(id) { return held.has(id); },
+  };
   const who = seller(world({ logs }), { store });
   assertSigned(await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 }));
   assertRefusal(await who.sign({
@@ -1212,6 +1254,9 @@ test('a duplicate authorization releases the payment claim', async () => {
     K,
     alg: 1,
   }), 'duplicate_sigma');
+  const secondPay = claims.filter((id) => id.startsWith('pay:'))[1];
+  assert.equal(store.has(secondPay), false);
+  assert.equal(releases.includes(secondPay), true);
   assertSigned(await who.sign({
     payment: payment({ localLogIndex: 5 }),
     authorization: authorization({ price: '1', nonce: `0x${NONCE_B}` }),
@@ -1399,6 +1444,21 @@ test('an async store signs one sigma and a failed claim is a refusal', async () 
     privateKey: input.keyPrivateKey,
     store: refusing,
   }), 'bad_payment');
+  const truthy = {
+    async claim() { return 'yes'; },
+    async release() {},
+    async has() { return false; },
+  };
+  const yes = await seller(world(), { store: truthy }).sign(req);
+  assertRefusal(yes, 'duplicate_sigma');
+  const thrower = {
+    async claim() { throw new Error('db down'); },
+    async release() {},
+    async has() { return false; },
+  };
+  const thrown = await seller(world(), { store: thrower }).sign(req);
+  assertRefusal(thrown, 'duplicate_sigma');
+  assert.equal(JSON.stringify(thrown).includes('db down'), false);
 });
 
 test('a third party cannot tombstone a key', async () => {
@@ -1482,6 +1542,9 @@ test('off-curve keys and tombstones are refused, and the same key may bind a sec
     store: held,
     key: otherKey,
     keyPrivateKey: 9n,
+  }), 'bad_payment');
+  assertRefusal(await signPayToControl({
+    ...input, store: held, payTo: `0x${'12'.repeat(20)}`,
   }), 'bad_payment');
   assert.equal((await signPayToControl({
     ...input, store: held, operatorOverride: true, payTo: `0x${'12'.repeat(20)}`,
@@ -1589,6 +1652,28 @@ test('quorum counts distinct readers and pairs an AuthorizationUsed with its Tra
   setTestPinSigning(false);
   assert.equal((await signPayToControl({ ...input, store: createMemoryStore() })).ok, false);
   setTestPinSigning(true);
+  const shared = createMemoryStore();
+  const { input: bound } = controlInput(HOUR_A);
+  assert.equal((await signPayToControl({ ...bound, store: shared })).ok, true);
+  assertRefusal(await signPayToControl({ ...bound, store: shared, chainId: 8453 }), 'bad_payment');
+  const noScalar = { ...controlInput(HOUR_A).input };
+  delete noScalar.keyPrivateKey;
+  assertRefusal(await signPayToControl({ ...noScalar, store: createMemoryStore() }), 'bad_key');
+  const tombThrow = {
+    async has(id) {
+      if (String(id).startsWith('tomb:')) throw new Error('tomb down');
+      return false;
+    },
+    async claim() { return true; },
+    async release() {},
+  };
+  assertRefusal(await signPayToControl({ ...bound, store: tombThrow }), 'bad_payment');
+  const yesClaim = {
+    async has() { return false; },
+    async claim() { return 'yes'; },
+    async release() {},
+  };
+  assertRefusal(await signPayToControl({ ...bound, store: yesClaim }), 'bad_payment');
   const core = await import('../cs2-core/eip712/index.mjs');
   assert.deepEqual(ALG_REGISTRY, core.ALG_REGISTRY);
   assert.equal(KEY_ALG_P256, 0x01);

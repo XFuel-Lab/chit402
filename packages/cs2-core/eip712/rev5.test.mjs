@@ -41,6 +41,16 @@ const digest = hexToBytes(pop.d);
 const sig = hexToBytes(pop.signature);
 const admission = { absentAtPrev: true, memberAtEpoch: true, anchorPrev: 10n, anchorEpoch: 40n, block: 20n };
 
+function assertKeyHashRejected(text) {
+  assert.throws(() => {
+    if (parseKeyHash(text) == null) {
+      const err = new Error('bad_key_hash');
+      err.code = 'bad_key_hash';
+      throw err;
+    }
+  }, (err) => err.code === 'bad_key_hash');
+}
+
 function view(over = {}) {
   return {
     stateRoot: 'root',
@@ -145,7 +155,7 @@ test('T11 keyHash text is not normalized', () => {
   const text = formatKeyHash(hexToBytes(pop.key_hash));
   assert.equal(text, `0x${pop.key_hash}`);
   for (const bad of [pop.key_hash, text.toUpperCase(), `0x${pop.key_hash}00`, `0x${pop.key_hash.slice(1)}`, `0X${pop.key_hash}`]) {
-    assert.equal(parseKeyHash(bad), null);
+    assertKeyHashRejected(bad);
   }
 });
 
@@ -161,8 +171,11 @@ test('T12 the registry refuses the reserved algs and a bad point', () => {
   assert.equal(keyHash(1, new Uint8Array(65)).reason, 'bad_length');
   const over = new Uint8Array(33);
   over[0] = 2;
-  over.fill(0xff, 1);
-  assert.equal(canonicalKey(1, over).ok, false);
+  over.set(bigToBytes(P256.p, 32), 1);
+  assert.equal(canonicalKey(1, over).reason, 'bad_key');
+  const short = new Uint8Array(32);
+  short[0] = 0x02;
+  assert.equal(canonicalKey(1, short).reason, 'bad_length');
 });
 
 test('T13 the 0x05 slot key matches the literal and 0x06 stays reserved', () => {
@@ -190,8 +203,9 @@ test('a payTo revoke blocks only its own keyHash, and an empty previous slot can
   const hash = keyHash(1, key).bytes;
   const slotRevoke = { keyHash: hash, revokedAtBlock: 22n };
   const registration = { ...view().registration, keyHash: hash };
-  const rebound = keyStatus(view({ slotRevoke, registration, rebinding: true, block: 18n }));
+  const rebound = keyStatus(view({ slotRevoke, registration, rebinding: true, block: 21n }));
   assert.equal(rebound.status, KEY_STATUS_INVALID);
+  assert.equal(rebound.reason, 'slot_rebind');
   const used = keyStatus(view({ slotRevoke, registration, block: 22n }));
   assert.equal(used.status, KEY_STATUS_REVOKED);
   const other = new Uint8Array(hash);
@@ -200,6 +214,41 @@ test('a payTo revoke blocks only its own keyHash, and an empty previous slot can
   assert.equal(untouched.status, KEY_STATUS_ACTIVE);
   const first = { ...admission, absentAtPrev: false, emptyAtPrev: true };
   assert.equal(checkAdmission(first).ok, true);
+  const leaf = {
+    revokedAtBlock: 22n,
+    prevAnchorBlock: 10n,
+    showAnchorBlock: 40n,
+    admission: { ...admission, block: 22n },
+    decodeOk: true,
+    signatureOk: true,
+    keyHashOk: true,
+  };
+  const copied = keyStatus(view({ keyLeaf: { records: [{ ...leaf, payToCopy: true }] } }));
+  assert.equal(copied.status, KEY_STATUS_ACTIVE);
+  const unsigned = keyStatus(view({ keyLeaf: { records: [{ ...leaf, signatureOk: false }] } }));
+  assert.equal(unsigned.exitCode, EXIT_UNPROVEN);
+  assert.equal(unsigned.reason, 'bad_leaf');
+  const late = keyStatus(view({
+    block: 25n,
+    registration: {
+      admissionBlock: 26n,
+      expiry: 1800000000n,
+      admission: { ...admission, block: 26n },
+    },
+  }));
+  assert.equal(late.status, KEY_STATUS_INVALID);
+  assert.equal(late.reason, 'inactive');
+  // A block number cannot be negative, so prev < revokedAtBlock is false at 0.
+  // Deleting the explicit zero check still returns bare_tombstone. Equivalent.
+  const zero = readKeyLeaf({
+    records: [{
+      ...leaf,
+      revokedAtBlock: 0n,
+      prevAnchorBlock: 0n,
+      admission: { ...admission, block: 0n },
+    }],
+  });
+  assert.equal(zero.reason, 'bare_tombstone');
 });
 
 test('the key slot is derived from the sigma key', () => {

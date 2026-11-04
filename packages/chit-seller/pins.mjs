@@ -42,6 +42,13 @@ export const PINNED_CONTRACTS = Object.freeze([
     genesisHourStart: 1800036000,
     testOnly: true,
   }),
+  Object.freeze({
+    chainId: 8453,
+    address: PLACEHOLDER_AA,
+    genesisHourStart: 1800000000,
+    retireHour: 1800036000,
+    testOnly: true,
+  }),
 ]);
 
 /** Production refuses the placeholder pins. Null until real addresses are pinned. */

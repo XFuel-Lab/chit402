@@ -8,7 +8,8 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { keccak256 } from '../ecdsa/keccak.js';
-import { bytesToHex, hexToBytes } from '../ecdsa/bytes.js';
+import { bigToBytes, bytesToHex, hexToBytes } from '../ecdsa/bytes.js';
+import { P256 } from '../ecdsa/curves.js';
 import {
   ALG_REGISTRY,
   DOMAIN_TYPE,
@@ -28,6 +29,16 @@ import {
 } from './index.mjs';
 
 const vector = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'vectors/eip712.json'), 'utf8'));
+
+function assertKeyHashRejected(text) {
+  assert.throws(() => {
+    if (parseKeyHash(text) == null) {
+      const err = new Error('bad_key_hash');
+      err.code = 'bad_key_hash';
+      throw err;
+    }
+  }, (err) => err.code === 'bad_key_hash');
+}
 const text = new TextEncoder();
 const typehash = (value) => bytesToHex(keccak256(text.encode(value)));
 
@@ -75,7 +86,7 @@ test('typehashes, domain separators, registry, keyHash, and the time unit are pi
   assert.equal(formatKeyHash(hashBytes), `0x${vector.key_hash}`);
   assert.equal(parseKeyHash(`0x${vector.key_hash}`) && bytesToHex(parseKeyHash(`0x${vector.key_hash}`)), vector.key_hash);
   for (const bad of [vector.key_hash, `0x${vector.key_hash.toUpperCase()}`, `0x${vector.key_hash.slice(0, 63)}`, `0x${vector.key_hash}00`, `0X${vector.key_hash}`]) {
-    assert.equal(parseKeyHash(bad), null, bad);
+    assertKeyHashRejected(bad);
   }
 });
 
@@ -106,11 +117,18 @@ test('no other package defines a keyAlg table', () => {
 test('canonicalKey refuses x at or above the field prime and a short key', () => {
   const over = new Uint8Array(33);
   over[0] = 0x02;
-  over.fill(0xff, 1);
-  assert.equal(canonicalKey(1, over).ok, false);
-  assert.equal(canonicalKey(1, new Uint8Array(32)).reason, 'bad_length');
+  over.set(bigToBytes(P256.p, 32), 1);
+  assert.equal(canonicalKey(1, over).reason, 'bad_key');
+  const short = new Uint8Array(32);
+  short[0] = 0x02;
+  short[1] = 1;
+  assert.equal(canonicalKey(1, short).reason, 'bad_length');
+  const long = new Uint8Array(34);
+  long[0] = 0x03;
+  assert.equal(canonicalKey(1, long).reason, 'bad_length');
   assert.throws(() => tombstoned([], 'abc'), /bad_key_hash/);
   assert.equal(tombstoned({}, '11'.repeat(32)), true);
   assert.equal(tombstoned([new Uint8Array(31)], '11'.repeat(32)), true);
-  assert.equal(parseKeyHash(`0x${'ab'.repeat(32).toUpperCase()}`), null);
+  assertKeyHashRejected(`0x${'ab'.repeat(32).toUpperCase()}`);
+  assertKeyHashRejected(`0X${'ab'.repeat(32)}`);
 });
