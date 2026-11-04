@@ -1,0 +1,37 @@
+/**
+ * Re-export of the shared EIP-712 module. The strings live in cs2-core/eip712.
+ */
+
+export {
+  DOMAIN_NAME,
+  DOMAIN_VERSION,
+  PAYTO_CONTROL,
+  REVOKE,
+  REVOKE_BY_KEY,
+  BOOK_ACTION,
+  STATEMENT_RECORD,
+  DOMAIN_FIELDS,
+  PAYTO_CONTROL_FIELDS,
+  REVOKE_FIELDS,
+  REVOKE_BY_KEY_FIELDS,
+  BOOK_ACTION_FIELDS,
+  STATEMENT_RECORD_FIELDS,
+  DOMAIN_TYPE,
+  PAYTO_CONTROL_TYPE,
+  REVOKE_TYPE,
+  REVOKE_BY_KEY_TYPE,
+  BOOK_ACTION_TYPE,
+  STATEMENT_RECORD_TYPE,
+  CHIT_TYPES,
+  chitDomain,
+  TIME_UNIT,
+  HOUR_SECONDS,
+  expiryAllows,
+  ALG_REGISTRY,
+  LAUNCH_ALGS,
+  KEY_ALG_P256,
+  KEY_ALG_SECP256K1,
+  canonicalKey,
+  keyHash,
+  tombstoned,
+} from '../cs2-core/eip712/index.mjs';

@@ -1,0 +1,204 @@
+/**
+ * Seller sigma signer.
+ *
+ * Sigma is Sig(H("cs2-sig" ‖ payment id ‖ K ‖ alg)) on P-256, low-S, 64-byte
+ * r‖s, and only when the on-chain payment matches this call's payer, payee,
+ * price and nonce. Alg must be one isAllowedAlg accepts. One successful
+ * signature claims the payment id and the authorization; a second request
+ * for either is refused. Failures return a fixed reason and nothing else.
+ */
+
+import { authorizationKey, isAllowedAlg, sigmaDigest } from '../cs2-core/line/index.mjs';
+import { P256, SECP256K1 } from '../cs2-core/ecdsa/curves.js';
+import { bytesToBig, bytesToHex, hexToBytes } from '../cs2-core/ecdsa/bytes.js';
+import { publicPoint, signRawDigest } from '../cs2-core/ecdsa/sign.js';
+import { yParityByTrial } from '../cs2-core/ecdsa/recover.js';
+import { fromCodec, refuse } from './reasons.mjs';
+import { addressHex, isZeroHex, parseScalar, sameAddress } from './hex.mjs';
+import { isLowS } from './low-s.mjs';
+import { matchAuthorization, matchObservedSettle, requireObservedTriple } from './match.mjs';
+import { createRpcReader, readAgreedPayment, selectNonce } from './chain.mjs';
+import { nonceFor } from './rfc6979.mjs';
+import { checkSigma, deniedKeyHash, keyHash } from '../cs2-core/eip712/index.mjs';
+import { BUNDLED_RPC_URLS } from './pins.mjs';
+
+function deny(reason, onRefuse) {
+  const out = refuse(reason);
+  if (typeof onRefuse === 'function') {
+    try { onRefuse(out.reason); } catch { /* the refusal stands */ }
+  }
+  return out;
+}
+
+export function compressP256(publicKey) {
+  if (!(publicKey instanceof Uint8Array) || publicKey.length !== 65 || publicKey[0] !== 0x04) return null;
+  const y = bytesToBig(publicKey.subarray(33));
+  const prefix = (y & 1n) === 1n ? 0x03 : 0x02;
+  const out = new Uint8Array(33);
+  out[0] = prefix;
+  out.set(publicKey.subarray(1, 33), 1);
+  return out;
+}
+
+async function signInner(input) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) return refuse('bad_type');
+  if (Object.hasOwn(input, 'k')) return refuse('bad_key');
+  const onRefuse = input.onRefuse;
+  const payment = input.payment;
+  const authorization = input.authorization;
+  const triple = requireObservedTriple(payment, authorization);
+  if (!triple.ok) return deny(triple.reason, onRefuse);
+  if (typeof input.alg !== 'number' || !isAllowedAlg(input.alg)) return deny('bad_alg', onRefuse);
+  if (!input.store || typeof input.store.claim !== 'function' || typeof input.store.release !== 'function' || typeof input.store.has !== 'function' || typeof input.store.list !== 'function') {
+    return deny('bad_type', onRefuse);
+  }
+  if (!sameAddress(authorization.token, input.pinnedToken)) return deny('token_mismatch', onRefuse);
+  if (!sameAddress(authorization.payee, input.pinnedPayee)) return deny('payee_mismatch', onRefuse);
+
+  const read = await readAgreedPayment(input.readers, payment);
+  if (!read.ok) return deny(read.reason, onRefuse);
+  const bound = await selectNonce(read, authorization.nonce);
+  if (!bound.ok) return deny(bound.reason, onRefuse);
+  const matched = matchAuthorization(authorization, bound);
+  if (!matched.ok) return deny(matched.reason, onRefuse);
+  const settled = matchObservedSettle(
+    { txHash: payment.txHash, localLogIndex: payment.localLogIndex },
+    bound,
+  );
+  if (!settled.ok) return deny(settled.reason, onRefuse);
+
+  const digest = sigmaDigest({
+    chainId: bound.chainId,
+    blockHash: bound.blockHash,
+    txIndex: bound.txIndex,
+    localLogIndex: bound.localLogIndex,
+  }, input.K, input.alg);
+  if (!digest.ok) return deny(fromCodec(digest).reason, onRefuse);
+
+  const authKey = authorizationKey({
+    chainId: bound.chainId,
+    token: hexToBytes(bound.token),
+    authorizer: hexToBytes(bound.payer),
+    nonce: hexToBytes(bound.nonce),
+  });
+  if (!authKey.ok) return deny(fromCodec(authKey).reason, onRefuse);
+
+  const payClaim = `pay:${bound.paymentId}`;
+  const authClaim = `auth:${authKey.hex}`;
+  if (!(await claimed(input.store, payClaim))) return deny('duplicate_sigma', onRefuse);
+  if (!(await claimed(input.store, authClaim))) {
+    await released(input.store, payClaim);
+    return deny('duplicate_sigma', onRefuse);
+  }
+
+  const d = parseScalar(input.privateKey, P256.order);
+  const k = d == null ? null : nonceFor(digest.bytes, d, P256.order);
+  if (d == null || k == null) {
+    await released(input.store, payClaim);
+    await released(input.store, authClaim);
+    return deny('bad_key', onRefuse);
+  }
+  let sig;
+  try {
+    sig = signRawDigest(digest.bytes, d, k, P256);
+  } catch {
+    await released(input.store, payClaim);
+    await released(input.store, authClaim);
+    return deny('bad_key', onRefuse);
+  }
+  if (!isLowS(sig.s, P256)) {
+    await released(input.store, payClaim);
+    await released(input.store, authClaim);
+    return deny('bad_sigma', onRefuse);
+  }
+  return {
+    ok: true,
+    alg: input.alg,
+    sigma: sig.raw,
+    digest: digest.bytes,
+    paymentId: bound.paymentId,
+  };
+}
+
+async function signSigma(input) {
+  try {
+    return await signInner(input);
+  } catch {
+    return refuse('bad_payment');
+  }
+}
+
+async function claimed(store, id) {
+  try {
+    return (await store.claim(id)) === true;
+  } catch {
+    return false;
+  }
+}
+
+async function released(store, id) {
+  try {
+    await store.release(id);
+  } catch {
+    /* the refusal stands */
+  }
+}
+
+export function verifySigma({ digest, sigma, publicKey } = {}) {
+  try {
+    if (!(digest instanceof Uint8Array) || digest.length !== 32) return refuse('bad_length');
+    if (!(sigma instanceof Uint8Array) || !checkSigma(sigma).ok) return refuse('bad_sigma');
+    const parity = yParityByTrial(digest, sigma, publicKey, P256);
+    if (parity !== 0 && parity !== 1) return refuse('bad_signature');
+    return { ok: true };
+  } catch {
+    return refuse('bad_signature');
+  }
+}
+
+function bundledReaders() {
+  return BUNDLED_RPC_URLS[84532].map((url) => createRpcReader(url));
+}
+
+export function createSeller({ privateKey, store, token, payee, readers } = {}) {
+  if (arguments[0] && Object.hasOwn(arguments[0], 'k')) return refuse('bad_key');
+  if (!store || typeof store.claim !== 'function' || typeof store.release !== 'function' || typeof store.has !== 'function' || typeof store.list !== 'function') {
+    return refuse('bad_type');
+  }
+  const pinnedToken = addressHex(token);
+  const pinnedPayee = addressHex(payee);
+  if (!pinnedToken || !pinnedPayee || isZeroHex(pinnedToken) || isZeroHex(pinnedPayee)) return refuse('bad_payment');
+  const useReaders = readers || bundledReaders();
+  if (!Array.isArray(useReaders) || useReaders.length < 3) return refuse('chain_unread');
+  const d = parseScalar(privateKey, P256.order);
+  if (d == null) return refuse('bad_key');
+  let publicKey;
+  try {
+    publicKey = publicPoint(d, P256);
+  } catch {
+    return refuse('bad_key');
+  }
+  const compressedKey = compressP256(publicKey);
+  if (!compressedKey) return refuse('bad_key');
+  const hashed = keyHash(1, compressedKey);
+  if (!hashed.ok || deniedKeyHash(hashed.hex)) return refuse('bad_key');
+  return {
+    publicKey,
+    compressedKey,
+    sign(request) {
+      if (request && Object.hasOwn(request, 'k')) return Promise.resolve(refuse('bad_key'));
+      return signSigma({
+        ...request,
+        privateKey: d,
+        store,
+        readers: useReaders,
+        pinnedToken,
+        pinnedPayee,
+      });
+    },
+  };
+}
+
+export function publicKeyHex(publicKey) {
+  return bytesToHex(publicKey);
+}
