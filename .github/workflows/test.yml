@@ -426,6 +426,9 @@ jobs:
         working-directory: packages/verify
         run: npm install --no-audit --no-fund && npm test
 
+      - name: Test cs2-core eip712 module
+        run: node --test packages/cs2-core/eip712/eip712.test.mjs packages/cs2-core/eip712/rev5.test.mjs
+
   # ── www unit tests (path-filtered) ─────────────────────────
   # apps/web is not covered by Gateway Tests or Jest (Jest is packages/sdk).
   web:
