@@ -13,24 +13,26 @@ import { bigToBytes, bytesToBig, bytesToHex, hexToBytes } from '../ecdsa/bytes.j
 import { publicPoint, signRawDigest } from '../ecdsa/sign.js';
 import { slotKey } from '../line/index.mjs';
 import {
+  KIND_CHANNEL,
+  KIND_KEY,
+  canonicalKey,
+  checkSigma,
+  formatKeyHash,
+  keyHash,
+  parseKeyHash,
+  possessionPreimage,
+  verifyPossession,
+} from './index.mjs';
+import {
   EXIT_UNPROVEN,
   KEY_STATUS_ACTIVE,
   KEY_STATUS_INVALID,
   KEY_STATUS_REVOKED,
-  KIND_CHANNEL,
-  KIND_KEY,
-  canonicalKey,
   checkAdmission,
-  checkSigma,
   deriveKeySlotKey,
-  formatKeyHash,
-  keyHash,
   keyStatus,
-  parseKeyHash,
-  possessionPreimage,
   readKeyLeaf,
-  verifyPossession,
-} from './index.mjs';
+} from '../key-status/status.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pop = JSON.parse(readFileSync(join(here, 'vectors/pop.json'), 'utf8'));

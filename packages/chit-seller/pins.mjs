@@ -12,6 +12,17 @@
 const PLACEHOLDER_AA = 'aa'.repeat(20);
 const PLACEHOLDER_BB = 'bb'.repeat(20);
 
+let testPinsOn = false;
+
+/** Tests opt in. Production signing leaves this off, so placeholder pins are refused. */
+export function setTestPinSigning(on) {
+  testPinsOn = on === true;
+}
+
+export function testPinSigning() {
+  return testPinsOn;
+}
+
 export function isPlaceholderAddress(address) {
   const hex = String(address ?? '').toLowerCase().replace(/^0x/, '');
   return hex === PLACEHOLDER_AA || hex === PLACEHOLDER_BB;

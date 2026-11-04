@@ -10,7 +10,7 @@
 import { HOUR_SECONDS } from '../cs2-core/eip712/time.mjs';
 import { refuse } from './reasons.mjs';
 import { addressHex, isZeroHex, parseUint } from './hex.mjs';
-import { isPlaceholderAddress } from './pins.mjs';
+import { isPlaceholderAddress, testPinSigning } from './pins.mjs';
 
 export { HOUR_SECONDS };
 
@@ -45,7 +45,7 @@ export function contractForHour(list, chainId, hourStart) {
     if (entryChain !== chain || at < start || (end != null && at >= end)) continue;
     const address = addressHex(entry.address);
     if (!address || isZeroHex(address)) return refuse('bad_payment');
-    if (isPlaceholderAddress(address) && entry.testOnly !== true) placeholder = true;
+    if (isPlaceholderAddress(address) && (entry.testOnly !== true || !testPinSigning())) placeholder = true;
     hits.push(address);
   }
   if (hits.length === 0) return refuse('contract_unpinned');

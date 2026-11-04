@@ -55,11 +55,31 @@ function entryHex(item) {
   return bytesToHex(parsed);
 }
 
-/** A revoked keyHash stays dead. A byte entry matches. An unreadable entry fails closed. */
+function wantHex(keyHashHex) {
+  if (keyHashHex instanceof Uint8Array) {
+    if (keyHashHex.length !== 32) return null;
+    return bytesToHex(keyHashHex);
+  }
+  if (typeof keyHashHex !== 'string') return null;
+  if (keyHashHex.startsWith('0x')) {
+    const parsed = parseKeyHash(keyHashHex);
+    return parsed ? bytesToHex(parsed) : null;
+  }
+  if (keyHashHex.length === 64 && keyHashHex === keyHashHex.toLowerCase() && /^[0-9a-f]{64}$/.test(keyHashHex)) {
+    return keyHashHex;
+  }
+  return null;
+}
+
+/** A revoked keyHash stays dead. A malformed keyHash throws. An unreadable entry fails closed. */
 export function tombstoned(list, keyHashHex) {
+  const want = wantHex(keyHashHex);
+  if (!want) {
+    const err = new Error('bad_key_hash');
+    err.code = 'bad_key_hash';
+    throw err;
+  }
   if (list == null) return false;
-  const want = String(keyHashHex).toLowerCase().replace(/^0x/, '');
-  if (want.length !== 64 || !/^[0-9a-f]+$/.test(want)) return false;
   if (list instanceof Uint8Array) {
     const hex = entryHex(list);
     if (!hex) return true;

@@ -43,8 +43,8 @@ test('cs2 seller sigma suite (gateway CI hook)', () => {
   assert.equal(seller.cancelled && seller.cancelled[1], '0');
   const shared = runTap('packages/cs2-core/eip712/eip712.test.mjs');
   assert.ok(shared.tests, shared.out.slice(-2000));
-  assert.equal(shared.tests[1], '2');
-  assert.equal(shared.passed && shared.passed[1], '2');
+  assert.equal(shared.tests[1], '3');
+  assert.equal(shared.passed && shared.passed[1], '3');
   assert.equal(shared.failed && shared.failed[1], '0');
   assert.equal(shared.skipped && shared.skipped[1], '0');
   assert.equal(shared.cancelled && shared.cancelled[1], '0');

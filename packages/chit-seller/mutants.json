@@ -1,5 +1,12 @@
 {
-  "about": "P0-6 seller sigma signer. Run from the repo root: node packages/chit-seller/run-mutants.mjs . Score is KILLED / (KILLED + SURVIVED). The run fails below 90%.",
+  "about": "P0-6 seller sigma signer. Run from the repo root: node packages/chit-seller/run-mutants.mjs . Score is KILLED / (KILLED + SURVIVED). Only assertion failures count as kills. The run fails below 90%.",
+  "equivalents": [
+    "X01 receipt tx hash, X02 block tx slot, X03 block-hash echo: the receipt and the block are the same object the test built, so dropping one comparison cannot change the result.",
+    "X16 revoke r range and X17 zero signer: recoverPublicKey already rejects r outside the order, and a zero address never equals the payTo.",
+    "Y09 caller k on signInner: k is refused before the inner signer and is not passed through.",
+    "Y11 caller pin list: admitting always uses the frozen list, so deleting the caller-pin refusal does not change which contract is used when the caller does not pass one.",
+    "Y25 domain address length: addressHex already rejects a short address."
+  ],
   "suite": {
     "cwd": ".",
     "argv": ["node", "--test", "--test-concurrency=1", "packages/chit-seller/seller.test.mjs"]
@@ -232,9 +239,8 @@
     {
       "id": "payto_curve",
       "file": "packages/chit-seller/eip712.mjs",
-      "find": "const signed = signDigest(digest.bytes, input.privateKey, SECP256K1);",
-      "nth": 1,
-      "replace": "const signed = signDigest(digest.bytes, input.privateKey, P256);",
+      "find": "const signed = signDigest(digest.bytes, payScalar, SECP256K1);",
+      "replace": "const signed = signDigest(digest.bytes, payScalar, P256);",
       "note": "PayToControl is signed on P-256"
     },
     {

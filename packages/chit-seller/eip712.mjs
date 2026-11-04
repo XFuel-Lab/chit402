@@ -37,7 +37,17 @@ import {
   chitDomain,
 } from './typed-data.mjs';
 import { encodeSignatureField, readSignatureField } from './signature-field.mjs';
-import { canonicalKey, deniedKeyHash, expiryAllows, keyHash, possessionPreimage, verifyPossession, tombstoned } from '../cs2-core/eip712/index.mjs';
+import {
+  canonicalKey,
+  deniedKeyHash,
+  expiryAllows,
+  formatKeyHash,
+  keyHash,
+  parseKeyHash,
+  possessionPreimage,
+  verifyPossession,
+  tombstoned,
+} from '../cs2-core/eip712/index.mjs';
 import { contractForHour } from './pinned-contract.mjs';
 import { PINNED_CONTRACTS } from './pins.mjs';
 import { nonceFor } from './rfc6979.mjs';
@@ -248,30 +258,39 @@ function parsePayToControl(input, admitted) {
   };
 }
 
+function readKeyHash(value) {
+  if (value instanceof Uint8Array) {
+    if (value.length !== 32) return null;
+    return value;
+  }
+  if (typeof value === 'string') return parseKeyHash(value);
+  return null;
+}
+
 function parseRevoke(input, admitted) {
   const payTo = addressHex(input.payTo);
   if (!payTo) return refuse('bad_hex');
   if (isZeroHex(payTo)) return refuse('bad_payment');
-  const keyHash = normalizeHex(input.keyHash, 32);
-  if (!keyHash) return refuse('bad_length');
+  const hash = readKeyHash(input.keyHash);
+  if (!hash) return refuse('bad_length');
   return {
     ok: true,
     chainId: admitted.chainId,
     verifyingContract: admitted.address,
     hourStart: admitted.hourStart,
-    message: { payTo, keyHash: hexToBytes(keyHash) },
+    message: { payTo, keyHash: hash },
   };
 }
 
 function parseRevokeByKey(input, admitted) {
-  const keyHash = normalizeHex(input.keyHash, 32);
-  if (!keyHash) return refuse('bad_length');
+  const hash = readKeyHash(input.keyHash);
+  if (!hash) return refuse('bad_length');
   return {
     ok: true,
     chainId: admitted.chainId,
     verifyingContract: admitted.address,
     hourStart: admitted.hourStart,
-    message: { keyHash: hexToBytes(keyHash) },
+    message: { keyHash: hash },
   };
 }
 
@@ -292,6 +311,7 @@ function recordOf(primary, parsed, signatureField) {
   for (const field of CHIT_TYPES[primary]) {
     const value = parsed.message[field.name];
     if (typeof value === 'bigint') message[field.name] = value.toString(10);
+    else if (value instanceof Uint8Array && field.type === 'bytes32') message[field.name] = formatKeyHash(value);
     else if (value instanceof Uint8Array) message[field.name] = field.type === 'address' ? `0x${bytesToHex(value)}` : bytesToHex(value);
     else if (field.type === 'address') message[field.name] = `0x${value}`;
     else message[field.name] = value;
@@ -354,29 +374,47 @@ async function storeBool(promise) {
   }
 }
 
-async function bindingOpen(input, hex, chainId) {
+async function releaseIds(store, ids) {
+  if (!store) return;
+  for (const id of ids) {
+    try { await store.release(id); } catch { /* the refusal stands */ }
+  }
+}
+
+async function bindingOpen(input, hex, chainId, payTo) {
   const store = input.store;
-  if (!store) return { ok: true };
+  if (!store) return { ok: true, claimed: [] };
+  const claimed = [];
+  const remember = async (id) => {
+    const has = await storeBool(store.has(id));
+    if (has === undefined) return refuse('bad_payment');
+    if (has === true) return { ok: true };
+    const took = await takeClaim(store, id);
+    if (!took.ok) return took;
+    claimed.push(id);
+    return { ok: true };
+  };
   const any = await storeBool(store.has(`bound:${hex}`));
   const here = await storeBool(store.has(`bound:${chainId}:${hex}`));
+  if (any === undefined || here === undefined) return refuse('bad_payment');
   if (any === true && here !== true) return refuse('bad_payment');
+  const live = await storeBool(store.has('live'));
+  const liveKey = await storeBool(store.has(`livekey:${hex}`));
+  const livePay = await storeBool(store.has(`livepay:${hex}:${payTo}`));
+  if (live === undefined || liveKey === undefined || livePay === undefined) return refuse('bad_payment');
+  if (live === true && liveKey !== true) return refuse('bad_payment');
   if (input.operatorOverride !== true) {
-    const open = await storeBool(store.has(`open:${hex}`));
-    if (open !== false) return refuse('bad_payment');
+    const open = livePay;
+    if (liveKey === true && open !== true) return refuse('bad_payment');
   }
-  if (any !== true) {
-    const bound = await takeClaim(store, `bound:${hex}`);
-    if (!bound.ok) return bound;
+  for (const id of [`bound:${hex}`, `bound:${chainId}:${hex}`, 'live', `livekey:${hex}`, `livepay:${hex}:${payTo}`]) {
+    const got = await remember(id);
+    if (!got.ok) {
+      await releaseIds(store, claimed);
+      return got;
+    }
   }
-  if (here !== true) {
-    const tagged = await takeClaim(store, `bound:${chainId}:${hex}`);
-    if (!tagged.ok) return tagged;
-  }
-  if (input.operatorOverride !== true) {
-    const took = await takeClaim(store, `open:${hex}`);
-    if (!took.ok) return took;
-  }
-  return { ok: true };
+  return { ok: true, claimed };
 }
 
 async function keyClear(store, hex) {
@@ -431,24 +469,37 @@ export async function signPayToControl(input) {
     if (!ready.ok) return ready;
     const clear = await keyClear(input.store, ready.hex);
     if (!clear.ok) return clear;
-    const opened = await bindingOpen(input, ready.hex, admitted.chainId);
+    const opened = await bindingOpen(input, ready.hex, admitted.chainId, parsed.message.payTo);
     if (!opened.ok) return opened;
     const digest = digestOf(PAYTO_CONTROL, parsed);
     if (!digest.ok) return digest;
+    if (!Object.hasOwn(input, 'keyPrivateKey')) return refuse('bad_key');
     const payScalar = parseScalar(input.privateKey, SECP256K1.order);
-    const keyScalar = parseScalar(Object.hasOwn(input, 'keyPrivateKey') ? input.keyPrivateKey : input.privateKey, P256.order);
-    if (payScalar == null || keyScalar == null) return refuse('bad_key');
+    const keyScalar = parseScalar(input.keyPrivateKey, P256.order);
+    if (payScalar == null || keyScalar == null || keyScalar === payScalar) return refuse('bad_key');
     let owned;
     try { owned = compressP256(publicPoint(keyScalar, P256)); } catch { return refuse('bad_key'); }
     if (!sameBytes(owned, parsed.message.key)) return refuse('bad_key');
     const signed = signDigest(digest.bytes, payScalar, SECP256K1);
-    if (!signed.ok) return signed;
+    if (!signed.ok) {
+      await releaseIds(input.store, opened.claimed);
+      return signed;
+    }
     const preimage = possessionPreimage(digest.bytes);
-    if (!preimage) return refuse('bad_payment');
+    if (!preimage) {
+      await releaseIds(input.store, opened.claimed);
+      return refuse('bad_payment');
+    }
     const possessed = signDigest(preimage, keyScalar, P256);
-    if (!possessed.ok || !(possessed.raw instanceof Uint8Array)) return possessed.ok ? refuse('bad_signature') : possessed;
+    if (!possessed.ok || !(possessed.raw instanceof Uint8Array)) {
+      await releaseIds(input.store, opened.claimed);
+      return possessed.ok ? refuse('bad_signature') : possessed;
+    }
     const keyField = encodeSignatureField(possessed.raw);
-    if (!keyField) return refuse('bad_signature');
+    if (!keyField) {
+      await releaseIds(input.store, opened.claimed);
+      return refuse('bad_signature');
+    }
     const signature = concat([signed.signature, keyField]);
     return {
       ok: true,
@@ -521,6 +572,7 @@ export function verifyRevoke(input) {
 }
 
 export async function signRevokeByKey(input) {
+  let tombHeld = null;
   try {
     const admitted = admitting(input);
     if (!admitted.ok) return admitted;
@@ -529,7 +581,11 @@ export async function signRevokeByKey(input) {
     if (!Object.hasOwn(input, 'keyAlg') || input.keyAlg == null) return refuse('bad_alg');
     const d = parseScalar(input.privateKey, P256.order);
     if (d == null) return refuse('bad_key');
-    const carried = input.key || compressP256(publicPoint(d, P256));
+    let owned;
+    try { owned = compressP256(publicPoint(d, P256)); } catch { return refuse('bad_key'); }
+    if (!owned) return refuse('bad_key');
+    if (input.key != null && !sameBytes(input.key, owned)) return refuse('bad_key');
+    const carried = owned;
     const hashed = keyHash(input.keyAlg, carried);
     const hash = hashed.ok ? hashed.bytes : null;
     if (!hash || bytesToHex(hash) !== bytesToHex(parsed.message.keyHash)) return refuse('bad_payment');
@@ -539,8 +595,10 @@ export async function signRevokeByKey(input) {
     if (!preimage) return refuse('bad_payment');
     const signed = signDigest(preimage, d, P256);
     if (!signed.ok) return signed;
-    const taken = await takeClaim(input.store, `tomb:${hashed.hex}`);
+    const tombId = `tomb:${hashed.hex}`;
+    const taken = await takeClaim(input.store, tombId);
     if (!taken.ok) return taken;
+    tombHeld = tombId;
     return {
       ok: true,
       digest: digest.bytes,
@@ -548,6 +606,7 @@ export async function signRevokeByKey(input) {
       record: recordOf(REVOKE_BY_KEY, parsed, signed.raw),
     };
   } catch {
+    await releaseIds(input && input.store, tombHeld ? [tombHeld] : []);
     return refuse('bad_key');
   }
 }

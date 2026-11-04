@@ -14,8 +14,11 @@ import { bigToBytes, bytesToBig, bytesToHex, hexToBytes } from '../cs2-core/ecds
 import { P256, SECP256K1 } from '../cs2-core/ecdsa/curves.js';
 import { publicPoint, signRawDigest } from '../cs2-core/ecdsa/sign.js';
 import { sigmaDigest } from '../cs2-core/line/index.mjs';
+import { possessionPreimage } from '../cs2-core/eip712/index.mjs';
 import { readAgreedPayment, selectNonce } from './chain.mjs';
-import { productionPinList } from './pins.mjs';
+import { productionPinList, setTestPinSigning } from './pins.mjs';
+
+setTestPinSigning(true);
 import { createMemoryStore } from './testing/memory-store.mjs';
 import {
   BOOK_ACTION,
@@ -730,7 +733,7 @@ function k1Compressed(scalar) {
 }
 
 function controlInput(hourStart, extra = {}) {
-  const key = k1Compressed(BigInt(`0x${eipVector.test_key}`));
+  const key = k1Compressed(BigInt(`0x${eipVector.slot_scalar}`));
   return {
     key,
     input: {
@@ -741,6 +744,7 @@ function controlInput(hourStart, extra = {}) {
       expiry: EXPIRY,
       hourStart,
       privateKey: BigInt(`0x${eipVector.test_key}`),
+      keyPrivateKey: BigInt(`0x${eipVector.slot_scalar}`),
       store: createMemoryStore(),
       ...extra,
     },
@@ -875,6 +879,14 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', async () =
     privateKey: input.privateKey,
   });
   assert.equal(revoke.ok, true, revoke.reason);
+  assert.equal(revoke.record.message.keyHash, `0x${hashed.hex}`);
+  assertRefusal(signRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: input.payTo,
+    keyHash: hashed.hex,
+    privateKey: input.privateKey,
+  }), 'bad_length');
   assert.equal(revoke.record.domain.verifyingContract, `0x${CONTRACT_A}`);
   assert.equal(Object.hasOwn(revoke.record.message, 'revokedAt'), false);
   assert.equal(verifyRevoke({
@@ -925,7 +937,7 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', async () =
     key,
     keyAlg: 1,
     hourStart: HOUR_A,
-    privateKey: input.privateKey,
+    privateKey: input.keyPrivateKey,
   });
   assert.equal(byKey.ok, true, byKey.reason);
   assert.equal(byKey.signature.length, 64);
@@ -943,7 +955,7 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', async () =
     key,
     keyAlg: 1,
     hourStart: HOUR_A,
-    privateKey: input.privateKey,
+    privateKey: input.keyPrivateKey,
   }), 'bad_payment');
   assertRefusal(verifyRevokeByKey({
     chainId: CHAIN,
@@ -960,7 +972,7 @@ test('revoke is signed by the payTo and its id is slot plus keyHash', async () =
     key,
     keyAlg: 1,
     hourStart: HOUR_B,
-    privateKey: input.privateKey,
+    privateKey: input.keyPrivateKey,
     store: createMemoryStore(),
   });
   assert.equal(laterSigned.ok, true, laterSigned.reason);
@@ -1384,7 +1396,7 @@ test('an async store signs one sigma and a failed claim is a refusal', async () 
     keyHash: hashed.bytes,
     key: input.key,
     keyAlg: 1,
-    privateKey: input.privateKey,
+    privateKey: input.keyPrivateKey,
     store: refusing,
   }), 'bad_payment');
 });
@@ -1403,7 +1415,7 @@ test('a third party cannot tombstone a key', async () => {
   }), 'bad_payment');
   const digest = hashChit('RevokeByKey', { keyHash: victim.bytes }, BigInt(CHAIN), CONTRACT_A);
   assert.equal(digest.ok, true);
-  const forged = signRawDigest(digest.bytes, 0xbadn, 12345n, P256);
+  const forged = signRawDigest(possessionPreimage(digest.bytes), 0xbadn, 12345n, P256);
   assertRefusal(verifyRevokeByKey({
     chainId: CHAIN,
     hourStart: HOUR_A,
@@ -1426,7 +1438,7 @@ test('a third party cannot tombstone a key', async () => {
     keyHash: victim.bytes,
     key,
     keyAlg: 1,
-    privateKey: input.privateKey,
+    privateKey: input.keyPrivateKey,
   });
   assert.equal(own.ok, true, own.reason);
   assert.equal(verifyRevokeByKey({
@@ -1462,8 +1474,19 @@ test('off-curve keys and tombstones are refused, and the same key may bind a sec
   const held = createMemoryStore();
   const first = await signPayToControl({ ...input, store: held });
   assert.equal(first.ok, true, first.reason);
-  assertRefusal(await signPayToControl({ ...input, store: held }), 'bad_payment');
-  const second = await signPayToControl({ ...input, store: held, operatorOverride: true });
+  const renewed = await signPayToControl({ ...input, store: held, expiry: EXPIRY + 3600n });
+  assert.equal(renewed.ok, true, renewed.reason);
+  const otherKey = k1Compressed(9n);
+  assertRefusal(await signPayToControl({
+    ...input,
+    store: held,
+    key: otherKey,
+    keyPrivateKey: 9n,
+  }), 'bad_payment');
+  assert.equal((await signPayToControl({
+    ...input, store: held, operatorOverride: true, payTo: `0x${'12'.repeat(20)}`,
+  })).ok, true);
+  const second = await signPayToControl({ ...input, store: createMemoryStore() });
   assert.equal(second.ok, true, second.reason);
   assert.equal(verifyPayToControl({ ...input, signature: second.signature }).ok, true);
   assertRefusal(verifyPayToControl({
@@ -1563,6 +1586,9 @@ test('quorum counts distinct readers and pairs an AuthorizationUsed with its Tra
   const prefixed = encodeSignatureField(new Uint8Array(64));
   assert.equal(prefixed[0], 0);
   assert.equal(prefixed[1], 64);
+  setTestPinSigning(false);
+  assert.equal((await signPayToControl({ ...input, store: createMemoryStore() })).ok, false);
+  setTestPinSigning(true);
   const core = await import('../cs2-core/eip712/index.mjs');
   assert.deepEqual(ALG_REGISTRY, core.ALG_REGISTRY);
   assert.equal(KEY_ALG_P256, 0x01);

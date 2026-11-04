@@ -21,7 +21,7 @@
 
 import { createHash } from 'node:crypto';
 import { LAUNCH_ALGS } from '../eip712/registry.mjs';
-import { KIND_KEY } from '../eip712/slots.mjs';
+import { KIND_CHANNEL, KIND_KEY, KIND_PAYTO } from '../eip712/kinds.mjs';
 import { checkSigma as checkSigmaRange } from '../eip712/sigma-range.mjs';
 
 export const SCHEMA = 'chit402.cs2.line.v1';
@@ -43,13 +43,10 @@ export const PAD_BYTES = LINE_BYTES - USED_BYTES;
 export const HEADER_BYTE_0 = 0x63;
 export const HEADER_BYTE_1 = 0x32;
 
-export const KIND_PAYTO = 0x01;
 export const KIND_WALLET = 0x02;
 export const KIND_BOOK = 0x03;
 export const KIND_EPOCH = 0x04;
-export { KIND_KEY };
-/** Allocated for the channel slot. Not accepted until that slot is specified. */
-export const KIND_CHANNEL = 0x06;
+export { KIND_CHANNEL, KIND_KEY, KIND_PAYTO };
 
 /** Implementation limit for emptyHash. Not a wire field. */
 export const MAX_EMPTY_DEPTH = 64;

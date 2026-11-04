@@ -82,6 +82,7 @@ test('typehashes, domain separators, registry, keyHash, and the time unit are pi
 test('no other package defines a keyAlg table', () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
   const defs = [];
+  const shape = /(?:export\s+)?const\s+(?:ALG_REGISTRY|ALG_TABLE|KEY_ALGS|KEY_ALG_P256|KEY_ALG_SECP256K1|KIND_KEY)\s*=/;
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === 'node_modules' || entry.name === '.git') continue;
@@ -89,14 +90,27 @@ test('no other package defines a keyAlg table', () => {
       if (entry.isDirectory()) walk(path);
       else if (/\.(mjs|js|cjs|ts)$/.test(entry.name)) {
         const text = readFileSync(path, 'utf8');
-        if (/export const (ALG_REGISTRY|KEY_ALG_P256|KEY_ALG_SECP256K1|KIND_KEY) =/.test(text)) defs.push(path);
+        if (shape.test(text)) defs.push(path.split(/[/\\]/).join('/'));
       }
     }
   };
-  walk(join(root, 'packages'));
-  const allowed = defs.map((path) => path.replace(root, '')).sort();
+  walk(root);
+  const rootSlash = root.split(/[/\\]/).join('/');
+  const allowed = defs.map((path) => path.slice(rootSlash.length)).sort();
   assert.deepEqual(allowed, [
+    '/packages/cs2-core/eip712/kinds.mjs',
     '/packages/cs2-core/eip712/registry.mjs',
-    '/packages/cs2-core/eip712/slots.mjs',
   ]);
+});
+
+test('canonicalKey refuses x at or above the field prime and a short key', () => {
+  const over = new Uint8Array(33);
+  over[0] = 0x02;
+  over.fill(0xff, 1);
+  assert.equal(canonicalKey(1, over).ok, false);
+  assert.equal(canonicalKey(1, new Uint8Array(32)).reason, 'bad_length');
+  assert.throws(() => tombstoned([], 'abc'), /bad_key_hash/);
+  assert.equal(tombstoned({}, '11'.repeat(32)), true);
+  assert.equal(tombstoned([new Uint8Array(31)], '11'.repeat(32)), true);
+  assert.equal(parseKeyHash(`0x${'ab'.repeat(32).toUpperCase()}`), null);
 });
