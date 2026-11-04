@@ -1,0 +1,17 @@
+{
+  "solc": "0.8.24",
+  "viaIR": true,
+  "optimizerRuns": 200,
+  "evmVersion": "cancun",
+  "bytecodeHash": "none",
+  "cborMetadata": false,
+  "note": "Runtime bytecode embeds the domain immutable, so the hash depends on chain id and the deployed address. It does not depend on the checkout path. The example below is a local prediction for a fixed deployer, nonce, and checkpoint on Base Sepolia. Recompute with print-runtime.mjs for the real deployer and checkpoint before the owner broadcasts.",
+  "example": {
+    "chainId": 84532,
+    "deployer": "0x1111111111111111111111111111111111111111",
+    "nonce": 0,
+    "checkpoint": "0x2222222222222222222222222222222222222222",
+    "contract": "0x8f7a45ebde059392e46a46dcc14ab24681a961ea",
+    "runtimeCodeHash": "0xcd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080"
+  }
+}
