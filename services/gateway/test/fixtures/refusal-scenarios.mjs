@@ -72,12 +72,15 @@ export function listenFacilitator({
         if (settle === 'http500') { res.statusCode = 500; return res.end('{"error":"boom"}'); }
         return res.end(JSON.stringify({ success: true, settled: true, transaction: tx, txRef: tx, network: 'base', payer }));
       }
+      if (verify === 'http400') {
+        res.statusCode = 400;
+        const body = { error: 'invalid_request', invalidReason };
+        if (typeof verifyTx === 'string') body.transaction = verifyTx;
+        return res.end(JSON.stringify(body));
+      }
       if (verify === 'invalid') {
         const body = { valid: false, isValid: false, invalidReason };
-        if (typeof verifyTx === 'string' && verifyTx) {
-          body.txRef = verifyTx;
-          body.transaction = verifyTx;
-        }
+        if (typeof verifyTx === 'string') body.txRef = verifyTx;
         return res.end(JSON.stringify(body));
       }
       return res.end(JSON.stringify({ valid: true, isValid: true, payer }));
@@ -126,7 +129,7 @@ export async function attempt({
       taskId: `t-${counter}`,
       cfg: {
         enabled: true, payTo: HOUSE, network: 'base', asset: 'USDC',
-        gatewayUrl: facilitator.url, apiKey: 'k', usdcPriceDefault: '2000',
+        gatewayUrl: facilitator.url, facilitatorUrl: facilitator.url, apiKey: 'k', usdcPriceDefault: '2000',
         challengeTtlMs: 120000, defaultRail: 'usdc', lateIssue: false,
         chainReader: async ({ challenge: c, facilitator: f, paymentHeader: ph, expectedPayTo }) =>
           confirmEvmReceipt(chainReceipt(chain), {

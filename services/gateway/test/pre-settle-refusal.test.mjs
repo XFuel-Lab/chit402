@@ -389,8 +389,15 @@ test('a sign or log row with phase pre_settle and no tx stays a receipt failure'
 
 test('hint caps and an empty sub detail are not returned', () => {
   const overCode = 'c'.repeat(VERIFY_HINT_CODE_MAX + 1);
-  const overMessage = publicVerifyHint({ code: 'cap_probe', message: 'http://evil.example/raw' });
-  const overCodeHint = publicVerifyHint({ code: overCode, message: 'http://evil.example/raw' });
+  const capTable = {
+    ...VERIFY_HINT_MESSAGES,
+    cap_probe: 'm'.repeat(VERIFY_HINT_MESSAGE_MAX + 1),
+    [overCode]: 'overlong code',
+  };
+  const overMessage = publicVerifyHint({ code: 'cap_probe', message: 'http://evil.example/raw' }, capTable);
+  const overCodeHint = publicVerifyHint({ code: overCode, message: 'http://evil.example/raw' }, capTable);
+  assert.equal(Object.hasOwn(VERIFY_HINT_MESSAGES, 'cap_probe'), false);
+  assert.equal(Object.hasOwn(VERIFY_HINT_MESSAGES, overCode), false);
   assert.deepEqual(overMessage, { code: 'unknown', message: VERIFY_HINT_MESSAGES.unknown });
   assert.deepEqual(overCodeHint, { code: 'unknown', message: VERIFY_HINT_MESSAGES.unknown });
   assert.equal(JSON.stringify(overMessage).includes('m'.repeat(20)), false);
@@ -480,6 +487,45 @@ test('verify results drop an over-long or non-string invalidReason before it is 
     if (previousEnv == null) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousEnv;
   }
+});
+
+test('a CDP /verify refusal that returns a tx stores it and counts as a receipt failure', async () => {
+  const httpTx = `0x${'cd'.repeat(32)}`;
+  const invalidTx = `0x${'ef'.repeat(32)}`;
+  for (const [verify, tx, field] of [['http400', httpTx, 'transaction'], ['invalid', invalidTx, 'txRef']]) {
+    resetReceiptFailuresForTests();
+    const { decision } = await attempt({
+      fac: { verify, verifyTx: tx },
+      cfg: { facilitatorProvider: 'x402' },
+    });
+    assert.equal(decision.preSettle, false, verify);
+    assert.equal(decision.code, 'verify_failed', verify);
+    assert.equal(decision.hint.code, 'insufficient_funds', verify);
+    assert.equal(receiptFailureCount(), 1, verify);
+    assert.equal(preSettleRefusalCount(), 0, verify);
+    const row = listReceiptFailures()[0];
+    assert.equal(row.tx, tx, `${verify} stores ${field}`);
+    assert.equal(row.stage, 'settle', verify);
+    assert.equal(row.phase, 'pre_settle', verify);
+    assert.equal(row.preSettle, undefined, verify);
+    assert.equal(row.sub_reason, 'facilitator_invalid', verify);
+  }
+  resetReceiptFailuresForTests();
+});
+
+test('a whitespace-only tx is no transaction on the response and the row', async () => {
+  resetReceiptFailuresForTests();
+  const { decision } = await attempt({ fac: { verify: 'invalid', verifyTx: ' \t ' } });
+  assert.equal(decision.preSettle, true);
+  assert.equal(decision.code, 'verify_failed');
+  assert.equal(receiptFailureCount(), 0);
+  assert.equal(preSettleRefusalCount(), 1);
+  const row = listReceiptFailures()[0];
+  assert.equal(row.tx, null);
+  assert.equal(row.preSettle, true);
+  assert.equal(row.phase, 'pre_settle');
+  assert.equal(row.stage, 'settle');
+  resetReceiptFailuresForTests();
 });
 
 test('GET /health reports the live pre-settle and receipt-failure counts', async () => {

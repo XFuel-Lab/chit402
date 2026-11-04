@@ -16,17 +16,9 @@ export const VERIFY_HINT_MESSAGES = Object.freeze({
   invalid_signature: 'The payment signature did not verify.',
   invalid_network: 'The payment network does not match the quote.',
   unknown: 'The facilitator refused this payment before settlement.',
-  // Over the caps on purpose. hintFor must not return them.
-  cap_probe: 'm'.repeat(81),
-  ['c'.repeat(33)]: 'overlong code',
 });
 
-export const VERIFY_HINT_CODES = Object.freeze(
-  Object.keys(VERIFY_HINT_MESSAGES).filter((code) => {
-    const message = VERIFY_HINT_MESSAGES[code];
-    return code.length <= VERIFY_HINT_CODE_MAX && typeof message === 'string' && message.length <= VERIFY_HINT_MESSAGE_MAX;
-  }),
-);
+export const VERIFY_HINT_CODES = Object.freeze(Object.keys(VERIFY_HINT_MESSAGES));
 
 /** Exact facilitator identifiers that mean one allowlist code. Null prototype. */
 const ALIASES = Object.freeze(Object.assign(Object.create(null), {
@@ -48,8 +40,8 @@ const ALIASES = Object.freeze(Object.assign(Object.create(null), {
   unknown: 'unknown',
 }));
 
-function hintFor(code) {
-  const message = VERIFY_HINT_MESSAGES[code];
+function hintFor(code, messages = VERIFY_HINT_MESSAGES) {
+  const message = messages[code];
   if (typeof message !== 'string' || typeof code !== 'string') {
     return { code: 'unknown', message: VERIFY_HINT_MESSAGES.unknown };
   }
@@ -104,11 +96,12 @@ export function verifyHintCode(raw) {
  * Rebuild a hint from its code. A supplied message is ignored, so a caller
  * cannot substitute facilitator text. Null when the code is not on the list.
  * @param {unknown} hint
+ * @param {Record<string, string>} [messages] test table. Production callers omit it.
  * @returns {{ code: string, message: string }|null}
  */
-export function publicVerifyHint(hint) {
+export function publicVerifyHint(hint, messages = VERIFY_HINT_MESSAGES) {
   if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
   const code = hint.code;
-  if (typeof code !== 'string' || !Object.hasOwn(VERIFY_HINT_MESSAGES, code)) return null;
-  return hintFor(code);
+  if (typeof code !== 'string' || !Object.hasOwn(messages, code)) return null;
+  return hintFor(code, messages);
 }
