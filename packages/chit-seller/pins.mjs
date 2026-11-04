@@ -42,8 +42,10 @@ export const PINNED_CONTRACTS = Object.freeze([
     genesisHourStart: 1800036000,
     testOnly: true,
   }),
+  // Cross-chain fixture. 84532 is already pinned for this hour, so a second
+  // 84532 pin would be ambiguous. Sepolia, not Base mainnet.
   Object.freeze({
-    chainId: 8453,
+    chainId: 11155111,
     address: PLACEHOLDER_AA,
     genesisHourStart: 1800000000,
     retireHour: 1800036000,

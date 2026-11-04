@@ -36,8 +36,8 @@ function runTap(file) {
 test('cs2 seller sigma suite (gateway CI hook)', () => {
   const seller = runTap('packages/chit-seller/seller.test.mjs');
   assert.ok(seller.tests, seller.out.slice(-2000));
-  assert.equal(seller.tests[1], '57');
-  assert.equal(seller.passed && seller.passed[1], '57');
+  assert.equal(seller.tests[1], '60');
+  assert.equal(seller.passed && seller.passed[1], '60');
   assert.equal(seller.failed && seller.failed[1], '0');
   assert.equal(seller.skipped && seller.skipped[1], '0');
   assert.equal(seller.cancelled && seller.cancelled[1], '0');
@@ -50,9 +50,16 @@ test('cs2 seller sigma suite (gateway CI hook)', () => {
   assert.equal(shared.cancelled && shared.cancelled[1], '0');
   const rev5 = runTap('packages/cs2-core/eip712/rev5.test.mjs');
   assert.ok(rev5.tests, rev5.out.slice(-2000));
-  assert.equal(rev5.tests[1], '15');
-  assert.equal(rev5.passed && rev5.passed[1], '15');
+  assert.equal(rev5.tests[1], '6');
+  assert.equal(rev5.passed && rev5.passed[1], '6');
   assert.equal(rev5.failed && rev5.failed[1], '0');
   assert.equal(rev5.skipped && rev5.skipped[1], '0');
   assert.equal(rev5.cancelled && rev5.cancelled[1], '0');
+  const status = runTap('packages/cs2-core/key-status/status.test.mjs');
+  assert.ok(status.tests, status.out.slice(-2000));
+  assert.equal(status.tests[1], '9');
+  assert.equal(status.passed && status.passed[1], '9');
+  assert.equal(status.failed && status.failed[1], '0');
+  assert.equal(status.skipped && status.skipped[1], '0');
+  assert.equal(status.cancelled && status.cancelled[1], '0');
 });
