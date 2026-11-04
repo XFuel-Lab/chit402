@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 
 const load = createRequire(__filename);
 const eip = load('../../vendor/cs2-core/eip712/index.mjs') as Eip712;
+const keyStatusModule = load('../../vendor/cs2-core/key-status/status.mjs') as KeyStatusModule;
 
 export const DOMAIN_NAME: string = eip.DOMAIN_NAME;
 export const DOMAIN_VERSION: string = eip.DOMAIN_VERSION;
@@ -18,6 +19,9 @@ export const DOMAIN_TYPE: string = eip.DOMAIN_TYPE;
 export const PAYTO_CONTROL_TYPE: string = eip.PAYTO_CONTROL_TYPE;
 export const REVOKE_TYPE: string = eip.REVOKE_TYPE;
 export const REVOKE_BY_KEY_TYPE: string = eip.REVOKE_BY_KEY_TYPE;
+export const KIND_PAYTO: number = eip.KIND_PAYTO;
+export const KIND_KEY: number = eip.KIND_KEY;
+export const KIND_CHANNEL: number = eip.KIND_CHANNEL;
 
 /** Disclosed ChitAnchor runtime code hash. A pin still carries its own codeHash. */
 export const EXAMPLE_ANCHOR_CODE_HASH = '0xcd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080';
@@ -45,20 +49,26 @@ interface Eip712 {
   REVOKE_TYPE: string;
   REVOKE_BY_KEY_TYPE: string;
   DENIED_KEY_HASHES: readonly string[];
+  KIND_PAYTO: number;
+  KIND_KEY: number;
+  KIND_CHANNEL: number;
   parseKeyHash: (text: string) => Uint8Array | null;
   formatKeyHash: (bytes: Uint8Array) => string | null;
   deniedKeyHash: (hex: string) => boolean;
   keyHash: (alg: number, key: Uint8Array) => EipOk<{ bytes: Uint8Array; hex: string }> | EipNo;
   canonicalKey: (alg: number, key: Uint8Array) => EipOk<{ bytes: Uint8Array; uncompressed: Uint8Array }> | EipNo;
   keySlotKey: (chainId: bigint, keyHashBytes: Uint8Array) => EipOk<{ bytes: Uint8Array; hex: string }> | EipNo;
-  checkAdmission: (proof: Record<string, unknown>) => EipOk<{ block: bigint }> | EipNo;
-  readKeyLeaf: (leaf: unknown) => EipOk<{ tombstone: bigint | null }> | EipNo;
-  keyStatus: (view: Record<string, unknown>) => EipOk<{ status: string }> | EipNo;
   checkSigma: (sigma64: Uint8Array) => { ok: true } | EipNo;
   expiryAllows: (hourStart: bigint, expiry: bigint) => boolean;
   tombstoned: (list: unknown, keyHashHex: string) => boolean;
   verifyPossession: (digest: Uint8Array, uncompressedKey: Uint8Array, signature: Uint8Array) => { ok: true } | EipNo;
   chitDomain: (chainId: bigint, verifyingContract: string) => unknown;
+}
+
+interface KeyStatusModule {
+  checkAdmission: (proof: Record<string, unknown>) => EipOk<{ block: bigint }> | EipNo;
+  readKeyLeaf: (leaf: unknown) => EipOk<{ tombstone: bigint | null }> | EipNo;
+  keyStatus: (view: Record<string, unknown>) => EipOk<{ status: string }> | EipNo;
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -226,7 +236,7 @@ export function cachedAdmission(input: {
   const id = `${input.slotKey}:${input.seq}`;
   const prior = admissionCache.get(id);
   if (prior != null) return { ok: true, block: prior, cached: true };
-  const checked = eip.checkAdmission({
+  const checked = keyStatusModule.checkAdmission({
     absentAtPrev: input.absentAtPrior === true,
     emptyAtPrev: input.emptySlotAtPrior === true,
     memberAtEpoch: input.memberAtEpoch === true,
@@ -294,7 +304,7 @@ function fromShared(result: EipOk<{ status: string }> | EipNo, input: KeyStatusI
 }
 
 /**
- * Status of key k in payTo P at block b. The decision is eip.keyStatus.
+ * Status of key k in payTo P at block b. The decision is the key-status module.
  * Exit codes stay the ones this package already returns.
  */
 export function keyStatus(input: KeyStatusInput): KeyStatusResult {
@@ -321,7 +331,7 @@ export function keyStatus(input: KeyStatusInput): KeyStatusResult {
     || input.registrationKeyHash == null
     ? null
     : { keyHash: input.slotRevokeKeyHash, revokedAtBlock: BigInt(input.slotRevokeBlock) };
-  const viewed = eip.keyStatus({
+  const viewed = keyStatusModule.keyStatus({
     proofs: {
       payTo: input.payToProof != null && input.payToProof.siblings != null,
       key: input.keyProof != null && input.keyProof.siblings != null,
@@ -351,7 +361,7 @@ export function keyStatus(input: KeyStatusInput): KeyStatusResult {
   });
   let print: string | null = null;
   if (viewed.ok) {
-    const read = eip.readKeyLeaf(leaf);
+    const read = keyStatusModule.readKeyLeaf(leaf);
     if (read.ok && read.tombstone != null && read.tombstone > BigInt(input.block)) {
       print = `seller key revoked at block ${read.tombstone} (by key)`;
     }

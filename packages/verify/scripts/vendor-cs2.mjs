@@ -3,7 +3,7 @@
  * The Merkle and line copies hash with the pure SHA-256. The originals
  * stay on node:crypto.
  */
-import { mkdirSync, readFileSync, writeFileSync, cpSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, cpSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -87,7 +87,34 @@ for (const name of ['curves.js', 'recover.js', 'bytes.js', 'keccak.js', 'sign.js
   cpSync(join(CORE, 'ecdsa', name), join(OUT, 'ecdsa', name));
 }
 
-cpSync(join(CORE, 'eip712'), join(OUT, 'eip712'), { recursive: true });
+const FROZEN = [
+  'eip712/domain.mjs',
+  'eip712/index.mjs',
+  'eip712/key-hash.mjs',
+  'eip712/kinds.mjs',
+  'eip712/possession.mjs',
+  'eip712/registry.mjs',
+  'eip712/sigma-range.mjs',
+  'eip712/time.mjs',
+  'eip712/vectors/eip712.json',
+  'eip712/vectors/pop.json',
+  'ecdsa/bytes.js',
+  'ecdsa/curves.js',
+  'ecdsa/recover.js',
+];
+for (const rel of FROZEN) {
+  const text = lf(readFileSync(join(CORE, rel), 'utf8'));
+  const dest = join(OUT, rel);
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, text);
+}
+const statusSrc = join(CORE, 'key-status', 'status.mjs');
+const statusDest = join(OUT, 'key-status', 'status.mjs');
+mkdirSync(dirname(statusDest), { recursive: true });
+writeFileSync(statusDest, lf(readFileSync(statusSrc, 'utf8')));
+for (const stale of ['eip712/slots.mjs', 'eip712/eip712.test.mjs', 'eip712/rev5.test.mjs']) {
+  rmSync(join(OUT, stale), { force: true });
+}
 
 writeFileSync(join(OUT, 'package.json'), '{"type":"module"}\n');
 

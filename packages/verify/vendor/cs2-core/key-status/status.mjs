@@ -1,31 +1,16 @@
 /**
- * State-slot kinds and key status for Chit Simple v13.
- *
- * Kind 0x05 is the key slot. Its id is the 32-byte keyHash. The slot key is
- * SHA-256("chit402-state-v1" ‖ 0x05 ‖ chainId ‖ keyHash). Kinds 0x06–0xFF
- * stay reserved. This file is the only definition of KIND_KEY.
- *
- * A tombstone carries a derived revokedAtBlock. It applies at that block and
- * after, and only when the block sits after the previous epoch's anchor and
- * at or before the anchor of the epoch that shows it. A bare tombstone is
- * an invalid record. It is not a revocation from block 0.
- *
- * Key status at block b needs two proofs under one stateRoot: the payTo slot
- * and the key slot. A missing proof is unproven.
+ * Key-status decision table for the verifier.
+ * It is not part of the frozen eip712 module: the booleans are supplied by
+ * the caller that checked the proofs. Kind bytes and the slot key live in
+ * packages/cs2-core/eip712/kinds.mjs.
  */
 
-import { createHash } from 'node:crypto';
 import { bytesToHex } from '../ecdsa/bytes.js';
-import { keyHash } from './key-hash.mjs';
-import { expiryAllows } from './time.mjs';
+import { keySlotKey } from '../eip712/kinds.mjs';
+import { keyHash } from '../eip712/key-hash.mjs';
+import { expiryAllows } from '../eip712/time.mjs';
 
-export const KIND_PAYTO = 0x01;
-export const KIND_KEY = 0x05;
-/** Channel slot. Reserved until its id width is specified. Not accepted by slotKey. */
-export const KIND_CHANNEL = 0x06;
 export const EXIT_UNPROVEN = 2;
-export const SLOT_DOMAIN = 'chit402-state-v1';
-
 export const KEY_STATUS_ACTIVE = 'active';
 export const KEY_STATUS_UNPROVEN = 'unproven';
 export const KEY_STATUS_INVALID = 'invalid';
@@ -45,37 +30,6 @@ function unproven(reason) {
 function asBlock(value) {
   if (typeof value !== 'bigint' || value < 0n || value >= (1n << 64n)) return null;
   return value;
-}
-
-function chainBytes(chainId) {
-  const parsed = asBlock(chainId);
-  if (parsed == null) return null;
-  const out = new Uint8Array(8);
-  let v = parsed;
-  for (let i = 7; i >= 0; i -= 1) {
-    out[i] = Number(v & 0xffn);
-    v >>= 8n;
-  }
-  return out;
-}
-
-/**
- * Proposed key-slot preimage. The line codec still rejects kind 0x05.
- * Rev 5 decides whether this id width lands in slotKey.
- */
-export function keySlotKey(chainId, keyHashBytes) {
-  if (!(keyHashBytes instanceof Uint8Array) || keyHashBytes.length !== 32) {
-    return { ok: false, reason: 'bad_length' };
-  }
-  const chain = chainBytes(typeof chainId === 'bigint' ? chainId : null);
-  if (!chain) return { ok: false, reason: 'bad_uint' };
-  const hash = createHash('sha256');
-  hash.update(SLOT_DOMAIN);
-  hash.update(Uint8Array.of(KIND_KEY));
-  hash.update(chain);
-  hash.update(keyHashBytes);
-  const bytes = new Uint8Array(hash.digest());
-  return { ok: true, bytes, hex: bytesToHex(bytes) };
 }
 
 /**
