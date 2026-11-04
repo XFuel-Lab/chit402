@@ -93,7 +93,7 @@ test('typehashes, domain separators, registry, keyHash, and the time unit are pi
 test('no other package defines a keyAlg table', () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
   const defs = [];
-  const shape = /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*[\s\S]{0,800}?(?:keyAlg\s*:|[{,\[]\s*(?:0x0)?1\s*:)[\s\S]{0,240}?(?:['"]P-256['"]|\bsecp256k1\b)/;
+  const shape = /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*[\s\S]{0,800}?(?:keyAlg\s*:|[{,\[]\s*(?:0x0)?1\s*:)[\s\S]{0,240}?(?:['"]P-256['"]|\bsecp256k1\b)|(?:export\s+)?(?:const|let|var)\s+ALG_REGISTRY\s*=|new\s+Map\s*\(\s*\[\s*\[\s*(?:0x0)?1\s*,\s*['"]P-256['"]/;
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === 'node_modules' || entry.name === '.git') continue;

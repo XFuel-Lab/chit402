@@ -1789,6 +1789,113 @@ test('H2 a failed claim releases the ids already taken', async () => {
   assert.equal(held.size, 0);
 });
 
+test('H5 a new store object over the same data can still rotate', async () => {
+  const base = createMemoryStore();
+  const view = () => ({
+    has: (id) => base.has(id),
+    claim: (id) => base.claim(id),
+    release: (id) => base.release(id),
+  });
+  const k1 = BigInt(`0x${eipVector.slot_scalar}`);
+  const pay = (scalar, extra = {}) => {
+    const { input } = controlInput(HOUR_A);
+    return {
+      ...input,
+      key: k1Compressed(scalar),
+      keyPrivateKey: scalar,
+      ...extra,
+    };
+  };
+  assert.equal((await signPayToControl(pay(k1, { store: view() }))).ok, true);
+  const hash = keyHash(1, k1Compressed(k1));
+  const revoked = await signRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: eipVector.payTo,
+    keyHash: hash.bytes,
+    privateKey: BigInt(`0x${eipVector.test_key}`),
+    store: view(),
+  });
+  assert.equal(revoked.ok, true, revoked.reason);
+  assert.equal((await signPayToControl(pay(k1 + 1n, { store: view() }))).ok, true);
+  assertRefusal(await signPayToControl(pay(k1, { store: view() })), 'bad_payment');
+  const again = createMemoryStore();
+  const other = `0x${'77'.repeat(20)}`;
+  assert.equal((await signPayToControl(pay(k1 + 4n, { store: again }))).ok, true);
+  assert.equal((await signPayToControl(pay(k1 + 4n, { store: again, payTo: other, operatorOverride: true }))).ok, true);
+  const hashB = keyHash(1, k1Compressed(k1 + 4n));
+  const cleared = await signRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: eipVector.payTo,
+    keyHash: hashB.bytes,
+    privateKey: BigInt(`0x${eipVector.test_key}`),
+    store: again,
+  });
+  assert.equal(cleared.ok, true, cleared.reason);
+  // A seat whose current key is already dead is free, so rotation does not
+  // depend on a second pass over the seat list after this payTo is released.
+  assert.equal((await signPayToControl(pay(k1 + 5n, { store: again, payTo: other }))).ok, true);
+});
+
+test('H7 RevokeByKey clears the live seat so the payTo can rotate', async () => {
+  const store = createMemoryStore();
+  const { input } = controlInput(HOUR_A);
+  const k1 = input.keyPrivateKey;
+  assert.equal((await signPayToControl({ ...input, store })).ok, true);
+  const hash = keyHash(1, input.key);
+  const tomb = await signRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: hash.bytes,
+    key: input.key,
+    keyAlg: 1,
+    privateKey: k1,
+    store,
+  });
+  assert.equal(tomb.ok, true, tomb.reason);
+  assert.deepEqual(store.list('live:'), []);
+  assert.deepEqual(store.list(`seat:${hash.hex}:`), []);
+  const next = k1Compressed(k1 + 1n);
+  assert.equal((await signPayToControl({
+    ...input,
+    key: next,
+    keyPrivateKey: k1 + 1n,
+    store,
+  })).ok, true);
+});
+
+test('H8 a late refusal leaves no live seat behind', async () => {
+  const store = createMemoryStore();
+  const { input } = controlInput(HOUR_A);
+  const missing = { ...input, store };
+  delete missing.keyPrivateKey;
+  assertRefusal(await signPayToControl(missing), 'bad_key');
+  const next = k1Compressed(input.keyPrivateKey + 1n);
+  assert.equal((await signPayToControl({
+    ...input,
+    key: next,
+    keyPrivateKey: input.keyPrivateKey + 1n,
+    store,
+  })).ok, true);
+});
+
+test('an async rejection from the dead lookup is refused', async () => {
+  const base = createMemoryStore();
+  const flaky = {
+    async has(id) {
+      if (String(id).startsWith('dead:')) throw new Error('dead down');
+      return base.has(id);
+    },
+    claim: (id) => base.claim(id),
+    release: (id) => base.release(id),
+  };
+  const { input } = controlInput(HOUR_A);
+  const refused = await signPayToControl({ ...input, store: flaky });
+  assertRefusal(refused, 'bad_payment');
+  assert.equal(JSON.stringify(refused).includes('dead down'), false);
+});
+
 test('H4 the key scalar is required and distinct from the payTo scalar', async () => {
   const { input } = controlInput(HOUR_A);
   const missing = { ...input, store: createMemoryStore() };

@@ -23,5 +23,12 @@ export function createMemoryStore() {
     has(id) {
       return held.has(id);
     },
+    list(prefix) {
+      const out = [];
+      for (const id of held) {
+        if (typeof prefix !== 'string' || id.startsWith(prefix)) out.push(id);
+      }
+      return out;
+    },
   };
 }

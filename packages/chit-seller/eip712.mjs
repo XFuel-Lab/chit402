@@ -389,33 +389,72 @@ async function releaseIds(store, ids) {
   }
 }
 
-const seatsByStore = new WeakMap();
-
-function noteSeat(store, hex, payTo) {
-  if (!store) return;
-  let byKey = seatsByStore.get(store);
-  if (!byKey) {
-    byKey = new Map();
-    seatsByStore.set(store, byKey);
+async function releaseChecked(store, id) {
+  if (!store) return { ok: true };
+  try {
+    await store.release(id);
+  } catch {
+    return refuse('bad_payment');
   }
-  let seats = byKey.get(hex);
-  if (!seats) {
-    seats = new Set();
-    byKey.set(hex, seats);
-  }
-  seats.add(payTo);
+  const still = await storeBool(store.has(id));
+  if (still !== false) return refuse('bad_payment');
+  return { ok: true };
 }
 
 async function clearLiveKey(store, hex) {
-  if (!store) return;
-  const byKey = seatsByStore.get(store);
-  const seats = byKey && byKey.get(hex);
+  if (!store) return { ok: true };
   const ids = [`open:${hex}`];
-  if (seats) {
-    for (const payTo of seats) ids.push(`live:${payTo}`, `cur:${payTo}:${hex}`);
-    seats.clear();
+  if (typeof store.list === 'function') {
+    let seats;
+    try {
+      seats = await store.list(`seat:${hex}:`);
+    } catch {
+      return refuse('bad_payment');
+    }
+    if (!Array.isArray(seats)) return refuse('bad_payment');
+    const prefix = `seat:${hex}:`;
+    for (const seat of seats) {
+      if (typeof seat !== 'string' || !seat.startsWith(prefix)) return refuse('bad_payment');
+      const payTo = seat.slice(prefix.length);
+      ids.push(seat);
+      ids.push(`live:${payTo}`, `cur:${payTo}:${hex}`);
+    }
   }
-  await releaseIds(store, ids);
+  for (const id of ids) {
+    const released = await releaseChecked(store, id);
+    if (!released.ok) return released;
+  }
+  return { ok: true };
+}
+
+async function staleSeat(store, payTo) {
+  if (typeof store.list !== 'function') return { ok: true, free: false };
+  let ids;
+  try {
+    ids = await store.list(`cur:${payTo}:`);
+  } catch {
+    return refuse('bad_payment');
+  }
+  if (!Array.isArray(ids)) return refuse('bad_payment');
+  const prefix = `cur:${payTo}:`;
+  let occupied = false;
+  for (const id of ids) {
+    if (typeof id !== 'string' || !id.startsWith(prefix)) return refuse('bad_payment');
+    const hex = id.slice(prefix.length);
+    const dead = await storeBool(store.has(`dead:${hex}`));
+    const tomb = await storeBool(store.has(`tomb:${hex}`));
+    if (dead === undefined || tomb === undefined) return refuse('bad_payment');
+    if (dead === true || tomb === true) {
+      const released = await releaseChecked(store, id);
+      if (!released.ok) return released;
+      const seat = await releaseChecked(store, `seat:${hex}:${payTo}`);
+      if (!seat.ok) return seat;
+    } else occupied = true;
+  }
+  if (occupied || ids.length === 0) return { ok: true, free: false };
+  const live = await releaseChecked(store, `live:${payTo}`);
+  if (!live.ok) return live;
+  return { ok: true, free: true };
 }
 
 async function markDead(store, hex) {
@@ -444,15 +483,20 @@ async function bindingOpen(input, hex, chainId, payTo) {
   if (any === undefined || here === undefined) return refuse('bad_payment');
   if (any === true && here !== true) return refuse('bad_payment');
   // live: this payTo has a key. liveKey: this key is that one. open: this key is live somewhere.
-  const live = await storeBool(store.has(`live:${payTo}`));
+  let live = await storeBool(store.has(`live:${payTo}`));
   const liveKey = await storeBool(store.has(`cur:${payTo}:${hex}`));
   const open = await storeBool(store.has(`open:${hex}`));
   if (live === undefined || liveKey === undefined || open === undefined) return refuse('bad_payment');
+  if (live === true && liveKey !== true) {
+    const stale = await staleSeat(store, payTo);
+    if (!stale.ok) return stale;
+    if (stale.free) live = false;
+  }
   if (live === true && liveKey !== true) return refuse('bad_payment');
   if (input.operatorOverride !== true) {
     if (open === true && liveKey !== true) return refuse('bad_payment');
   }
-  for (const id of [`bound:${hex}`, `bound:${chainId}:${hex}`, `live:${payTo}`, `cur:${payTo}:${hex}`, `open:${hex}`]) {
+  for (const id of [`bound:${hex}`, `bound:${chainId}:${hex}`, `live:${payTo}`, `cur:${payTo}:${hex}`, `open:${hex}`, `seat:${hex}:${payTo}`]) {
     const got = await remember(id);
     if (!got.ok) {
       await releaseIds(store, claimed);
@@ -546,7 +590,6 @@ export async function signPayToControl(input) {
     const keyField = encodeSignatureField(possessed.raw);
     if (!keyField) return refuse('bad_signature');
     const signature = concat([signed.signature, keyField]);
-    noteSeat(store, ready.hex, parsed.message.payTo);
     done = true;
     return {
       ok: true,
@@ -598,6 +641,11 @@ export async function signRevoke(input) {
     const hex = bytesToHex(parsed.message.keyHash);
     const dead = await markDead(input.store, hex);
     if (!dead.ok) return dead;
+    const payTo = parsed.message.payTo;
+    for (const id of [`live:${payTo}`, `cur:${payTo}:${hex}`, `seat:${hex}:${payTo}`]) {
+      const released = await releaseChecked(input.store, id);
+      if (!released.ok) return released;
+    }
     await clearLiveKey(input.store, hex);
     return {
       ok: true,
