@@ -22,6 +22,11 @@ import { keccak256 } from '../ecdsa/keccak.js';
 import { recoverPublicKey } from '../ecdsa/recover.js';
 import { ethereumAddress } from '../ecdsa/address.js';
 import { bigToBytes, bytesToBig, bytesToHex, concat, equalBytes, hexToBytes } from '../ecdsa/bytes.js';
+import { canonicalKey } from '../eip712/registry.mjs';
+import { checkSigma, verifyPossession } from '../eip712/index.mjs';
+import { formatKeyHash, keyHash, parseKeyHash } from '../eip712/key-hash.mjs';
+
+export { checkSigma, formatKeyHash, keyHash, parseKeyHash };
 
 export const DOMAIN_TYPE = 'EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)';
 export const DOMAIN_NAME = 'Chit402';
@@ -95,41 +100,23 @@ function modPow(base, exp, m) {
   return result;
 }
 
-/**
- * keyHash = SHA-256(keyAlg || key). keyAlg 0x01 is secp256k1 and the key
- * must be 33-byte SEC1 compressed (prefix 0x02 or 0x03). Any other length
- * or prefix has no hash.
- */
+/** Bytes of the shared keyHash, or null when the registry rejects the key. */
 export function sellerKeyHash(alg, key) {
-  if (typeof alg !== 'number' || !Number.isInteger(alg) || alg < 0 || alg > 255) return null;
-  if (!(key instanceof Uint8Array) || key.length !== 33) return null;
-  if (key[0] !== 0x02 && key[0] !== 0x03) return null;
-  const preimage = new Uint8Array(34);
-  preimage[0] = alg;
-  preimage.set(key, 1);
-  return sha256(preimage);
+  const got = keyHash(alg, key);
+  return got.ok ? got.bytes : null;
 }
 
-function decompressK1(compressed) {
-  if (!(compressed instanceof Uint8Array) || compressed.length !== 33) return null;
-  const prefix = compressed[0];
-  if (prefix !== 0x02 && prefix !== 0x03) return null;
-  const x = bytesToBig(compressed.subarray(1));
-  const p = SECP256K1.p;
-  if (x >= p) return null;
-  const rhs = mod(mod(mod(x * x, p) * x, p) + mod(SECP256K1.a * x, p) + SECP256K1.b, p);
-  const y0 = modPow(rhs, (p + 1n) / 4n, p);
-  if (mod(y0 * y0, p) !== rhs) return null;
-  const odd = (y0 & 1n) === 1n;
-  const y = odd === (prefix === 0x03) ? y0 : mod(p - y0, p);
-  const out = new Uint8Array(65);
-  out[0] = 0x04;
-  out.set(bigToBytes(x, 32), 1);
-  out.set(bigToBytes(y, 32), 33);
-  return out;
+function possess(digest, alg, key, sig) {
+  const canon = canonicalKey(alg, key);
+  if (!canon.ok) return false;
+  return verifyPossession(digest, canon.uncompressed, sig).ok;
 }
 
-/** Uncompressed P-256 point, or null. */
+export function verifySellerSig(digest, sig, key) {
+  return possess(digest, 1, key, sig);
+}
+
+/** Uncompressed P-256 point, or null. Book creation still recovers a 65-byte signature. */
 export function decompressP256(compressed) {
   if (!(compressed instanceof Uint8Array) || compressed.length !== 33) return null;
   const prefix = compressed[0];
@@ -151,7 +138,6 @@ export function decompressP256(compressed) {
 
 function parityOf(v) {
   if (v === 0 || v === 1) return v;
-  if (v === 27 || v === 28) return v - 27;
   return null;
 }
 
@@ -199,6 +185,11 @@ export function verifyPayToControl(chainId, contract, payTo, alg, key, expiry, s
   return verifyK1(payToControlDigest(chainId, contract, payTo, alg, key, expiry), sig, payTo);
 }
 
+/** The seller key's own signature over the same PayToControl digest. 64-byte r‖s. */
+export function verifyKeyPossession(chainId, contract, payTo, alg, key, expiry, sig) {
+  return possess(payToControlDigest(chainId, contract, payTo, alg, key, expiry), alg, key, sig);
+}
+
 export function revokeDigest(chainId, contract, payTo, keyHash) {
   const struct = structHash(REVOKE_TYPE, [padAddress(payTo), keyHash]);
   return digestOf(chainId, contract, struct);
@@ -213,14 +204,8 @@ export function revokeByKeyDigest(chainId, contract, keyHash) {
   return digestOf(chainId, contract, struct);
 }
 
-export function verifyKeyRevoke(chainId, contract, key, keyHash, sig) {
-  const parts = splitSig(sig, SECP256K1);
-  if (!parts) return false;
-  const want = decompressK1(key);
-  if (!want) return false;
-  const pub = recoverPublicKey(revokeByKeyDigest(chainId, contract, keyHash), parts.r, parts.s, parts.yParity, SECP256K1);
-  if (!pub) return false;
-  return equalBytes(pub, want);
+export function verifyKeyRevoke(chainId, contract, key, keyHashBytes, sig) {
+  return possess(revokeByKeyDigest(chainId, contract, keyHashBytes), 1, key, sig);
 }
 
 function sortedPair(a, b) {

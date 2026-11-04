@@ -48,10 +48,10 @@
     },
     {
       "id": "D07_alg_check",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "    if (!isAllowedAlg(record.alg)) return 'rule_4';\n",
-      "replace": "",
-      "note": "any alg byte accepted"
+      "file": "packages/cs2-core/eip712/registry.mjs",
+      "find": "  if (!row || row.launch !== true) return fail('bad_alg');\n",
+      "replace": "  if (!row) return fail('bad_alg');\n",
+      "note": "keyHash accepts an alg other than P-256"
     },
     {
       "id": "D08_status_kind",
@@ -84,16 +84,16 @@
     {
       "id": "D12_cross_self_only",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "  return selfOk && otherOk;",
-      "replace": "  return selfOk;",
-      "note": "cross needs only self"
+      "find": "if (decoded.kind !== KIND_KEY || !equalBytes(decoded.id, record.keyHash)) return 'rule_4';",
+      "replace": "if (false) return 'rule_4';",
+      "note": "a RevokeByKey is accepted in a payTo slot"
     },
     {
       "id": "D13_cross_other_only",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "  return selfOk && otherOk;",
-      "replace": "  return otherOk;",
-      "note": "cross needs only other"
+      "file": "packages/cs2-core/eip712/possession.mjs",
+      "find": "  const range = checkSigma(signature);\n",
+      "replace": "  const range = { ok: true };\n",
+      "note": "possession skips the shared low-S range check"
     },
     {
       "id": "D14_unique_id",
@@ -126,9 +126,9 @@
     {
       "id": "D18_parity_27",
       "file": "packages/cs2-core/smt/sig.mjs",
-      "find": "  if (v === 27 || v === 28) return v - 27;\n",
-      "replace": "",
-      "note": "27/28 refused"
+      "find": "  if (v === 0 || v === 1) return v;\n  return null;",
+      "replace": "  if (v === 0 || v === 1) return v;\n  if (v === 27 || v === 28) return v - 27;\n  return null;",
+      "note": "27/28 accepted again"
     },
     {
       "id": "D19_status_chain",

@@ -189,16 +189,16 @@
     {
       "id": "S27_cross_or",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "return selfOk && otherOk;",
-      "replace": "return selfOk || otherOk;",
-      "note": "one payTo signature is enough for a shared key"
+      "find": "if (!verifyKeyPossession(",
+      "replace": "if (false && !verifyKeyPossession(",
+      "note": "the seller key need not sign the registration"
     },
     {
       "id": "S28_skip_cross",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (holders.length > 0 && !holderConsent(decoded, record, holders[0], placed.contract)) {",
-      "replace": "if (false && holders.length > 0 && !holderConsent(decoded, record, holders[0], placed.contract)) {",
-      "note": "a key already in another slot is accepted"
+      "find": "if (deadAt !== undefined && record.block >= deadAt) return 'rule_2';",
+      "replace": "if (false && deadAt !== undefined && record.block >= deadAt) return 'rule_2';",
+      "note": "a registration at or after the tombstone block is accepted"
     },
     {
       "id": "S29_second_join",
@@ -266,9 +266,9 @@
     {
       "id": "S38_revoke_one_slot",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "next.push(admitted.bytes);\n    applied += 1;",
-      "replace": "next.push(admitted.bytes);\n    applied += 1;\n    break;",
-      "note": "a keyHash revocation updates only the first slot"
+      "find": "return { ok: true, bytes: admitted.bytes, keySlot: admitted.bytes };",
+      "replace": "return { ok: true, bytes: admitted.bytes, keySlot: empty.bytes };",
+      "note": "a key revocation drops the key-slot record"
     },
     {
       "id": "S39_high_s",
