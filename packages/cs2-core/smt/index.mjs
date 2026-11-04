@@ -74,7 +74,6 @@ export {
   keyStatus,
   payToEntryBytes,
   verifyAdmission,
-  verifyKeyStatus,
   verifySlot,
   revokeAcross,
 } from './history.mjs';

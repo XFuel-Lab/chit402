@@ -15,6 +15,7 @@ import { publicPoint, signRawDigest } from '../ecdsa/sign.js';
 import { ethereumAddress } from '../ecdsa/address.js';
 import { bigToBytes, bytesToBig, bytesToHex, concat, hexToBytes } from '../ecdsa/bytes.js';
 import { KIND_KEY, keySlotKey } from '../eip712/kinds.mjs';
+import { readKeyLeaf } from '../key-status/status.mjs';
 import {
   KIND_BOOK,
   KIND_EPOCH,
@@ -75,7 +76,6 @@ import {
   parseKeyHash,
   verifyAdmission,
   verifyKeyRevoke,
-  verifyKeyStatus,
   verifySellerSig,
   verifyProof,
   verifySlot,
@@ -929,6 +929,7 @@ test('domain version 13 names the admitting contract, and expiry replaces validF
     { address: CONTRACT, fromHour: 0n, untilHour: 3600n },
     { address: OTHER_CONTRACT, fromHour: 3600n, untilHour: null },
   ], 3600n);
+  assert.ok(listed instanceof Uint8Array);
   assert.equal(bytesToHex(listed), bytesToHex(OTHER_CONTRACT));
   assert.equal(contractForHour([
     { address: CONTRACT, fromHour: 0n, untilHour: 3600n },
@@ -958,6 +959,14 @@ test('domain version 13 names the admitting contract, and expiry replaces validF
   const inside = seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 150n, { expiry: 3601n }), { epochs: window });
   assert.equal(inside.ok, true, inside.reason);
   assert.equal(viewOf(inside.bytes, { epochs: window }).keys[0].validFrom, 150n);
+  const overlapEpochs = [
+    { prevAnchorBlock: 0n, showAnchorBlock: 500n, hourStart: 0n, contract: CONTRACT },
+    { prevAnchorBlock: 0n, showAnchorBlock: 500n, hourStart: 0n, contract: OTHER_CONTRACT },
+  ];
+  assert.equal(seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 150n, {
+    contract: OTHER_CONTRACT,
+    expiry: 1n,
+  }), { epochs: overlapEpochs }).reason, 'rule_1');
 
   const opened = seal(emptyPay, register(emptyPay, payTo, payToScalar, sellerKey, 10n)).bytes;
   assert.equal(revokeAcross([opened], {
@@ -993,6 +1002,24 @@ test('equivocation follows epoch order and stays on one slot', () => {
   other = seal(other, register(other, otherPayTo, otherScalar, otherSeller, 7n)).bytes;
   assert.equal(detectEquivocation(anchor(base, 5), anchor(other, 6)).equivocation, false);
   assert.equal(detectEquivocation(anchor(other, 8), anchor(base, 7)).reason, 'bad_epoch');
+  const wrongKey = fill(9);
+  const wrongTree = putLeaf(createTree(), wrongKey, base).tree;
+  const wrongProof = prove(wrongTree, wrongKey).proof;
+  const wrongRoot = rootBytes(wrongTree);
+  assert.equal(detectEquivocation({
+    key: wrongKey, value: base, proof: wrongProof, root: wrongRoot, epoch: 9n,
+  }, {
+    key: wrongKey, value: base, proof: wrongProof, root: wrongRoot, epoch: 10n,
+  }).reason, 'bad_key');
+  const decoyKey = fill(4);
+  const decoyTree = putLeaf(createTree(), decoyKey, base).tree;
+  assert.equal(detectEquivocation(anchor(extended, 11), {
+    key: decoyKey,
+    value: base,
+    proof: prove(decoyTree, decoyKey).proof,
+    root: rootBytes(decoyTree),
+    epoch: 12n,
+  }).equivocation, false);
 });
 
 test('an ignored record does not raise the block floor or claim its id', () => {
@@ -1231,7 +1258,6 @@ test('keyHash is SHA-256(keyAlg || compressed key), and a RevokeByKey tombstone 
   });
   const viewed = viewOf(anchored.bytes);
   assert.equal(viewed.keys[0].revokedAt, 0n);
-  assert.equal(viewed.tombstones.has(bytesToHex(sellerHash)), false);
 });
 
 test('rev 5.1: expiry, slot revoke scope, empty previous epoch, and the PoP vector', () => {
@@ -1294,6 +1320,42 @@ test('rev 5.1: expiry, slot revoke scope, empty previous epoch, and the PoP vect
   assert.equal(keySlot.ok, true, keySlot.reason);
   assert.equal(keySlot.hex, 'e791917a7c2f11b2f7d6db4b211822aa63593fd8a7e3b0abdfee3ec180e62613');
   assert.equal(KIND_KEY, 0x05);
+  const many = readKeyLeaf({
+    records: [
+      {
+        revokedAtBlock: 20n,
+        prevAnchorBlock: 0n,
+        showAnchorBlock: 100n,
+        signatureOk: true,
+        keyHashOk: true,
+        decodeOk: true,
+        admission: {
+          absentAtPrev: true,
+          memberAtEpoch: true,
+          anchorPrev: 0n,
+          anchorEpoch: 100n,
+          block: 20n,
+        },
+      },
+      {
+        revokedAtBlock: 30n,
+        prevAnchorBlock: 0n,
+        showAnchorBlock: 100n,
+        signatureOk: true,
+        keyHashOk: true,
+        decodeOk: true,
+        admission: {
+          absentAtPrev: true,
+          memberAtEpoch: true,
+          anchorPrev: 0n,
+          anchorEpoch: 100n,
+          block: 30n,
+        },
+      },
+    ],
+  });
+  assert.equal(many.ok, false);
+  assert.equal(many.reason, 'many_records');
 });
 
 test('F-rule7-other and a rollback are decided by proof of possession', () => {

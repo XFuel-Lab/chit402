@@ -160,23 +160,23 @@
     },
     {
       "id": "S23_cover_start",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (block < key.validFrom) return false;",
-      "replace": "if (block <= key.validFrom) return false;",
+      "file": "packages/cs2-core/key-status/status.mjs",
+      "find": "if (admitted > block) return status(KEY_STATUS_INVALID, 'inactive');",
+      "replace": "if (admitted >= block) return status(KEY_STATUS_INVALID, 'inactive');",
       "note": "the validFrom block is not covered"
     },
     {
       "id": "S24_cover_end",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (key.revokedAt !== 0n && block >= key.revokedAt) return false;",
-      "replace": "if (key.revokedAt !== 0n && block > key.revokedAt) return false;",
+      "file": "packages/cs2-core/key-status/status.mjs",
+      "find": "if (slotAt != null && block >= slotAt) return status(KEY_STATUS_REVOKED, 'slot_revoke');",
+      "replace": "if (slotAt != null && block > slotAt) return status(KEY_STATUS_REVOKED, 'slot_revoke');",
       "note": "the revokedAt block is still covered"
     },
     {
       "id": "S25_skip_control_sig",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (!verifyPayToControl(",
-      "replace": "if (false && !verifyPayToControl(",
+      "find": "const payToOk = verifyPayToControl(",
+      "replace": "const payToOk = true || verifyPayToControl(",
       "note": "a payTo registration need not be signed"
     },
     {
@@ -189,15 +189,15 @@
     {
       "id": "S27_cross_or",
       "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (!verifyKeyPossession(",
-      "replace": "if (false && !verifyKeyPossession(",
+      "find": "const keyOk = verifyKeyPossession(",
+      "replace": "const keyOk = true || verifyKeyPossession(",
       "note": "the seller key need not sign the registration"
     },
     {
       "id": "S28_skip_cross",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (deadAt !== undefined && record.block >= deadAt) return 'rule_2';",
-      "replace": "if (false && deadAt !== undefined && record.block >= deadAt) return 'rule_2';",
+      "file": "packages/cs2-core/key-status/status.mjs",
+      "find": "if (admitted >= tomb) return status(KEY_STATUS_INVALID, 'admitted_after_tombstone');",
+      "replace": "if (false && admitted >= tomb) return status(KEY_STATUS_INVALID, 'admitted_after_tombstone');",
       "note": "a registration at or after the tombstone block is accepted"
     },
     {

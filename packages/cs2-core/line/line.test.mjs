@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { keySlotKey } from '../eip712/kinds.mjs';
 import assert from 'node:assert/strict';
 import { renderLineJson, VECTOR_PATH } from './build-line.mjs';
 import * as codec from './index.mjs';
@@ -249,6 +250,9 @@ test('§S5 slot keys match the published vectors', () => {
   assert.equal(wallet.hex, SPEC_KEYS.wallet);
   const epoch = slotKey({ kind: 0x04, chainId: '8453' });
   assert.equal(epoch.hex, SPEC_KEYS.epoch);
+  const keySlot = keySlotKey(8453n, new Uint8Array(32).fill(0x33));
+  assert.equal(keySlot.ok, true, keySlot.reason);
+  assert.equal(keySlot.hex, 'e791917a7c2f11b2f7d6db4b211822aa63593fd8a7e3b0abdfee3ec180e62613');
 });
 
 test('reserved kinds and id widths are rejected', () => {

@@ -7,11 +7,11 @@
  * a different contract, including the old domain with version "1" and no
  * verifyingContract, does not verify here.
  *
- * Hashing inside the typed data is keccak256. keyHash is SHA-256(keyAlg ||
- * key). keyAlg 0x01 is a 33-byte SEC1 key with prefix 0x02 or 0x03. These
- * strings match the shared eip712 module; import that module once it lands
- * instead of keeping this copy. A 65-byte signature is r ‖ s ‖ yParity.
- * yParity may be 0/1 or 27/28. s must be low-S on the curve that signed.
+ * Hashing inside the typed data is keccak256. keyHash, possession, the
+ * domain strings, and kind 0x05 slot keys come from the frozen eip712
+ * module. CrossPayTo, WalletJoin, WalletLeave, WalletStop, and BookCreate
+ * are not exported there, so each is defined once below. A 65-byte
+ * signature is r ‖ s ‖ yParity. yParity is 0 or 1. s must be low-S.
  * A signature that is not 65 bytes is not checked: ERC-1271 is not verified
  * in this module.
  */
@@ -22,18 +22,35 @@ import { keccak256 } from '../ecdsa/keccak.js';
 import { recoverPublicKey } from '../ecdsa/recover.js';
 import { ethereumAddress } from '../ecdsa/address.js';
 import { bigToBytes, bytesToBig, bytesToHex, concat, equalBytes, hexToBytes } from '../ecdsa/bytes.js';
+import {
+  DOMAIN_NAME,
+  DOMAIN_TYPE,
+  DOMAIN_VERSION,
+  PAYTO_CONTROL_TYPE,
+  REVOKE_BY_KEY_TYPE,
+  REVOKE_TYPE,
+} from '../eip712/domain.mjs';
+import { keySlotKey } from '../eip712/kinds.mjs';
 import { canonicalKey } from '../eip712/registry.mjs';
 import { checkSigma, verifyPossession } from '../eip712/index.mjs';
 import { formatKeyHash, keyHash, parseKeyHash } from '../eip712/key-hash.mjs';
+import { deriveKeySlotKey } from '../key-status/status.mjs';
 
-export { checkSigma, formatKeyHash, keyHash, parseKeyHash };
+export {
+  DOMAIN_NAME,
+  DOMAIN_TYPE,
+  DOMAIN_VERSION,
+  PAYTO_CONTROL_TYPE,
+  REVOKE_BY_KEY_TYPE,
+  REVOKE_TYPE,
+  checkSigma,
+  deriveKeySlotKey,
+  formatKeyHash,
+  keyHash,
+  keySlotKey,
+  parseKeyHash,
+};
 
-export const DOMAIN_TYPE = 'EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)';
-export const DOMAIN_NAME = 'Chit402';
-export const DOMAIN_VERSION = '13';
-export const PAYTO_CONTROL_TYPE = 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)';
-export const REVOKE_TYPE = 'Revoke(address payTo,bytes32 keyHash)';
-export const REVOKE_BY_KEY_TYPE = 'RevokeByKey(bytes32 keyHash)';
 export const CROSS_TYPE = 'CrossPayTo(address payTo,address otherPayTo,bytes32 keyHash)';
 export const WALLET_JOIN_TYPE = 'WalletJoin(address wallet,bytes32 bookCommitment,uint64 block)';
 export const WALLET_LEAVE_TYPE = 'WalletLeave(address wallet,uint64 block)';

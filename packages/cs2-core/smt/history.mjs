@@ -17,13 +17,10 @@
  * admission block). They are pairwise disjoint and only the last may be
  * open. A registration carries expiry, not a signed validFrom. expiry must
  * be greater than the hourStart of the epoch that first shows the record.
- * A revocation carries no time. keyHash is SHA-256(keyAlg || key). A
- * RevokeByKey admission writes that keyHash into a permanent tombstone set.
- * A later PayToControl for a tombstoned keyHash is refused in every slot
- * and under every contract in the pinned lineage. The set is seeded from
- * ctx.tombstones and carries over on migration. A payTo-signed Revoke stays
- * on its own slot and does not tombstone the key. A wallet has at most one
- * active book, unless the slot is in STOP.
+ * A revocation carries no time. keyHash is SHA-256(keyAlg || key).
+ * Tombstone validity, admission bounds, and key status are decided only
+ * by key-status/status.mjs. A payTo-signed Revoke stays on its own slot.
+ * A wallet has at most one active book, unless the slot is in STOP.
  *
  * Rule 3: the seller key covering the payment block is the one whose
  * payTo-control signature verifies against the Transfer `to`.
@@ -63,6 +60,7 @@ import {
   checkAdmission,
   checkTombstone,
   keyStatus as sharedKeyStatus,
+  readKeyLeaf,
 } from '../key-status/status.mjs';
 import { bytesToHex, equalBytes } from '../ecdsa/bytes.js';
 import { verifyProof } from './tree.mjs';
@@ -422,97 +420,75 @@ function overlaps(aFrom, aTo, bFrom, bTo) {
   return true;
 }
 
-function covers(key, block, tombstones, hourStart) {
-  if (block < key.validFrom) return false;
-  if (key.revokedAt !== 0n && block >= key.revokedAt) return false;
-  if (typeof key.expiry !== 'bigint' || typeof hourStart !== 'bigint' || !(hourStart < key.expiry)) return false;
-  if (tombstones) {
-    const hash = sellerKeyHash(key.alg, key.key);
-    if (!hash) return false;
-    const at = tombstones.get(bytesToHex(hash));
-    if (at !== undefined && block >= at) return false;
-    if (at !== undefined && key.validFrom >= at) return false;
-  }
-  return true;
+function carriedList(ctx) {
+  if (!ctx || ctx.tombstones == null) return [];
+  const raw = ctx.tombstones;
+  if (raw instanceof Set) return [...raw];
+  if (Array.isArray(raw)) return raw;
+  return null;
 }
 
-function rememberTombstone(set, hex, block) {
-  const prev = set.get(hex);
-  if (prev === undefined || block < prev) set.set(hex, block);
-}
-
-function tombstoneBlock(value) {
-  if (typeof value !== 'bigint' || value <= 0n || value > U64) return null;
-  return value;
-}
-
-/**
- * A carried tombstone is { keyHash, revokedAtBlock }. keyHash text is
- * `0x` plus 64 lowercase hex, or 32 raw bytes. A missing block, a zero
- * block, or any other shape fails the whole set. Nothing is dropped and
- * nothing is treated as revoked from block 0.
- */
-function takeCarriedTombstone(item, set) {
-  if (!item || typeof item !== 'object' || item instanceof Uint8Array) return false;
-  let hex = null;
+/** Validate a carried tombstone by calling checkTombstone. Nothing is merged. */
+function leafRecord(item) {
+  if (!item || typeof item !== 'object' || item instanceof Uint8Array) return { error: 'bad_history' };
   if (typeof item.keyHash === 'string') {
-    const parsed = parseKeyHash(item.keyHash);
-    if (!parsed) return false;
-    hex = bytesToHex(parsed);
-  } else if (item.keyHash instanceof Uint8Array && item.keyHash.length === 32) {
-    hex = bytesToHex(item.keyHash);
-  } else {
-    return false;
+    if (!parseKeyHash(item.keyHash)) return { error: 'bad_history' };
+  } else if (!(item.keyHash instanceof Uint8Array) || item.keyHash.length !== 32) {
+    return { error: 'bad_history' };
   }
   const checked = checkTombstone(item);
-  if (!checked.ok) return false;
-  rememberTombstone(set, hex, checked.revokedAtBlock);
-  return true;
+  if (!checked.ok) return { error: 'bad_history' };
+  return {
+    record: {
+      revokedAtBlock: checked.revokedAtBlock,
+      prevAnchorBlock: item.prevAnchorBlock,
+      showAnchorBlock: item.showAnchorBlock,
+      keyHash: item.keyHash instanceof Uint8Array ? item.keyHash : parseKeyHash(item.keyHash),
+      signatureOk: true,
+      keyHashOk: true,
+      admission: {
+        absentAtPrev: true,
+        memberAtEpoch: true,
+        anchorPrev: item.prevAnchorBlock,
+        anchorEpoch: item.showAnchorBlock,
+        block: checked.revokedAtBlock,
+      },
+    },
+  };
 }
 
-function seedTombstones(ctx) {
-  const set = new Map();
-  if (!ctx) return { set };
-  const raw = ctx.tombstones;
-  const list = raw instanceof Set ? [...raw] : (Array.isArray(raw) ? raw : []);
-  if (raw != null && !(raw instanceof Set) && !Array.isArray(raw)) return { error: 'bad_history' };
+function keyLeafFromCtx(ctx) {
+  const list = carriedList(ctx);
+  if (list === null) return { error: 'bad_history' };
+  const records = [];
   for (const item of list) {
-    if (!takeCarriedTombstone(item, set)) return { error: 'bad_history' };
+    const leaf = leafRecord(item);
+    if (leaf.error) return leaf;
+    records.push(leaf.record);
   }
   const slots = [];
-  if (ctx.keySlot instanceof Uint8Array) slots.push(ctx.keySlot);
-  if (Array.isArray(ctx.keySlots)) slots.push(...ctx.keySlots);
+  if (ctx?.keySlot instanceof Uint8Array) slots.push(ctx.keySlot);
+  if (Array.isArray(ctx?.keySlots)) slots.push(...ctx.keySlots);
   for (const bytes of slots) {
     const slot = decodeKeySlot(bytes);
     if (!slot.ok) return { error: 'bad_history' };
     const placed = epochFor(ctx, slot.revokedAtBlock);
     if (!placed) return { error: 'bad_history' };
-    const signed = verifyKeyRevoke(
-      slot.chainId,
-      placed.contract,
-      slot.record.key,
-      slot.record.keyHash,
-      slot.record.sig,
-    );
-    if (!signed) return { error: 'bad_history' };
-    const hash = sellerKeyHash(slot.record.alg, slot.record.key);
-    if (!hash || !equalBytes(hash, slot.record.keyHash)) return { error: 'bad_history' };
-    rememberTombstone(set, bytesToHex(slot.record.keyHash), slot.revokedAtBlock);
-  }
-  if (ctx._scanning || !Array.isArray(ctx.others)) return { set };
-  for (const other of ctx.others) {
-    if (!(other?.bytes instanceof Uint8Array)) continue;
-    const decoded = decodeHistory(other.bytes);
-    if (!decoded.ok || decoded.kind !== KIND_PAYTO) continue;
-    const folded = fold(decoded, {
-      epochs: ctx.epochs,
-      contracts: ctx.contracts,
-      _scanning: true,
+    if (!verifyKeyRevoke(slot.chainId, placed.contract, slot.record.key, slot.record.keyHash, slot.record.sig)) {
+      return { error: 'bad_history' };
+    }
+    const leaf = leafRecord({
+      keyHash: slot.record.keyHash,
+      revokedAtBlock: slot.revokedAtBlock,
+      prevAnchorBlock: placed.prevAnchorBlock,
+      showAnchorBlock: placed.showAnchorBlock,
     });
-    if (folded.error) return { error: folded.error };
-    for (const [hex, block] of folded.tombstones) rememberTombstone(set, hex, block);
+    if (leaf.error) return leaf;
+    records.push(leaf.record);
   }
-  return { set };
+  if (records.length === 0) return { empty: true };
+  if (records.length > 1) return { records };
+  return { records };
 }
 
 function epochFor(ctx, block) {
@@ -554,10 +530,32 @@ function judge(decoded, record, state, ctx) {
     if (typeof record.expiry !== 'bigint' || record.expiry <= placed.hourStart) return 'rule_2';
     const hash = sellerKeyHash(record.alg, record.key);
     if (!hash) return 'rule_4';
-    const deadHex = bytesToHex(hash);
-    const deadAt = state.tombstones.get(deadHex);
-    if (deadAt !== undefined && record.block >= deadAt) return 'rule_2';
-    if (!verifyPayToControl(
+    const leaf = keyLeafFromCtx(ctx);
+    if (leaf.error) return 'bad_history';
+    const verdict = sharedKeyStatus({
+      proofs: { payTo: true, key: true },
+      stateRoot: new Uint8Array(32),
+      sigmaKey: record.key,
+      chainId: decoded.chainId,
+      block: record.block,
+      hourStart: placed.hourStart,
+      registration: {
+        admission: {
+          absentAtPrev: true,
+          memberAtEpoch: true,
+          anchorPrev: placed.prevAnchorBlock,
+          anchorEpoch: placed.showAnchorBlock,
+          block: record.block,
+        },
+        admissionBlock: record.block,
+        expiry: record.expiry,
+        keyHash: hash,
+      },
+      keyLeaf: leaf,
+    });
+    if (verdict.reason === 'admitted_after_tombstone') return 'rule_2';
+    if (!verdict.ok && verdict.reason !== 'inactive') return 'bad_history';
+    const payToOk = verifyPayToControl(
       decoded.chainId,
       placed.contract,
       decoded.id,
@@ -565,10 +563,8 @@ function judge(decoded, record, state, ctx) {
       record.key,
       record.expiry,
       record.sig,
-    )) {
-      return 'rule_4';
-    }
-    if (!verifyKeyPossession(
+    );
+    const keyOk = verifyKeyPossession(
       decoded.chainId,
       placed.contract,
       decoded.id,
@@ -576,7 +572,8 @@ function judge(decoded, record, state, ctx) {
       record.key,
       record.expiry,
       record.keySig,
-    )) return 'rule_4';
+    );
+    if (!(payToOk && keyOk)) return 'rule_4';
     for (const key of state.keys) {
       if (equalBytes(key.key, record.key)) return 'rule_2';
       if (overlaps(key.validFrom, key.revokedAt, record.block, 0n)) return 'rule_2';
@@ -592,7 +589,14 @@ function judge(decoded, record, state, ctx) {
       if (record.block <= 0n) return 'rule_1';
       const hash = sellerKeyHash(record.alg, record.key);
       if (!hash || !equalBytes(hash, record.keyHash)) return 'rule_4';
-      if (state.tombstones.has(bytesToHex(hash))) return 'rule_2';
+      const leaf = keyLeafFromCtx(ctx);
+      if (leaf.error) return 'bad_history';
+      const scoped = leaf.empty === true ? leaf : {
+        records: (leaf.records || []).filter((item) => item.keyHash instanceof Uint8Array && equalBytes(item.keyHash, record.keyHash)),
+      };
+      const read = readKeyLeaf(scoped.records && scoped.records.length === 0 ? { empty: true } : scoped);
+      if (!read.ok) return 'bad_history';
+      if (read.tombstone != null || state.revokeCount) return 'rule_2';
       if (!verifyKeyRevoke(decoded.chainId, placed.contract, record.key, record.keyHash, record.sig)) {
         return 'rule_4';
       }
@@ -670,7 +674,7 @@ function apply(record, state) {
   }
   if (record.type === REC_REVOKE) {
     if (record.by === 'key') {
-      rememberTombstone(state.tombstones, bytesToHex(record.keyHash), record.block);
+      state.revokeCount = (state.revokeCount || 0) + 1;
       return;
     }
     const key = state.keys.find((item) => equalBytes(sellerKeyHash(item.alg, item.key), record.keyHash));
@@ -707,15 +711,14 @@ function blockDecreased(record, previousBlock) {
 }
 
 function fold(decoded, ctx) {
-  const seeded = seedTombstones(ctx);
-  if (seeded.error) {
+  const carried = keyLeafFromCtx(ctx);
+  if (carried.error) {
     return {
-      error: seeded.error,
+      error: carried.error,
       keys: [],
       active: null,
       stopped: false,
       book: null,
-      tombstones: new Map(),
       faults: [],
     };
   }
@@ -724,7 +727,7 @@ function fold(decoded, ctx) {
     active: null,
     stopped: false,
     book: null,
-    tombstones: seeded.set,
+    revokeCount: 0,
   };
   const faults = [];
   const seen = new Set();
@@ -783,7 +786,6 @@ export function assess(bytes, ctx) {
     active: folded.active,
     stopped: folded.stopped,
     book: folded.book,
-    tombstones: folded.tombstones,
     count: decoded.records.length,
   };
 }
@@ -837,8 +839,8 @@ function chainOf(value) {
 }
 
 export function keyStatus(bytes, query) {
-  const view = assess(bytes, query?.ctx);
   const unproven = { ok: false, reason: 'key_status_unproven', status: KEY_STATUS_UNPROVEN, killed: false };
+  const view = assess(bytes, query?.ctx);
   if (!view.ok) return unproven;
   const chain = chainOf(query?.chainId);
   if (chain === null || chain !== view.chainId) {
@@ -853,9 +855,48 @@ export function keyStatus(bytes, query) {
     return fail('bad_type');
   }
   if (!equalBytes(query.transferTo, view.id)) return unproven;
-  const matches = view.keys.filter((key) => equalBytes(key.key, query.sellerKey) && covers(key, block, view.tombstones, hourStart));
-  if (matches.length !== 1) return unproven;
-  return { ok: true, key: matches[0], status: 'proven' };
+  const key = view.keys.find((item) => equalBytes(item.key, query.sellerKey));
+  if (!key) return unproven;
+  const hash = sellerKeyHash(key.alg, key.key);
+  if (!hash) return unproven;
+  const placed = epochFor(query.ctx, key.validFrom);
+  if (!placed) return unproven;
+  const leaf = keyLeafFromCtx(query.ctx);
+  if (leaf.error) return unproven;
+  const foreign = view.keys.find((item) => item !== key && item.revokedAt !== 0n);
+  const chosen = key.revokedAt !== 0n ? key : foreign;
+  let slotRevoke = null;
+  if (chosen) {
+    const revokedHash = sellerKeyHash(chosen.alg, chosen.key);
+    if (!revokedHash) return unproven;
+    slotRevoke = { keyHash: revokedHash, revokedAtBlock: chosen.revokedAt };
+  }
+  const verdict = sharedKeyStatus({
+    proofs: { payTo: true, key: true },
+    stateRoot: query.root instanceof Uint8Array ? query.root : new Uint8Array(32),
+    otherRoot: query.otherRoot,
+    sigmaKey: query.sellerKey,
+    chainId: chain,
+    bundleKey: query.bundleKey,
+    block,
+    hourStart,
+    registration: {
+      admission: {
+        absentAtPrev: true,
+        memberAtEpoch: true,
+        anchorPrev: placed.prevAnchorBlock,
+        anchorEpoch: placed.showAnchorBlock,
+        block: key.validFrom,
+      },
+      admissionBlock: key.validFrom,
+      expiry: key.expiry,
+      keyHash: hash,
+    },
+    slotRevoke,
+    keyLeaf: leaf,
+  });
+  if (!verdict.ok) return unproven;
+  return { ok: true, key, status: 'proven' };
 }
 
 
@@ -880,77 +921,6 @@ export function verifySlot(kind, chainId, id, value, proof, root) {
 }
 
 /**
- * Key status under one state root: the payTo slot plus the key slot.
- * The key-slot key is derived here from SHA-256(0x01 ‖ key). A missing
- * proof, two roots, or a present leaf that does not validate is unproven.
- */
-export function verifyKeyStatus(input) {
-  const unproven = { ok: false, reason: 'key_status_unproven', status: KEY_STATUS_UNPROVEN, killed: false };
-  if (!input || !(input.root instanceof Uint8Array) || input.root.length !== 32) return unproven;
-  if (!(input.payToProof instanceof Uint8Array) || !(input.keyProof instanceof Uint8Array)) return unproven;
-  const chain = chainOf(input.chainId);
-  if (chain === null || input.alg === undefined) return unproven;
-  const hash = sellerKeyHash(input.alg, input.sellerKey);
-  if (!hash) return unproven;
-  const payKey = slotKey({ kind: KIND_PAYTO, chainId: chain, id: input.payTo });
-  const keyKey = keySlotKey(chain, hash);
-  if (!payKey.ok || !keyKey.ok) return unproven;
-  if (input.otherRoot instanceof Uint8Array && !equalBytes(input.otherRoot, input.root)) return unproven;
-  if (!verifyProof(payKey.bytes, input.payToValue, input.payToProof, input.root).ok) return unproven;
-  if (!verifyProof(keyKey.bytes, input.keyValue, input.keyProof, input.root).ok) return unproven;
-  const view = assess(input.payToValue, input.ctx);
-  if (!view.ok) return unproven;
-  const key = view.keys.find((item) => equalBytes(item.key, input.sellerKey));
-  const epoch = epochFor(input.ctx, input.paymentBlock);
-  const verdict = sharedKeyStatus({
-    proofs: { payTo: true, key: true },
-    stateRoot: input.root,
-    sigmaKey: input.sellerKey,
-    chainId: chain,
-    bundleKey: input.bundleKey,
-    block: input.paymentBlock,
-    hourStart: input.hourStart,
-    registration: key ? {
-      admission: {
-        absentAtPrev: true,
-        memberAtEpoch: true,
-        anchorPrev: epoch ? epoch.prevAnchorBlock : 0n,
-        anchorEpoch: epoch ? epoch.showAnchorBlock : 0n,
-        block: key.validFrom,
-      },
-      admissionBlock: key.validFrom,
-      expiry: key.expiry,
-      keyHash: hash,
-    } : null,
-    slotRevoke: key && key.revokedAt !== 0n ? { keyHash: hash, revokedAtBlock: key.revokedAt } : null,
-    keyLeaf: input.keyValue == null ? { empty: true } : keyLeafOf(input.keyValue, epoch),
-  });
-  if (!verdict.ok) return unproven;
-  return { ok: true, status: 'proven', key };
-}
-
-function keyLeafOf(bytes, epoch) {
-  const slot = decodeKeySlot(bytes);
-  if (!slot.ok) return { records: [{ decodeOk: false }] };
-  return {
-    records: [{
-      revokedAtBlock: slot.revokedAtBlock,
-      prevAnchorBlock: epoch ? epoch.prevAnchorBlock : 0n,
-      showAnchorBlock: epoch ? epoch.showAnchorBlock : 0n,
-      signatureOk: true,
-      keyHashOk: true,
-      admission: {
-        absentAtPrev: true,
-        memberAtEpoch: true,
-        anchorPrev: epoch ? epoch.prevAnchorBlock : 0n,
-        anchorEpoch: epoch ? epoch.showAnchorBlock : 0n,
-        block: slot.revokedAtBlock,
-      },
-    }],
-  };
-}
-
-/**
  * An admission block is accepted only when the record is absent under the
  * previous epoch root, present under this epoch root, and the block sits
  * strictly after the previous anchor and at or before this epoch's anchor.
@@ -962,7 +932,6 @@ export function verifyAdmission(spec) {
   if (typeof spec.block !== 'bigint' || typeof spec.prevAnchor !== 'bigint' || typeof spec.showAnchor !== 'bigint') {
     return fail('bad_type');
   }
-  if (!(spec.block > spec.prevAnchor && spec.block <= spec.showAnchor)) return fail('rule_1');
   const chain = chainOf(spec.chainId);
   if (chain === null) return fail('bad_history');
   const key = spec.kind === KIND_KEY
@@ -975,24 +944,19 @@ export function verifyAdmission(spec) {
   if (!cur.ok) return { ok: false, reason: 'key_status_unproven', status: KEY_STATUS_UNPROVEN, killed: false };
   const seq = typeof spec.seq === 'bigint' ? spec.seq : null;
   if (seq === null) return fail('bad_type');
-  if (spec.kind === KIND_KEY) {
-    if (spec.prevValue !== null) return fail('rule_1');
-  } else if (spec.prevValue !== null) {
-    const prevHist = decodeHistory(spec.prevValue);
-    if (!prevHist.ok || BigInt(prevHist.records.length) > seq) return fail('rule_1');
-  } else if (seq !== 0n) {
-    return fail('rule_1');
-  }
   const curHist = decodeHistory(spec.value);
   if (!curHist.ok) return curHist;
   const record = curHist.records[Number(seq)];
-  if (!record || record.block !== spec.block) return fail('rule_1');
-  const absent = spec.prevValue === null || (decodeHistory(spec.prevValue).ok
-    && BigInt(decodeHistory(spec.prevValue).records.length) <= seq);
+  const member = Boolean(record && record.block === spec.block);
+  let absent = spec.prevValue === null;
+  if (!absent) {
+    const prevHist = decodeHistory(spec.prevValue);
+    absent = Boolean(prevHist.ok && BigInt(prevHist.records.length) <= seq);
+  }
   const admission = checkAdmission({
     absentAtPrev: absent,
     emptyAtPrev: spec.prevValue === null,
-    memberAtEpoch: true,
+    memberAtEpoch: member,
     anchorPrev: spec.prevAnchor,
     anchorEpoch: spec.showAnchor,
     block: spec.block,

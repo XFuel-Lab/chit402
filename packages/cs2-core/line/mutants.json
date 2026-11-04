@@ -153,10 +153,10 @@
     },
     {
       "id": "L22_kind_05",
-      "file": "packages/cs2-core/line/index.mjs",
-      "find": "[KIND_EPOCH, 0],",
-      "replace": "[KIND_EPOCH, 0],\n  [0x05, 20],",
-      "note": "kind 0x05 is accepted"
+      "file": "packages/cs2-core/eip712/kinds.mjs",
+      "find": "export function keySlotKey(chainId, keyHashBytes) {",
+      "replace": "export function keySlotKey() { return { ok: false, reason: 'bad_kind' }; }\nexport function keySlotKeyHidden(chainId, keyHashBytes) {",
+      "note": "kind 0x05 is rejected"
     },
     {
       "id": "L23_epoch_len",

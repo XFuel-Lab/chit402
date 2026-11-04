@@ -150,6 +150,62 @@
       "find": "    if (decoded.kind !== KIND_WALLET) return 'rule_4';\n    if (!verifyWalletJoin",
       "replace": "    if (!verifyWalletJoin",
       "note": "join in a payTo slot"
+    },
+    {
+      "id": "E01_pop_payto_only",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (!(payToOk && keyOk)) return 'rule_4';",
+      "replace": "if (!payToOk) return 'rule_4';",
+      "note": "proof of possession accepts a registration the seller key did not sign"
+    },
+    {
+      "id": "E03_pop_key_only",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "if (!(payToOk && keyOk)) return 'rule_4';",
+      "replace": "if (!keyOk) return 'rule_4';",
+      "note": "proof of possession accepts a registration the payTo did not sign"
+    },
+    {
+      "id": "E06_epoch_overlap_last",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "      if (found) return null;\n",
+      "replace": "",
+      "note": "overlapping epoch windows keep the last contract"
+    },
+    {
+      "id": "E09_slot_revoke_unscoped",
+      "file": "packages/cs2-core/key-status/status.mjs",
+      "find": "if (view.slotRevoke != null && sameHash(view.slotRevoke.keyHash, registration.keyHash)) {",
+      "replace": "if (view.slotRevoke != null) {",
+      "note": "a slot revoke of one keyHash closes every key in the slot"
+    },
+    {
+      "id": "E14_derived_key",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  const derived = slotKey({ kind: older.kind, chainId: older.chainId, id: older.id });\n  if (!derived.ok || !equalBytes(derived.bytes, earlier.key)) return { ok: false, reason: 'bad_key' };\n",
+      "replace": "",
+      "note": "equivocation accepts a proof key that is not the slot key"
+    },
+    {
+      "id": "E15_different_keys",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (!equalBytes(earlier.key, later.key)) return { ok: true, equivocation: false };\n",
+      "replace": "",
+      "note": "two proofs under different keys are still equivocation"
+    },
+    {
+      "id": "E22_until_hour",
+      "file": "packages/cs2-core/smt/sig.mjs",
+      "find": "hour >= entry.untilHour) continue;",
+      "replace": "hour > entry.untilHour) continue;",
+      "note": "the untilHour boundary stays inside the earlier contract"
+    },
+    {
+      "id": "E24_many_records",
+      "file": "packages/cs2-core/key-status/status.mjs",
+      "find": "if (records.length > 1) return unproven('many_records');",
+      "replace": "if (false && records.length > 1) return unproven('many_records');",
+      "note": "a key leaf with two records is read as the first"
     }
   ]
 }
