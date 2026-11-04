@@ -2,7 +2,8 @@
  * Shared EIP-712 vectors. Keys here are test keys only.
  */
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -90,10 +91,25 @@ test('typehashes, domain separators, registry, keyHash, and the time unit are pi
   }
 });
 
-test('no other package defines a keyAlg table', () => {
-  const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+const KEY_ALG_SHAPE = /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*[\s\S]{0,800}?(?:keyAlg\s*:|[{,\[]\s*(?:0x0)?1\s*:)[\s\S]{0,240}?(?:['"]P-256['"]|\bsecp256k1\b)|(?:export\s+)?(?:const|let|var)\s+ALG_REGISTRY\s*=|new\s+Map\s*\([\s\S]{0,500}?\[\s*(?:0x0)?1\s*,\s*['"]P-256['"]/;
+const CANONICAL_REGISTRY = '/packages/cs2-core/eip712/registry.mjs';
+
+function slashPath(value) {
+  return value.split(/[/\\]/).join('/');
+}
+
+function lfSha256(bytes) {
+  const text = Buffer.from(bytes).toString('utf8').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  return createHash('sha256').update(text).digest('hex');
+}
+
+function repoFile(root, repoPath) {
+  return join(root, ...repoPath.split('/').filter((part) => part !== ''));
+}
+
+/** Paths that define a keyAlg table and are not the canonical registry or a byte-identical vendor copy. */
+function strayKeyAlgTables(root) {
   const defs = [];
-  const shape = /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*[\s\S]{0,800}?(?:keyAlg\s*:|[{,\[]\s*(?:0x0)?1\s*:)[\s\S]{0,240}?(?:['"]P-256['"]|\bsecp256k1\b)|(?:export\s+)?(?:const|let|var)\s+ALG_REGISTRY\s*=|new\s+Map\s*\([\s\S]{0,500}?\[\s*(?:0x0)?1\s*,\s*['"]P-256['"]/;
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === 'node_modules' || entry.name === '.git') continue;
@@ -101,16 +117,71 @@ test('no other package defines a keyAlg table', () => {
       if (entry.isDirectory()) walk(path);
       else if (/\.(mjs|js|cjs|ts)$/.test(entry.name)) {
         const text = readFileSync(path, 'utf8');
-        if (shape.test(text)) defs.push(path.split(/[/\\]/).join('/'));
+        if (KEY_ALG_SHAPE.test(text)) defs.push(slashPath(path));
       }
     }
   };
   walk(root);
-  const rootSlash = root.split(/[/\\]/).join('/');
-  const allowed = defs.map((path) => path.slice(rootSlash.length)).sort();
-  assert.deepEqual(allowed, [
-    '/packages/cs2-core/eip712/registry.mjs',
-  ]);
+  const rootSlash = slashPath(root);
+  const stray = [];
+  for (const full of defs) {
+    const rel = full.slice(rootSlash.length);
+    if (rel === CANONICAL_REGISTRY) continue;
+    const vendored = rel.match(/^\/packages\/[^/]+\/vendor\/cs2-core\/(.+)$/);
+    if (!vendored) {
+      stray.push(rel);
+      continue;
+    }
+    let canon;
+    let copy;
+    try {
+      canon = readFileSync(repoFile(root, `/packages/cs2-core/${vendored[1]}`));
+      copy = readFileSync(repoFile(root, rel));
+    } catch {
+      stray.push(rel);
+      continue;
+    }
+    if (lfSha256(canon) !== lfSha256(copy)) stray.push(rel);
+  }
+  return stray.sort();
+}
+
+test('no other package defines a keyAlg table', () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
+  assert.deepEqual(strayKeyAlgTables(root), []);
+});
+
+test('a one-byte change in a vendored registry is refused', () => {
+  const root = mkdtempSync(join(tmpdir(), 'keyalg-vendor-'));
+  try {
+    const canon = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'registry.mjs'));
+    const canonPath = repoFile(root, CANONICAL_REGISTRY);
+    const vendorPath = repoFile(root, '/packages/verify/vendor/cs2-core/eip712/registry.mjs');
+    mkdirSync(dirname(canonPath), { recursive: true });
+    mkdirSync(dirname(vendorPath), { recursive: true });
+    writeFileSync(canonPath, canon);
+    const flipped = Buffer.from(canon);
+    flipped[flipped.length - 1] ^= 0x01;
+    writeFileSync(vendorPath, flipped);
+    assert.deepEqual(strayKeyAlgTables(root), [
+      '/packages/verify/vendor/cs2-core/eip712/registry.mjs',
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a keyAlg table outside a vendored cs2-core copy is refused', () => {
+  const root = mkdtempSync(join(tmpdir(), 'keyalg-other-'));
+  try {
+    const other = repoFile(root, '/packages/other/alg.mjs');
+    mkdirSync(dirname(other), { recursive: true });
+    const table = `export const ${'ALG_REGISTRY'} = [{ ${'keyAlg'}: 0x01, curve: '${'P-256'}' }];\n`;
+    writeFileSync(other, table);
+    assert.deepEqual(strayKeyAlgTables(root), ['/packages/other/alg.mjs']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('canonicalKey refuses x at or above the field prime and a short key', () => {
