@@ -25,6 +25,15 @@ test('the packed verifier loads the v13 path', () => {
   try {
     const raw = npm(['pack', '--json', '--silent'], { cwd: pkg, encoding: 'utf8' });
     const listed = JSON.parse(raw.slice(raw.indexOf('[')));
+    const names = listed[0].files.map((file) => file.path);
+    for (const needle of [
+      'vendor/cs2-core/eip712/index.mjs',
+      'vendor/cs2-core/line/index.mjs',
+      'vendor/cs2-core/merkle/index.js',
+      'vendor/cs2-core/sha256.js',
+    ]) {
+      assert.equal(names.some((path) => path.endsWith(needle)), true, needle);
+    }
     const tarball = join(pkg, listed[0].filename);
     npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], {
       cwd: dir,

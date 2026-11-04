@@ -22,7 +22,7 @@ import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
 import { verifySlot, type VerifySlotInput } from './slot.js';
-import { assessSlotValue, pointOnCurve } from './key-record.js';
+import { assessSlotValue } from './key-record.js';
 import {
   ANCHORED_TOPIC0,
   UNAUDITED_NOTE,
@@ -73,7 +73,12 @@ type LineModule = {
   stateLeaf: (key: Uint8Array, value: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateNode: (left: Uint8Array, right: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   isAllowedAlg: (alg: number) => boolean;
-  checkSigma: (sigma64: Uint8Array) => { ok: true } | { ok: false; reason: string };
+};
+
+type EipModule = {
+  canonicalKey: (alg: number, key: Uint8Array) => { ok: true; uncompressed: Uint8Array } | { ok: false; reason: string };
+  checkSigma: (sigma64: Uint8Array) => { ok: boolean; reason?: string };
+  verifyPossession: (digest: Uint8Array, uncompressedKey: Uint8Array, signature: Uint8Array) => { ok: boolean; reason?: string };
 };
 
 type EcdsaModule = {
@@ -89,12 +94,13 @@ let cores: {
   ecdsa: EcdsaModule;
   keccak: (message: Uint8Array) => Uint8Array;
   sha256: (message: Uint8Array) => Uint8Array;
+  eip: EipModule;
 } | null = null;
 
 async function loadCores() {
   if (cores) return cores;
   const root = pathToFileURL(join(dirname(__filename), '../../vendor/cs2-core/')).href;
-  const [merkle, line, curves, recover, bytes, keccakMod, shaMod] = await Promise.all([
+  const [merkle, line, curves, recover, bytes, keccakMod, shaMod, eip] = await Promise.all([
     import(new URL('merkle/index.js', root).href),
     import(new URL('line/index.mjs', root).href),
     import(new URL('ecdsa/curves.js', root).href),
@@ -102,6 +108,7 @@ async function loadCores() {
     import(new URL('ecdsa/bytes.js', root).href),
     import(new URL('ecdsa/keccak.js', root).href),
     import(new URL('sha256.js', root).href),
+    import(new URL('eip712/index.mjs', root).href),
   ]);
   cores = {
     merkle: merkle as MerkleModule,
@@ -114,6 +121,7 @@ async function loadCores() {
     },
     keccak: (keccakMod as { keccak256: (message: Uint8Array) => Uint8Array }).keccak256,
     sha256: (shaMod as { sha256: (message: Uint8Array) => Uint8Array }).sha256,
+    eip: eip as EipModule,
   };
   return cores;
 }
@@ -282,33 +290,6 @@ function decompressP256(compressed: Uint8Array, ecdsa: EcdsaModule): Uint8Array 
   return out;
 }
 
-function decompressOn(compressed: Uint8Array, curve: { p: bigint; a: bigint; b: bigint }, ecdsa: EcdsaModule): Uint8Array | null {
-  if (compressed.length < 33) return null;
-  const key = compressed.subarray(0, 33);
-  if (key[0] !== 2 && key[0] !== 3) return null;
-  const p = curve.p;
-  const x = ecdsa.bytesToBig(key.subarray(1));
-  const x2 = (x * x) % p;
-  const x3 = (x2 * x) % p;
-  const ax = (curve.a * x) % p;
-  let rhs = (x3 + ax + curve.b) % p;
-  let y = 1n;
-  let base = rhs % p;
-  let exp = (p + 1n) / 4n;
-  while (exp > 0n) {
-    if ((exp & 1n) === 1n) y = (y * base) % p;
-    base = (base * base) % p;
-    exp >>= 1n;
-  }
-  const odd = (y & 1n) === 1n;
-  if (odd !== (key[0] === 3)) y = (p - y) % p;
-  const out = new Uint8Array(65);
-  out[0] = 4;
-  out.set(ecdsa.bigToBytes(x, 32), 1);
-  out.set(ecdsa.bigToBytes(y, 32), 33);
-  return out;
-}
-
 function proveKey(
   line: LineModule,
   view: LineView,
@@ -319,6 +300,7 @@ function proveKey(
     sha256: (message: Uint8Array) => Uint8Array;
     keccak: (message: Uint8Array) => Uint8Array;
     ecdsa: EcdsaModule;
+    eip: EipModule;
   },
   hours: { showingHour: number | null; receiptHour: number | null },
 ) {
@@ -335,19 +317,13 @@ function proveKey(
       showingHour: hours.showingHour,
       receiptHour: hours.receiptHour,
       gate: {
-        allowed: (alg) => line.isAllowedAlg(alg),
-        onCurve: (key) => pointOnCurve(key, crypto.ecdsa.P256),
+        allowed: () => true,
+        onCurve: (key) => crypto.eip.canonicalKey(0x01, key).ok,
       },
       signatureOk: (digest, signature, key) => {
-        if (!line.checkSigma(signature).ok) return false;
-        const point = decompressOn(key, crypto.ecdsa.P256, crypto.ecdsa);
-        if (!point) return false;
-        try {
-          crypto.ecdsa.yParityByTrial(digest, signature, point, crypto.ecdsa.P256);
-          return true;
-        } catch {
-          return false;
-        }
+        const opened = crypto.eip.canonicalKey(0x01, key);
+        if (!opened.ok) return false;
+        return crypto.eip.verifyPossession(digest, opened.uncompressed, signature).ok;
       },
     });
     if (!use.ok) return false;
@@ -369,11 +345,12 @@ function proveKey(
   };
 }
 
-function sigmaOk(line: LineModule, ecdsa: EcdsaModule, bytes: Uint8Array, slotValue: Uint8Array | null): boolean {
+function sigmaOk(line: LineModule, ecdsa: EcdsaModule, eip: EipModule, bytes: Uint8Array, slotValue: Uint8Array | null): boolean {
   if (!slotValue) return false;
   const opened = line.commitments(bytes);
   const decoded = line.decodeLine(bytes);
   if (!opened.ok || !decoded.ok) return false;
+  if (!eip.checkSigma(decoded.sigma.sigma).ok) return false;
   const point = decompressP256(slotValue, ecdsa);
   if (!point) return false;
   try {
@@ -759,11 +736,12 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
       sha256: loaded.sha256,
       keccak: loaded.keccak,
       ecdsa: loaded.ecdsa,
+      eip: loaded.eip,
     }, {
       showingHour,
       receiptHour: showingHour,
     }),
-    sigmaOk: () => sigmaOk(loaded.line, loaded.ecdsa, line.bytes, slotValue),
+    sigmaOk: () => sigmaOk(loaded.line, loaded.ecdsa, loaded.eip, line.bytes, slotValue),
   };
   return verdictOf(runV13(receipt, blankWorld(history, {
     ...base,

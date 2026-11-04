@@ -87,6 +87,10 @@ for (const name of ['curves.js', 'recover.js', 'bytes.js', 'keccak.js', 'sign.js
   cpSync(join(CORE, 'ecdsa', name), join(OUT, 'ecdsa', name));
 }
 
+cpSync(join(CORE, 'eip712'), join(OUT, 'eip712'), { recursive: true });
+
+writeFileSync(join(OUT, 'package.json'), '{"type":"module"}\n');
+
 function codeOnly(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }

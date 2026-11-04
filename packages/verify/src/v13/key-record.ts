@@ -1,34 +1,71 @@
 /**
- * Key hash, tombstone, and expiry for a v13 slot record.
+ * Adapter over the copied cs2-core EIP-712 module.
  *
- * Type strings and the domain (name Chit402, version "13", chainId,
- * verifyingContract, no salt) match the shared EIP-712 module. Import that
- * module when it is in the tree. Until then these strings stay identical.
- *
- * keyHash is SHA-256(keyAlg || key). At v13 the only allowed algorithm is
- * 0x01, compressed P-256. 0x00, 0x02, and 0x03–0xFF are refused, as is a
- * missing algorithm. The line codec owns that allow-list. This file does
- * not keep a second one, and it does not treat 0x01 as secp256k1.
- * validFrom and revokedAt are not signed. expiry and hourStart are unix seconds.
+ * The registry, keyHash, admission, tombstone, range check, and key status
+ * live in that module. This file maps the verifier's inputs onto those
+ * functions and maps their results back onto the existing exit codes.
+ * Drop the copy, and these imports, after #687 is on main.
  */
 
-export const DOMAIN_NAME = 'Chit402';
-export const DOMAIN_VERSION = '13';
-export const DOMAIN_TYPE = 'EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)';
-export const PAYTO_CONTROL_TYPE = 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)';
-export const REVOKE_TYPE = 'Revoke(address payTo,bytes32 keyHash)';
-export const REVOKE_BY_KEY_TYPE = 'RevokeByKey(bytes32 keyHash)';
+import { createRequire } from 'node:module';
 
-/** PayTo slot. The line codec already uses this kind. */
-export const KIND_PAYTO_SLOT = 0x01;
-/** Key slot. Id is the 32-byte keyHash. The line codec does not accept this kind yet. */
-export const KIND_KEY_SLOT = 0x05;
+const load = createRequire(__filename);
+const eip = load('../../vendor/cs2-core/eip712/index.mjs') as Eip712;
+
+export const DOMAIN_NAME: string = eip.DOMAIN_NAME;
+export const DOMAIN_VERSION: string = eip.DOMAIN_VERSION;
+export const DOMAIN_TYPE: string = eip.DOMAIN_TYPE;
+export const PAYTO_CONTROL_TYPE: string = eip.PAYTO_CONTROL_TYPE;
+export const REVOKE_TYPE: string = eip.REVOKE_TYPE;
+export const REVOKE_BY_KEY_TYPE: string = eip.REVOKE_BY_KEY_TYPE;
 
 /** Disclosed ChitAnchor runtime code hash. A pin still carries its own codeHash. */
 export const EXAMPLE_ANCHOR_CODE_HASH = '0xcd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080';
 
+/** Bundle schema. An older schema is not a key-status result. */
+export const KEY_STATUS_SCHEMA = 'chit402.cs2.key-status.v2';
+
+/** Public T4 key. The shared module deny-lists it. */
+export const TEST_VECTOR_KEY_HASH: string = eip.DENIED_KEY_HASHES[0];
+
+/** P-256 generator. Used only when a caller does not carry a σ key. */
+const STAND_IN_KEY = hexToBytes('036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296');
+
 type Sha = (message: Uint8Array) => Uint8Array;
 type Keccak = (message: Uint8Array) => Uint8Array;
+
+type EipOk<T> = { ok: true } & T;
+interface EipNo { ok: false; reason: string; status?: string; exitCode?: number }
+
+interface Eip712 {
+  DOMAIN_NAME: string;
+  DOMAIN_VERSION: string;
+  DOMAIN_TYPE: string;
+  PAYTO_CONTROL_TYPE: string;
+  REVOKE_TYPE: string;
+  REVOKE_BY_KEY_TYPE: string;
+  DENIED_KEY_HASHES: readonly string[];
+  parseKeyHash: (text: string) => Uint8Array | null;
+  formatKeyHash: (bytes: Uint8Array) => string | null;
+  deniedKeyHash: (hex: string) => boolean;
+  keyHash: (alg: number, key: Uint8Array) => EipOk<{ bytes: Uint8Array; hex: string }> | EipNo;
+  canonicalKey: (alg: number, key: Uint8Array) => EipOk<{ bytes: Uint8Array; uncompressed: Uint8Array }> | EipNo;
+  keySlotKey: (chainId: bigint, keyHashBytes: Uint8Array) => EipOk<{ bytes: Uint8Array; hex: string }> | EipNo;
+  checkAdmission: (proof: Record<string, unknown>) => EipOk<{ block: bigint }> | EipNo;
+  readKeyLeaf: (leaf: unknown) => EipOk<{ tombstone: bigint | null }> | EipNo;
+  keyStatus: (view: Record<string, unknown>) => EipOk<{ status: string }> | EipNo;
+  checkSigma: (sigma64: Uint8Array) => { ok: true } | EipNo;
+  expiryAllows: (hourStart: bigint, expiry: bigint) => boolean;
+  tombstoned: (list: unknown, keyHashHex: string) => boolean;
+  verifyPossession: (digest: Uint8Array, uncompressedKey: Uint8Array, signature: Uint8Array) => { ok: true } | EipNo;
+  chitDomain: (chainId: bigint, verifyingContract: string) => unknown;
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i += 1) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
 
 function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   if (left.length !== right.length) return false;
@@ -66,9 +103,7 @@ function padAddress(hex20: string): Uint8Array {
 }
 
 function utf8(value: string): Uint8Array {
-  const out = new Uint8Array(value.length);
-  for (let i = 0; i < value.length; i += 1) out[i] = value.charCodeAt(i);
-  return out;
+  return new Uint8Array(Buffer.from(value, 'utf8'));
 }
 
 export interface CurveParams {
@@ -77,31 +112,9 @@ export interface CurveParams {
   b: bigint;
 }
 
-function compressed33(key: Uint8Array): boolean {
-  return key.length === 33 && (key[0] === 0x02 || key[0] === 0x03);
-}
-
-/** Prefix 0x02 or 0x03, X < p, and y² = x³ + ax + b has a root. */
-export function pointOnCurve(key: Uint8Array, curve: CurveParams): boolean {
-  if (key.length !== 33 || (key[0] !== 0x02 && key[0] !== 0x03)) return false;
-  let x = 0n;
-  for (let i = 1; i < 33; i += 1) x = (x << 8n) | BigInt(key[i]);
-  const p = curve.p;
-  if (x >= p) return false;
-  const x2 = (x * x) % p;
-  const x3 = (x2 * x) % p;
-  let rhs = (x3 + ((curve.a % p) * x) % p + curve.b) % p;
-  if (rhs < 0n) rhs += p;
-  if (rhs === 0n) return true;
-  let exp = (p - 1n) / 2n;
-  let base = rhs;
-  let acc = 1n;
-  while (exp > 0n) {
-    if ((exp & 1n) === 1n) acc = (acc * base) % p;
-    base = (base * base) % p;
-    exp >>= 1n;
-  }
-  return acc === 1n;
+/** On-curve check for a compressed P-256 key. The curve argument is not consulted. */
+export function pointOnCurve(key: Uint8Array, _curve: CurveParams): boolean {
+  return eip.canonicalKey(0x01, key).ok === true;
 }
 
 export interface KeyGate {
@@ -109,78 +122,36 @@ export interface KeyGate {
   onCurve: (key: Uint8Array) => boolean;
 }
 
-/**
- * Allowed algorithm, then a point on that curve, then SHA-256(keyAlg || key).
- * A missing or unknown algorithm never becomes a hash.
- */
-/**
- * Text form is `0x` plus 64 lowercase hex characters. Anything else is
- * refused and is not rewritten.
- */
-export function parseKeyHash(value: unknown): Uint8Array | null {
-  if (typeof value !== 'string' || !/^0x[0-9a-f]{64}$/.test(value)) return null;
-  const out = new Uint8Array(32);
-  for (let i = 0; i < 32; i += 1) out[i] = Number.parseInt(value.slice(2 + i * 2, 4 + i * 2), 16);
-  return out;
+export const parseKeyHash: (text: string) => Uint8Array | null = (text) => eip.parseKeyHash(text);
+export const formatKeyHash: (bytes: Uint8Array) => string | null = (bytes) => eip.formatKeyHash(bytes);
+
+/** SHA-256("chit402-state-v1" ‖ 0x05 ‖ chainId ‖ keyHash). The hash function is the module's. */
+export function keySlotKey(chainId: number, keyHash: Uint8Array, _sha256?: Sha): Uint8Array | null {
+  if (!Number.isSafeInteger(chainId) || chainId < 0) return null;
+  const got = eip.keySlotKey(BigInt(chainId), keyHash);
+  return got.ok ? got.bytes : null;
 }
 
-export function formatKeyHash(bytes: Uint8Array): string | null {
-  if (bytes.length !== 32) return null;
-  let hex = '0x';
-  for (let i = 0; i < bytes.length; i += 1) hex += bytes[i].toString(16).padStart(2, '0');
-  return hex;
-}
-
-/** SHA-256("chit402-state-v1" ‖ 0x05 ‖ chainId ‖ keyHash). chainId is 8 bytes. */
-export function keySlotKey(chainId: number, keyHash: Uint8Array, sha256: Sha): Uint8Array | null {
-  if (!Number.isSafeInteger(chainId) || chainId < 0 || keyHash.length !== 32) return null;
-  const label = 'chit402-state-v1';
-  const domain = new Uint8Array(label.length);
-  for (let i = 0; i < label.length; i += 1) domain[i] = label.charCodeAt(i);
-  const chain = new Uint8Array(8);
-  let value = BigInt(chainId);
-  for (let i = 7; i >= 0; i -= 1) {
-    chain[i] = Number(value & 0xffn);
-    value >>= 8n;
-  }
-  const body = new Uint8Array(domain.length + 1 + chain.length + keyHash.length);
-  body.set(domain, 0);
-  body[domain.length] = KIND_KEY_SLOT;
-  body.set(chain, domain.length + 1);
-  body.set(keyHash, domain.length + 1 + chain.length);
-  return sha256(body);
-}
-
-export const KEY_STATUS_SCHEMA = 'chit402.cs2.key-status.v2';
-
-/** Public T4 key. The verifier never treats it as a live seller key. */
-export const TEST_VECTOR_KEY_HASH = '70703a0707c1ba660d772d3b613966bf84599afa8059b29636a613fefbfa9390';
-
-function bytesToHexLocal(bytes: Uint8Array): string {
-  let hex = '';
-  for (let i = 0; i < bytes.length; i += 1) hex += bytes[i].toString(16).padStart(2, '0');
-  return hex;
-}
-
-/** One u16 big-endian length prefix, then that many bytes. */
+/** One u16 big-endian length prefix, then that many bytes. The module does not export a reader. */
 export function readU16Field(bytes: Uint8Array, offset: number): { ok: true; value: Uint8Array; next: number } | { ok: false } {
   if (offset < 0 || offset + 2 > bytes.length) return { ok: false };
   const len = (bytes[offset] << 8) | bytes[offset + 1];
   const start = offset + 2;
   const end = start + len;
-  if (len < 0 || end > bytes.length) return { ok: false };
+  if (end > bytes.length) return { ok: false };
   return { ok: true, value: bytes.subarray(start, end), next: end };
 }
 
 /**
  * PayTo-control signature, then the possession signature. Both prefixes are
- * u16 big-endian. The possession signature is exactly 64 bytes and nothing follows.
+ * u16 big-endian. The possession signature is exactly 64 bytes and low-S.
  */
 export function readPayToSignatures(bytes: Uint8Array): { ok: true; payTo: Uint8Array; pop: Uint8Array } | { ok: false } {
   const payTo = readU16Field(bytes, 0);
   if (!payTo.ok) return payTo;
   const pop = readU16Field(bytes, payTo.next);
   if (!pop.ok || pop.value.length !== 64 || pop.next !== bytes.length) return { ok: false };
+  if (!eip.checkSigma(pop.value).ok) return { ok: false };
   return { ok: true, payTo: payTo.value, pop: pop.value };
 }
 
@@ -200,20 +171,16 @@ export type KeyLeaf =
   | null;
 
 export interface KeyStatusInput {
-  /** Missing or any schema other than v2 is an old bundle. */
   schema?: string | null;
   block: number;
-  /** hourStart of the receipt epoch, unix seconds. Compared with expiry. */
   hourStart: number;
   stateRoot?: string | null;
   sigmaKey?: Uint8Array | null;
   chainId?: number;
   sha256?: Sha;
-  /** A key-slot key carried by the bundle. It must match the derived key. */
   bundleKeySlot?: Uint8Array | null;
   payToProof: SlotProof | null;
   keyProof: SlotProof | null;
-  /** Null with a present proof means the caller did not classify the leaf. */
   keyLeaf?: KeyLeaf;
   registration: {
     admissionBlock: number;
@@ -222,12 +189,7 @@ export interface KeyStatusInput {
     keySignature: Uint8Array | null;
     popOk: boolean;
   } | null;
-  /**
-   * Same-slot Revoke(payTo, keyHash). Ignored when the record is a
-   * RevokeByKey sitting outside kind 0x05.
-   */
   slotRevokeBlock: number | null;
-  /** The Revoke's keyHash. The check applies only when it equals the registration. */
   slotRevokeKeyHash?: Uint8Array | null;
   registrationKeyHash?: Uint8Array | null;
   revokeByKeyOutsideKeySlot?: boolean;
@@ -243,22 +205,18 @@ export interface KeyStatusResult {
 
 const admissionCache = new Map<string, number>();
 
-/** Forget cached admission blocks. Tests start from an empty cache. */
 export function clearAdmissionCache(): void {
   admissionCache.clear();
 }
 
 /**
- * Accept an admission block once: absent at e−1, member at e, and the
- * block strictly after the previous anchor and at or before this anchor.
- * The result is cached by slot key and seq. A failed proof is not cached
- * as a block.
+ * Cache around checkAdmission. An empty leaf at e−1 counts as absence.
+ * A failed proof is not stored.
  */
 export function cachedAdmission(input: {
   slotKey: string;
   seq: number;
   absentAtPrior: boolean;
-  /** An empty leaf at e−1 is absence for a slot's first registration. */
   emptySlotAtPrior?: boolean;
   memberAtEpoch: boolean;
   priorAnchor: number;
@@ -268,11 +226,15 @@ export function cachedAdmission(input: {
   const id = `${input.slotKey}:${input.seq}`;
   const prior = admissionCache.get(id);
   if (prior != null) return { ok: true, block: prior, cached: true };
-  const absent = input.absentAtPrior || input.emptySlotAtPrior === true;
-  if (!absent || !input.memberAtEpoch) return { ok: false, exit: 2, reason: 'unproven' };
-  if (!(input.priorAnchor < input.block && input.block <= input.anchor)) {
-    return { ok: false, exit: 2, reason: 'unproven' };
-  }
+  const checked = eip.checkAdmission({
+    absentAtPrev: input.absentAtPrior === true,
+    emptyAtPrev: input.emptySlotAtPrior === true,
+    memberAtEpoch: input.memberAtEpoch === true,
+    anchorPrev: BigInt(input.priorAnchor),
+    anchorEpoch: BigInt(input.anchor),
+    block: BigInt(input.block),
+  });
+  if (!checked.ok) return { ok: false, exit: 2, reason: 'unproven' };
   admissionCache.set(id, input.block);
   return { ok: true, block: input.block, cached: false };
 }
@@ -281,76 +243,139 @@ function status(exit: 0 | 1 | 2, reason: string | null, print: string | null = n
   return { proven: exit === 0, exit, reason, print };
 }
 
+function tombRecord(at: bigint, outOfBounds: boolean) {
+  const prev = outOfBounds ? at : 0n;
+  const show = at > 0n ? at : 1n;
+  return {
+    revokedAtBlock: at,
+    prevAnchorBlock: prev,
+    showAnchorBlock: show,
+    decodeOk: true,
+    signatureOk: true,
+    keyHashOk: true,
+    admission: {
+      absentAtPrev: true,
+      memberAtEpoch: true,
+      anchorPrev: prev,
+      anchorEpoch: show,
+      block: at,
+    },
+  };
+}
+
+function keyLeafOf(input: KeyStatusInput): unknown {
+  if (input.keyLeaf === 'empty') return { empty: true };
+  if (input.keyLeaf === 'multi') return { records: [{}, {}] };
+  if (input.keyLeaf === 'bad_sig') return { records: [{ signatureOk: false }] };
+  if (input.keyLeaf === 'mismatch') return { records: [{ keyHashOk: false }] };
+  if (input.keyLeaf === 'bare') return { records: [{}] };
+  if (input.keyLeaf === 'zero') return { records: [tombRecord(0n, false)] };
+  if (input.keyLeaf === 'out_of_bounds') return { records: [tombRecord(80n, true)] };
+  const tomb = input.tombstone;
+  if (!tomb) return { empty: true };
+  if (tomb.revokedAtBlock == null) return { records: [{}] };
+  return { records: [tombRecord(BigInt(tomb.revokedAtBlock), tomb.outOfBounds)] };
+}
+
+function fromShared(result: EipOk<{ status: string }> | EipNo, input: KeyStatusInput, print: string | null): KeyStatusResult {
+  if (result.ok) return status(0, null, print);
+  const reason = result.reason;
+  if (reason === 'inactive' && input.tombstone && input.registration && input.tombstone.revokedAtBlock != null && input.registration.admissionBlock >= input.tombstone.revokedAtBlock) {
+    return status(1, 'registered_after_tombstone');
+  }
+  if (reason === 'slot_revoke' || reason === 'key_tombstone') return status(1, 'revoked');
+  if (reason === 'slot_rebind') return status(1, 'registered_after_slot_revoke');
+  if (reason === 'admitted_after_tombstone') return status(1, 'registered_after_tombstone');
+  if (reason === 'expired') return status(1, 'expired');
+  if (reason === 'bundle_key') return status(2, 'key_mismatch');
+  if (reason === 'root') return status(2, 'two_roots');
+  if (reason === 'bad_leaf' || reason === 'many_records' || reason === 'bare_tombstone') return status(2, 'invalid_leaf');
+  return status(2, 'unproven');
+}
+
 /**
- * Status of key k in payTo P at block b. Both proofs use one state root.
- * The key-slot key is derived from the seller key. A RevokeByKey outside
- * kind 0x05 is ignored. There is no cross-payTo consent check.
+ * Status of key k in payTo P at block b. The decision is eip.keyStatus.
+ * Exit codes stay the ones this package already returns.
  */
 export function keyStatus(input: KeyStatusInput): KeyStatusResult {
   if (input.schema !== KEY_STATUS_SCHEMA) return status(2, 'old_schema');
-  const payRoot = input.payToProof?.root;
-  const keyRoot = input.keyProof?.root;
-  if (payRoot && keyRoot && payRoot !== keyRoot) return status(2, 'two_roots');
-  if (input.stateRoot && payRoot && payRoot !== input.stateRoot) return status(2, 'two_roots');
-  if (input.stateRoot && keyRoot && keyRoot !== input.stateRoot) return status(2, 'two_roots');
-  if (input.sigmaKey && input.sha256 && input.chainId != null && input.bundleKeySlot) {
-    const derivedHash = input.sha256(concat([Uint8Array.of(0x01), input.sigmaKey]));
-    const derived = keySlotKey(input.chainId, derivedHash, input.sha256);
-    if (!derived || !equalBytes(derived, input.bundleKeySlot)) return status(2, 'key_mismatch');
-  }
-  if (!input.payToProof || input.payToProof.siblings == null) return status(2, 'unproven');
-  if (!input.keyProof || input.keyProof.siblings == null) return status(2, 'unproven');
-  if (input.keyLeaf && input.keyLeaf !== 'empty') return status(2, 'invalid_leaf');
   const reg = input.registration;
   if (!reg || !reg.payToSignature || reg.payToSignature.length === 0) return status(2, 'unproven');
   if (!reg.keySignature || reg.keySignature.length !== 64 || !reg.popOk) return status(2, 'unproven');
-  const sameKey = input.slotRevokeKeyHash != null
-    && input.registrationKeyHash != null
-    && equalBytes(input.slotRevokeKeyHash, input.registrationKeyHash);
-  const slotRevoke = input.revokeByKeyOutsideKeySlot || !sameKey ? null : input.slotRevokeBlock;
-  if (input.registrationKeyHash && bytesToHexLocal(input.registrationKeyHash) === TEST_VECTOR_KEY_HASH) {
+  if (input.registrationKeyHash && eip.deniedKeyHash(eip.formatKeyHash(input.registrationKeyHash) ?? '')) {
     return status(1, 'test_vector_key', 'test vector key');
   }
-  if (slotRevoke != null && reg.admissionBlock >= slotRevoke) {
-    return status(1, 'registered_after_slot_revoke');
-  }
-  const tomb = input.keyLeaf === 'empty' ? null : input.tombstone;
-  let laterNote: string | null = null;
-  if (tomb) {
-    if (tomb.revokedAtBlock == null || tomb.revokedAtBlock <= 0 || tomb.outOfBounds) {
-      return status(2, 'invalid_leaf');
+  const sigma = input.sigmaKey ?? STAND_IN_KEY;
+  const hashed = eip.keyHash(0x01, sigma);
+  if (!hashed.ok) return status(2, 'unproven');
+  const regHash = input.registrationKeyHash ?? hashed.bytes;
+  const leaf = keyLeafOf(input);
+  const payRoot = input.payToProof?.root ?? null;
+  const keyRoot = input.keyProof?.root ?? null;
+  const stateRoot = input.stateRoot ?? payRoot ?? keyRoot ?? 'root';
+  const otherRoot = [payRoot, keyRoot, input.stateRoot].find((root) => root != null && root !== stateRoot) ?? null;
+  const admitted = BigInt(reg.admissionBlock);
+  const slotRevoke = input.revokeByKeyOutsideKeySlot
+    || input.slotRevokeBlock == null
+    || input.slotRevokeKeyHash == null
+    || input.registrationKeyHash == null
+    ? null
+    : { keyHash: input.slotRevokeKeyHash, revokedAtBlock: BigInt(input.slotRevokeBlock) };
+  const viewed = eip.keyStatus({
+    proofs: {
+      payTo: input.payToProof != null && input.payToProof.siblings != null,
+      key: input.keyProof != null && input.keyProof.siblings != null,
+    },
+    stateRoot,
+    otherRoot,
+    sigmaKey: sigma,
+    chainId: BigInt(input.chainId ?? 84532),
+    bundleKey: input.sigmaKey ? input.bundleKeySlot ?? undefined : undefined,
+    keyLeaf: leaf,
+    block: BigInt(input.block),
+    hourStart: BigInt(input.hourStart),
+    registration: {
+      keyHash: regHash,
+      expiry: reg.expiry,
+      admissionBlock: admitted,
+      admission: {
+        absentAtPrev: true,
+        memberAtEpoch: true,
+        anchorPrev: 0n,
+        anchorEpoch: admitted > 0n ? admitted : 1n,
+        block: admitted,
+      },
+    },
+    slotRevoke,
+    rebinding: slotRevoke != null && reg.admissionBlock >= (input.slotRevokeBlock as number),
+  });
+  let print: string | null = null;
+  if (viewed.ok) {
+    const read = eip.readKeyLeaf(leaf);
+    if (read.ok && read.tombstone != null && read.tombstone > BigInt(input.block)) {
+      print = `seller key revoked at block ${read.tombstone} (by key)`;
     }
-    if (reg.admissionBlock >= tomb.revokedAtBlock) return status(1, 'registered_after_tombstone');
-    if (tomb.revokedAtBlock <= input.block) return status(1, 'revoked');
-    laterNote = `seller key revoked at block ${tomb.revokedAtBlock} (by key)`;
   }
-  if (slotRevoke != null && slotRevoke <= input.block) return status(1, 'revoked');
-  if (!(reg.admissionBlock <= input.block)) return status(2, 'unproven');
-  if (!(input.hourStart < reg.expiry)) return status(1, 'expired');
-  return status(0, null, laterNote);
+  return fromShared(viewed, input, print);
 }
 
 export function keyHashOf(
   alg: number | null | undefined,
   key: Uint8Array | null | undefined,
-  sha256: Sha,
-  gate: KeyGate,
+  _sha256: Sha,
+  _gate: KeyGate,
 ): Uint8Array | null {
-  if (typeof alg !== 'number' || !Number.isInteger(alg) || alg < 0 || alg > 255) return null;
-  if (!gate.allowed(alg)) return null;
-  if (!key || !gate.onCurve(key)) return null;
-  const body = new Uint8Array(1 + key.length);
-  body[0] = alg;
-  body.set(key, 1);
-  return sha256(body);
+  if (typeof alg !== 'number' || !key) return null;
+  const got = eip.keyHash(alg, key);
+  return got.ok ? got.bytes : null;
 }
 
 export function chitDomainSeparator(keccak: Keccak, chainId: number, verifyingContract: string): Uint8Array | null {
   const address = verifyingContract.startsWith('0x') ? verifyingContract.slice(2) : verifyingContract;
   if (!Number.isSafeInteger(chainId) || chainId < 0 || !/^[0-9a-f]{40}$/.test(address)) return null;
-  const typeHash = keccak(utf8(DOMAIN_TYPE));
+  if (!eip.chitDomain(BigInt(chainId), address)) return null;
   return keccak(concat([
-    typeHash,
+    keccak(utf8(DOMAIN_TYPE)),
     keccak(utf8(DOMAIN_NAME)),
     keccak(utf8(DOMAIN_VERSION)),
     padUint(BigInt(chainId)),
@@ -376,32 +401,14 @@ export interface PayToJudgement {
   reason: 'bad_alg' | 'off_curve' | 'key_hash_mismatch' | 'bad_signature' | 'key_revoked_tombstone' | 'expiry_not_after_hour' | 'key_expired' | 'bad_key' | null;
 }
 
-function hashBytes(alg: number, key: Uint8Array, sha256: Sha): Uint8Array {
-  const body = new Uint8Array(1 + key.length);
-  body[0] = alg;
-  body.set(key, 1);
-  return sha256(body);
+function bindShared(alg: number | null | undefined, key: Uint8Array | null | undefined): { ok: true; hash: Uint8Array; hex: string } | { ok: false; reason: 'bad_alg' | 'off_curve' } {
+  if (typeof alg !== 'number' || !key) return { ok: false, reason: 'bad_alg' };
+  const got = eip.keyHash(alg, key);
+  if (got.ok) return { ok: true, hash: got.bytes, hex: got.hex };
+  if (got.reason === 'bad_alg') return { ok: false, reason: 'bad_alg' };
+  return { ok: false, reason: 'off_curve' };
 }
 
-/** Algorithm, then the curve, then the hash. A failure is not a keyHash. */
-export function bindKey(
-  alg: number | null | undefined,
-  key: Uint8Array | null | undefined,
-  sha256: Sha,
-  gate: KeyGate,
-): { ok: true; hash: Uint8Array } | { ok: false; reason: 'bad_alg' | 'off_curve' } {
-  if (typeof alg !== 'number' || !Number.isInteger(alg) || !gate.allowed(alg)) {
-    return { ok: false, reason: 'bad_alg' };
-  }
-  if (!key || !gate.onCurve(key)) return { ok: false, reason: 'off_curve' };
-  return { ok: true, hash: hashBytes(alg, key, sha256) };
-}
-
-/**
- * The record is shown at showingHour. expiry must be strictly after that
- * hour, and a receipt at or after expiry does not verify. A tombstoned
- * keyHash never becomes valid again.
- */
 export function judgePayTo(input: {
   alg: number | null | undefined;
   key: Uint8Array | null | undefined;
@@ -413,11 +420,12 @@ export function judgePayTo(input: {
   sha256: Sha;
   gate: KeyGate;
 }): PayToJudgement {
-  const bound = bindKey(input.alg, input.key, input.sha256, input.gate);
+  const bound = bindShared(input.alg, input.key);
   if (!bound.ok) return bound;
   if (!equalBytes(bound.hash, input.keyHash)) return { ok: false, reason: 'key_hash_mismatch' };
-  if (input.tombstoned) return { ok: false, reason: 'key_revoked_tombstone' };
-  if (input.expiry <= BigInt(input.showingHour)) return { ok: false, reason: 'expiry_not_after_hour' };
+  if (eip.tombstoned(input.tombstoned ? [bound.hex] : [], bound.hex)) return { ok: false, reason: 'key_revoked_tombstone' };
+  const showing = BigInt(input.showingHour);
+  if (!eip.expiryAllows(showing, input.expiry)) return { ok: false, reason: 'expiry_not_after_hour' };
   if (BigInt(input.receiptHour) >= input.expiry) return { ok: false, reason: 'key_expired' };
   return { ok: true, reason: null };
 }
@@ -429,11 +437,10 @@ export interface RevokeByKeyParts {
   signature: Uint8Array;
 }
 
-/**
- * A slot value is either a 33-byte compressed key, or that key plus
- * alg || expiry || keyHash || revokeCount || RevokeByKey bodies.
- * A longer value that does not parse fails closed.
- */
+function compressed33(key: Uint8Array): boolean {
+  return key.length === 33 && (key[0] === 0x02 || key[0] === 0x03);
+}
+
 export function parseSlotValue(slotValue: Uint8Array): {
   ok: true;
   key: Uint8Array;
@@ -459,15 +466,11 @@ export function parseSlotValue(slotValue: Uint8Array): {
   let off = 75;
   for (let i = 0; i < count; i += 1) {
     if (off + 1 + 33 + 32 + 64 > slotValue.length) return { ok: false, reason: 'bad_key' };
-    const revokeAlg = slotValue[off];
-    const revokeKey = slotValue.subarray(off + 1, off + 34);
-    const revokeHash = slotValue.subarray(off + 34, off + 66);
-    const signature = slotValue.subarray(off + 66, off + 130);
     revokes.push({
-      alg: revokeAlg,
-      key: revokeKey,
-      keyHash: revokeHash,
-      signature,
+      alg: slotValue[off],
+      key: slotValue.subarray(off + 1, off + 34),
+      keyHash: slotValue.subarray(off + 34, off + 66),
+      signature: slotValue.subarray(off + 66, off + 130),
     });
     off += 130;
   }
@@ -492,23 +495,19 @@ export function assessSlotValue(input: {
   if (input.showingHour == null || input.receiptHour == null || !input.admitting) {
     return { ok: false, reason: 'bad_key' };
   }
-  const tombstones = new Set<string>();
+  const tombstones: string[] = [];
   for (const revoke of parsed.record.revokes) {
-    const bound = bindKey(revoke.alg, revoke.key, input.sha256, input.gate);
+    const bound = bindShared(revoke.alg, revoke.key);
     if (!bound.ok) return bound;
     if (!equalBytes(bound.hash, revoke.keyHash)) return { ok: false, reason: 'key_hash_mismatch' };
     const digest = revokeByKeyDigest(input.keccak, input.chainId, input.admitting, revoke.keyHash);
-    if (!digest || revoke.signature.length !== 64 || !input.signatureOk(digest, revoke.signature, revoke.key)) {
+    if (!digest || !input.signatureOk(digest, revoke.signature, revoke.key)) {
       return { ok: false, reason: 'bad_signature' };
     }
-    let hex = '';
-    for (let i = 0; i < bound.hash.length; i += 1) hex += bound.hash[i].toString(16).padStart(2, '0');
-    tombstones.add(hex);
+    tombstones.push(bound.hex);
   }
-  let claimed = '';
-  for (let i = 0; i < parsed.record.keyHash.length; i += 1) {
-    claimed += parsed.record.keyHash[i].toString(16).padStart(2, '0');
-  }
+  const claimed = bindShared(parsed.record.alg, parsed.key);
+  if (!claimed.ok) return claimed;
   return judgePayTo({
     alg: parsed.record.alg,
     key: parsed.key,
@@ -516,7 +515,7 @@ export function assessSlotValue(input: {
     expiry: parsed.record.expiry,
     showingHour: input.showingHour,
     receiptHour: input.receiptHour,
-    tombstoned: tombstones.has(claimed),
+    tombstoned: eip.tombstoned(tombstones, claimed.hex),
     sha256: input.sha256,
     gate: input.gate,
   });

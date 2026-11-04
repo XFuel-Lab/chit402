@@ -10,8 +10,9 @@
  * later than the anchor block of the first epoch that shows the record.
  */
 
-export const DOMAIN_NAME = 'Chit402';
-export const DOMAIN_VERSION = '13';
+import { DOMAIN_NAME, DOMAIN_VERSION } from './key-record.js';
+
+export { DOMAIN_NAME, DOMAIN_VERSION };
 
 export interface SlotDomain {
   name: string;

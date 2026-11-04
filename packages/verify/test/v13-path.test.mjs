@@ -60,11 +60,11 @@ setDefaultResultOrder('ipv4first');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = new URL('../../cs2-core/', import.meta.url);
 const { leafHash, nodeHash } = await import(new URL('merkle/index.js', CORE));
-const { encodeLine, commitments, slotKey, stateLeaf, isAllowedAlg, checkSigma } = await import(new URL('line/index.mjs', CORE));
+const { encodeLine, commitments, slotKey, stateLeaf, isAllowedAlg } = await import(new URL('line/index.mjs', CORE));
+const { checkSigma, verifyPossession, canonicalKey } = await import(new URL('eip712/index.mjs', CORE));
 const { keccak256 } = await import(new URL('ecdsa/keccak.js', CORE));
 const { sha256 } = await import(new URL('sha256.js', CORE));
 const { P256 } = await import(new URL('ecdsa/curves.js', CORE));
-const { yParityByTrial } = await import(new URL('ecdsa/recover.js', CORE));
 const { signRawDigest } = await import(new URL('ecdsa/sign.js', CORE));
 const { bytesToBig } = await import(new URL('ecdsa/bytes.js', CORE));
 const { issuerHistoryEntryHash } = await import('../dist/issuer-history.js');
@@ -1467,8 +1467,7 @@ test('key status needs both proofs, and a tombstone applies only forward', () =>
   assert.equal(keyStatus({ ...base, hourStart: 200, registration: { ...registration, expiry: 200n } }).reason, 'expired');
   assert.equal(keyStatus({ ...base, block: 22_000_000, hourStart: 1_700_000_000, registration: { ...registration, expiry: 1_800_000_000n, admissionBlock: 90 } }).exit, 0);
   assert.equal(keyStatus({ ...base, payToProof: { siblings: [], root: 'aa' }, keyProof: { siblings: [], root: 'bb' } }).reason, 'two_roots');
-  const sigmaKey = new Uint8Array(33);
-  sigmaKey[0] = 2;
+  const sigmaKey = Buffer.from('036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296', 'hex');
   const derived = keySlotKey(84532, sha256(Buffer.concat([Buffer.from([1]), Buffer.from(sigmaKey)])), sha256);
   assert.equal(keyStatus({
     ...base,
@@ -1512,27 +1511,14 @@ test('T4 the published PoP vector verifies low-S and rejects high-S', () => {
   const sig = Buffer.from('2e238cb3c5b55330c113777a6695d5f94e5e4c3f2298dcdd397eb503c5c5c88938f10d7bce3aa35340558528143104c1f9c02ccba0be6026133ad4d15d7dc038', 'hex');
   assert.equal(checkSigma(sig).ok, true);
   assert.equal(pointOnCurve(key, P256), true);
-  const x = BigInt(`0x${key.subarray(1).toString('hex')}`);
-  const p = P256.p;
-  const rhs = (((((x * x) % p) * x) % p) + ((P256.a * x) % p) + P256.b) % p;
-  let y = 1n;
-  let base = rhs % p;
-  let exp = (p + 1n) / 4n;
-  while (exp > 0n) {
-    if ((exp & 1n) === 1n) y = (y * base) % p;
-    base = (base * base) % p;
-    exp >>= 1n;
-  }
-  if (((y & 1n) === 1n) !== (key[0] === 3)) y = (p - y) % p;
-  const point = Buffer.alloc(65);
-  point[0] = 4;
-  point.set(key.subarray(1), 1);
-  point.set(Buffer.from(y.toString(16).padStart(64, '0'), 'hex'), 33);
-  yParityByTrial(input, sig, point, P256);
+  const canon = canonicalKey(0x01, key);
+  assert.equal(canon.ok, true);
+  assert.equal(verifyPossession(d, canon.uncompressed, sig).ok, true);
   const s = BigInt(`0x${sig.subarray(32).toString('hex')}`);
   const highS = (P256.order - s).toString(16).padStart(64, '0');
   const high = Buffer.concat([sig.subarray(0, 32), Buffer.from(highS, 'hex')]);
   assert.equal(checkSigma(high).ok, false);
+  assert.equal(verifyPossession(d, canon.uncompressed, high).ok, false);
 });
 
 test('an empty prior slot, a u16 signature prefix, and the test-vector key', () => {
