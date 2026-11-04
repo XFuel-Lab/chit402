@@ -1,0 +1,53 @@
+{
+  "schema": "chit402.cs2.seal.vendor-pins.v1",
+  "alg": "sha256",
+  "note": "Byte-exact files from the published npm tarballs. integrity is the npm sha512 of the tarball. tarball_sha256 is the sha256 of that same tarball. files are per-file sha256 of the bytes in this tree. Nothing is fetched at runtime.",
+  "packages": [
+    {
+      "name": "@noble/hashes",
+      "version": "2.4.0",
+      "integrity": "sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==",
+      "tarball_sha256": "e1946149b780017b2564fcc092cb01c04e1d7f20627d0296c17da8868f4436dc"
+    },
+    {
+      "name": "@noble/ciphers",
+      "version": "2.4.0",
+      "integrity": "sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==",
+      "tarball_sha256": "4a398bcc280c8742d474f9162f6d3c153e52ab1078e8ab592b4720410fb3c3e9"
+    },
+    {
+      "name": "@noble/curves",
+      "version": "2.4.0",
+      "integrity": "sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==",
+      "tarball_sha256": "55279c71b0201d6c0e58d0206d15825359e02a3932f326ba7b7909ac2d334aa9"
+    }
+  ],
+  "files": {
+    "node_modules/@noble/ciphers/LICENSE": "f36671a5487c9c5050efacb58011c37c24c55a889803cb036cf9d9a6347c1e2d",
+    "node_modules/@noble/ciphers/_arx.js": "ead142ba410404c0698bb80e0d6f77780799bb77a9e3b098cf0f9fca1c486e37",
+    "node_modules/@noble/ciphers/_poly1305.js": "5d2afd73b40dbafb7b6740c6e6388e7123c79a4e57306861b28c5734925fa84d",
+    "node_modules/@noble/ciphers/chacha.js": "5f1c00575e227b75163f4bac50b79442dec50ee3047c46c18887808ba8af0a69",
+    "node_modules/@noble/ciphers/package.json": "feb7f2751f467dbde186fbcbaa7512ca0fe4c30bd0429e9e276d0c186357697b",
+    "node_modules/@noble/ciphers/utils.js": "a443ec1f60d1aaa25d1b7d8c102d33c0e8e6d683ada1ad17be9c32e69170ff95",
+    "node_modules/@noble/curves/LICENSE": "4f221aee6e072336700c408c68ab3b96a3fc09f6aebe6f48f1bd99e5ef13faec",
+    "node_modules/@noble/curves/abstract/curve.js": "dbaeee3b41ff47efb76b78e14170fe4dda7c7ecdc387c402f16c5118e0bac356",
+    "node_modules/@noble/curves/abstract/edwards.js": "f24a9c221a549a8fff259eb8f245ab0dc17679b13c532c3970d91acc4df9fffd",
+    "node_modules/@noble/curves/abstract/fft.js": "a4b2ff7ca33f4acc85d61f0e83ec3303c3f6b38ecc19b20d0f6462d820e518cf",
+    "node_modules/@noble/curves/abstract/frost.js": "9a95f1fdf7e17b9d93a16049db675ee2967ed2a04cf59b1bd981d4662acbedf5",
+    "node_modules/@noble/curves/abstract/hash-to-curve.js": "e3c97e7d0827b728b14e3311ed11d8e386d8a70d8fc77e0b9fd2a3090f19d955",
+    "node_modules/@noble/curves/abstract/modular.js": "9ced3aa10598277a735e54f7b61d88e929d565da884ba5385f9006ebb3b6aab2",
+    "node_modules/@noble/curves/abstract/montgomery.js": "cdafa8816dad5a24475ec51952c5f71fdd5d1b46880ab982694c4f8ff605fc46",
+    "node_modules/@noble/curves/abstract/oprf.js": "2ca36b3e4930092db1f91559410e86975816c036e248067bc65a8055aa1c504c",
+    "node_modules/@noble/curves/ed25519.js": "e13f6c50c36feb0d18bf7986d5f881bcefb5f1f5b16de3cc5ee7693254c7a0b5",
+    "node_modules/@noble/curves/package.json": "63d976a6ee72f2dcdc81e6c8bf907edff54eb20e8423218578fbfaf29cff96e6",
+    "node_modules/@noble/curves/utils.js": "be9ff86aef76419376e4d66cf01a134f3117f1f8dd62d81f1b79100145503367",
+    "node_modules/@noble/hashes/LICENSE": "4f221aee6e072336700c408c68ab3b96a3fc09f6aebe6f48f1bd99e5ef13faec",
+    "node_modules/@noble/hashes/_md.js": "60cf3010fda89e3e4d3f0e7ff1ce249e9c467f34b4fd41b6fd6101d9f69be763",
+    "node_modules/@noble/hashes/_u64.js": "b09da8c07fe8187c07649494cdb7cd0bcf13df90b506a9473d19e4d5f8c2e102",
+    "node_modules/@noble/hashes/hkdf.js": "ccb942a8008f974018965eeb1e33b8f4739bf767c6f95f2ceb06f5873a302f67",
+    "node_modules/@noble/hashes/hmac.js": "fec9f8f3aeda785ea2de91cc4c059d54ef98196261c026c43f48341007ae52c9",
+    "node_modules/@noble/hashes/package.json": "3e361734f5269de162fa362483d7f45dee7efb533ec217157945338f7591baaf",
+    "node_modules/@noble/hashes/sha2.js": "471746bba6ec4c6238ca41358d1d3b40b6ff31cf3363f0b4d550c649c1a8e83b",
+    "node_modules/@noble/hashes/utils.js": "037ad49adb78168b6b699598fd33f85f7877456b1d28b4d032e2a1a16807947c"
+  }
+}
