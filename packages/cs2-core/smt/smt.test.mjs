@@ -14,6 +14,7 @@ import { keccak256 } from '../ecdsa/keccak.js';
 import { publicPoint, signRawDigest } from '../ecdsa/sign.js';
 import { ethereumAddress } from '../ecdsa/address.js';
 import { bigToBytes, bytesToBig, bytesToHex, concat, hexToBytes } from '../ecdsa/bytes.js';
+import { KIND_KEY, keySlotKey } from '../eip712/kinds.mjs';
 import {
   KIND_BOOK,
   KIND_EPOCH,
@@ -1288,4 +1289,39 @@ test('rev 5.1: expiry, slot revoke scope, empty previous epoch, and the PoP vect
   swapped[sigAt] = 65;
   swapped[sigAt + 1] = 0;
   assert.equal(decodeHistory(swapped).ok, false);
+
+  const keySlot = keySlotKey(CHAIN, new Uint8Array(32).fill(0x33));
+  assert.equal(keySlot.ok, true, keySlot.reason);
+  assert.equal(keySlot.hex, 'e791917a7c2f11b2f7d6db4b211822aa63593fd8a7e3b0abdfee3ec180e62613');
+  assert.equal(KIND_KEY, 0x05);
+});
+
+test('F-rule7-other and a rollback are decided by proof of possession', () => {
+  let held = emptyHistory(KIND_PAYTO, CHAIN, otherPayTo).bytes;
+  held = seal(held, register(held, otherPayTo, otherScalar, sellerKey, 5n)).bytes;
+  const stolen = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const withPossession = seal(stolen, register(stolen, payTo, payToScalar, sellerKey, 6n), {
+    others: [{ id: otherPayTo, bytes: held }],
+  });
+  assert.equal(withPossession.ok, true, withPossession.reason);
+  const without = register(stolen, payTo, payToScalar, sellerKey, 6n, { keySig: new Uint8Array(64) });
+  assert.equal(seal(stolen, without).reason, 'rule_4');
+
+  let base = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  base = seal(base, register(base, payTo, payToScalar, sellerKey, 5n)).bytes;
+  const extended = seal(base, revoke(base, sellerHash, 9n, payToRevokeSig(payTo, payToScalar, sellerHash), 'payTo')).bytes;
+  function anchor(historyBytes, epoch) {
+    let tree = createTree();
+    const placed = placeHistory(tree, historyBytes);
+    tree = drawEpoch(placed.tree, { chainId: CHAIN, epoch: 0, hourStart: 0, randomness: fill(epoch) }).tree;
+    return {
+      key: placed.slotKey.bytes,
+      value: historyBytes,
+      proof: prove(tree, placed.slotKey.bytes).proof,
+      root: rootBytes(tree),
+      epoch: BigInt(epoch),
+    };
+  }
+  assert.equal(detectEquivocation(anchor(extended, 1), anchor(base, 2)).equivocation, true);
+  assert.equal(detectEquivocation(anchor(base, 1), anchor(extended, 2)).equivocation, false);
 });

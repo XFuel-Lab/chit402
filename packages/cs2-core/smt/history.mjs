@@ -57,12 +57,13 @@
  */
 
 import { createHash } from 'node:crypto';
-import { KIND_BOOK, KIND_KEY, KIND_PAYTO, KIND_WALLET, isAllowedAlg, slotKey } from '../line/index.mjs';
+import { KIND_BOOK, KIND_WALLET, isAllowedAlg, slotKey } from '../line/index.mjs';
+import { KIND_KEY, KIND_PAYTO, keySlotKey } from '../eip712/kinds.mjs';
 import {
   checkAdmission,
   checkTombstone,
   keyStatus as sharedKeyStatus,
-} from '../eip712/slots.mjs';
+} from '../key-status/status.mjs';
 import { bytesToHex, equalBytes } from '../ecdsa/bytes.js';
 import { verifyProof } from './tree.mjs';
 import { fail } from './reasons.mjs';
@@ -892,7 +893,7 @@ export function verifyKeyStatus(input) {
   const hash = sellerKeyHash(input.alg, input.sellerKey);
   if (!hash) return unproven;
   const payKey = slotKey({ kind: KIND_PAYTO, chainId: chain, id: input.payTo });
-  const keyKey = slotKey({ kind: KIND_KEY, chainId: chain, id: hash });
+  const keyKey = keySlotKey(chain, hash);
   if (!payKey.ok || !keyKey.ok) return unproven;
   if (input.otherRoot instanceof Uint8Array && !equalBytes(input.otherRoot, input.root)) return unproven;
   if (!verifyProof(payKey.bytes, input.payToValue, input.payToProof, input.root).ok) return unproven;
@@ -964,7 +965,9 @@ export function verifyAdmission(spec) {
   if (!(spec.block > spec.prevAnchor && spec.block <= spec.showAnchor)) return fail('rule_1');
   const chain = chainOf(spec.chainId);
   if (chain === null) return fail('bad_history');
-  const key = slotKey({ kind: spec.kind, chainId: chain, id: spec.id });
+  const key = spec.kind === KIND_KEY
+    ? keySlotKey(chain, spec.id)
+    : slotKey({ kind: spec.kind, chainId: chain, id: spec.id });
   if (!key.ok) return key;
   const prev = verifyProof(key.bytes, spec.prevValue, spec.prevProof, spec.prevRoot);
   if (!prev.ok) return { ok: false, reason: 'key_status_unproven', status: KEY_STATUS_UNPROVEN, killed: false };
