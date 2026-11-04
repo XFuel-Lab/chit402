@@ -22,7 +22,15 @@ import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
 import { verifySlot, type VerifySlotInput } from './slot.js';
-import { assessSlotValue } from './key-record.js';
+import {
+  KEY_STATUS_SCHEMA,
+  cachedAdmission,
+  clearAdmissionCache,
+  keySlotKey,
+  keyStatus,
+  parseKeyHash,
+  readPayToSignatures,
+} from './key-record.js';
 import {
   ANCHORED_TOPIC0,
   UNAUDITED_NOTE,
@@ -169,6 +177,22 @@ function hermetic(): boolean {
   return process.env.CHIT402_HERMETIC === '1' || Boolean(process.env.NODE_TEST_CONTEXT);
 }
 
+function canonRpc(url: string): string {
+  const trimmed = url.trim();
+  try {
+    const parsed = new URL(trimmed);
+    parsed.hostname = parsed.hostname.toLowerCase();
+    parsed.hash = '';
+    if ((parsed.protocol === 'https:' && parsed.port === '443') || (parsed.protocol === 'http:' && parsed.port === '80')) {
+      parsed.port = '';
+    }
+    parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return trimmed.toLowerCase().replace(/\/+$/, '');
+  }
+}
+
 function rpcUrls(chainId: number, options: V13Options): string[] {
   let raw: string[] = [];
   if (options.rpcUrls && options.rpcUrls.length > 0) {
@@ -181,7 +205,7 @@ function rpcUrls(chainId: number, options: V13Options): string[] {
     if (typeof fromEnv === 'string' && fromEnv.trim() !== '') raw = [fromEnv.trim()];
     else raw = [...(V13_RPC_DEFAULTS[chainId] ?? [])];
   }
-  return [...new Set(raw)];
+  return [...new Set(raw.map(canonRpc))];
 }
 
 function rpcError(code: string): Error {
@@ -189,7 +213,7 @@ function rpcError(code: string): Error {
 }
 
 async function rpc(urls: string[], method: string, params: unknown[]): Promise<unknown> {
-  const unique = [...new Set(urls)];
+  const unique = [...new Set(urls.map(canonRpc))];
   if (unique.length < 2) throw rpcError('rpc_unconfigured');
   const settled = await Promise.all(unique.map(async (url) => {
     try {
@@ -263,31 +287,18 @@ function lineView(decoded: { payment: Record<string, unknown> }, bytes: Uint8Arr
   };
 }
 
-function decompressP256(compressed: Uint8Array, ecdsa: EcdsaModule): Uint8Array | null {
-  if (compressed.length < 33) return null;
-  const key = compressed.subarray(0, 33);
-  if (key[0] !== 2 && key[0] !== 3) return null;
-  const p = ecdsa.P256.p;
-  const x = ecdsa.bytesToBig(key.subarray(1));
-  const x2 = (x * x) % p;
-  const x3 = (x2 * x) % p;
-  const ax = (ecdsa.P256.a * x) % p;
-  let rhs = (x3 + ax + ecdsa.P256.b) % p;
-  let y = 1n;
-  let base = rhs % p;
-  let exp = (p + 1n) / 4n;
-  while (exp > 0n) {
-    if ((exp & 1n) === 1n) y = (y * base) % p;
-    base = (base * base) % p;
-    exp >>= 1n;
+function foldProof(line: LineModule, leaf: Uint8Array, slotKeyBytes: Uint8Array, proof: string[], stateRoot: string): boolean {
+  let acc = leaf;
+  for (let i = 0; i < proof.length; i += 1) {
+    const sibling = hexToBytes(proof[i]);
+    if (!sibling || sibling.length !== 32) return false;
+    const byte = slotKeyBytes[Math.floor(i / 8)] ?? 0;
+    const bit = (byte >> (7 - (i % 8))) & 1;
+    const node = bit === 1 ? line.stateNode(sibling, acc) : line.stateNode(acc, sibling);
+    if (!node.ok) return false;
+    acc = node.bytes;
   }
-  const odd = (y & 1n) === 1n;
-  if (odd !== (key[0] === 3)) y = (p - y) % p;
-  const out = new Uint8Array(65);
-  out[0] = 4;
-  out.set(ecdsa.bigToBytes(x, 32), 1);
-  out.set(ecdsa.bigToBytes(y, 32), 33);
-  return out;
+  return bytesToHex(acc) === stateRoot.toLowerCase();
 }
 
 function proveKey(
@@ -295,66 +306,105 @@ function proveKey(
   view: LineView,
   slotValue: Uint8Array | null,
   slotProof: string[],
+  keySlotProof: string[],
   slotInput: VerifySlotInput,
   crypto: {
     sha256: (message: Uint8Array) => Uint8Array;
-    keccak: (message: Uint8Array) => Uint8Array;
-    ecdsa: EcdsaModule;
     eip: EipModule;
   },
-  hours: { showingHour: number | null; receiptHour: number | null },
+  hours: { receiptHour: number | null; block: number; priorAnchor: number; anchor: number; emptySlotAtPrior: boolean },
 ) {
-  return (stateRoot: string): boolean => {
-    const judged = verifySlot(slotInput);
-    if (judged.ignored) return false;
-    if (!slotValue) return false;
-    const use = assessSlotValue({
-      slotValue,
+  clearAdmissionCache();
+  return (stateRoot: string): boolean | { ok: boolean; reason: string | null } => {
+    const judged = verifySlot({
+      ...slotInput,
+      absentAtPrior: false,
+      emptySlotAtPrior: hours.emptySlotAtPrior,
+      memberAtEpoch: true,
+      admissionBlock: hours.block,
+      previousAnchorBlock: hours.priorAnchor,
+      showingAnchorBlock: hours.anchor,
+    });
+    if (judged.reason === 'domain_mismatch') return { ok: false, reason: 'domain_mismatch' };
+    if (judged.reason) return { ok: false, reason: null };
+    if (!slotValue || slotValue.length <= 33) return { ok: false, reason: 'bare_key' };
+    const sellerKey = slotValue.subarray(0, 33);
+    let expiry = 0n;
+    for (let i = 0; i < 8; i += 1) expiry = (expiry << 8n) | BigInt(slotValue[33 + i] ?? 0);
+    const signatures = readPayToSignatures(slotValue.subarray(41));
+    if (!signatures.ok) return { ok: false, reason: null };
+    const opened = line.commitments(view.bytes);
+    const point = crypto.eip.canonicalKey(0x01, sellerKey);
+    const popOk = opened.ok && point.ok && crypto.eip.verifyPossession(opened.sigmaDigest, point.uncompressed, signatures.pop).ok;
+    if (!popOk || !point.ok) return { ok: false, reason: null };
+    const keyHashText = `0x${bytesToHex(crypto.sha256(Uint8Array.of(0x01, ...sellerKey)))}`;
+    const keyHash = parseKeyHash(keyHashText);
+    const derivedSlot = keyHash ? keySlotKey(view.chainId, keyHash, crypto.sha256) : null;
+    if (!keyHash || !derivedSlot) return { ok: false, reason: null };
+    const paySlot = line.slotKey({ kind: 1, chainId: view.chainId, id: view.to.slice(2) });
+    if (!paySlot.ok) return { ok: false, reason: null };
+    const payLeaf = line.stateLeaf(paySlot.bytes, slotValue);
+    const keyLeaf = line.stateLeaf(derivedSlot, new Uint8Array(0));
+    if (!payLeaf.ok || !keyLeaf.ok) return { ok: false, reason: null };
+    if (!foldProof(line, payLeaf.bytes, paySlot.bytes, slotProof, stateRoot)) return { ok: false, reason: null };
+    if (!foldProof(line, keyLeaf.bytes, derivedSlot, keySlotProof, stateRoot)) return { ok: false, reason: null };
+    const admitted = cachedAdmission({
+      slotKey: bytesToHex(paySlot.bytes),
+      seq: 0,
+      absentAtPrior: false,
+      emptySlotAtPrior: hours.emptySlotAtPrior,
+      memberAtEpoch: true,
+      priorAnchor: hours.priorAnchor,
+      anchor: hours.anchor,
+      block: hours.block,
+    });
+    if (!admitted.ok || hours.receiptHour == null) return { ok: false, reason: null };
+    const status = keyStatus({
+      schema: KEY_STATUS_SCHEMA,
+      block: hours.block,
+      hourStart: hours.receiptHour,
+      stateRoot,
+      sigmaKey: sellerKey,
+      chainId: view.chainId,
       sha256: crypto.sha256,
-      keccak: crypto.keccak,
-      chainId: slotInput.chainId,
-      admitting: slotInput.admitting,
-      showingHour: hours.showingHour,
-      receiptHour: hours.receiptHour,
-      gate: {
-        allowed: () => true,
-        onCurve: (key) => crypto.eip.canonicalKey(0x01, key).ok,
+      bundleKeySlot: derivedSlot,
+      payToProof: { siblings: slotProof, root: stateRoot },
+      keyProof: { siblings: keySlotProof, root: stateRoot },
+      keyLeaf: 'empty',
+      registration: {
+        admissionBlock: admitted.block,
+        expiry,
+        payToSignature: signatures.payTo,
+        keySignature: signatures.pop,
+        popOk,
       },
-      signatureOk: (digest, signature, key) => {
-        const opened = crypto.eip.canonicalKey(0x01, key);
-        if (!opened.ok) return false;
-        return crypto.eip.verifyPossession(digest, opened.uncompressed, signature).ok;
+      slotRevokeBlock: null,
+      tombstone: null,
+      registrationKeyHash: keyHash,
+      admission: {
+        absentAtPrior: false,
+        emptySlotAtPrior: hours.emptySlotAtPrior,
+        memberAtEpoch: true,
+        priorAnchor: hours.priorAnchor,
+        anchor: hours.anchor,
+        block: admitted.block,
       },
     });
-    if (!use.ok) return false;
-    const key = line.slotKey({ kind: 1, chainId: view.chainId, id: view.to.slice(2) });
-    if (!key.ok) return false;
-    const leaf = line.stateLeaf(key.bytes, slotValue);
-    if (!leaf.ok) return false;
-    let acc = leaf.bytes;
-    for (let i = 0; i < slotProof.length; i += 1) {
-      const sibling = hexToBytes(slotProof[i]);
-      if (!sibling || sibling.length !== 32) return false;
-      const byte = key.bytes[Math.floor(i / 8)] ?? 0;
-      const bit = (byte >> (7 - (i % 8))) & 1;
-      const node = bit === 1 ? line.stateNode(sibling, acc) : line.stateNode(acc, sibling);
-      if (!node.ok) return false;
-      acc = node.bytes;
-    }
-    return bytesToHex(acc) === stateRoot.toLowerCase();
+    if (status.exit !== 0) return { ok: false, reason: null };
+    return { ok: true, reason: null };
   };
 }
 
 function sigmaOk(line: LineModule, ecdsa: EcdsaModule, eip: EipModule, bytes: Uint8Array, slotValue: Uint8Array | null): boolean {
-  if (!slotValue) return false;
+  if (!slotValue || slotValue.length < 33) return false;
   const opened = line.commitments(bytes);
   const decoded = line.decodeLine(bytes);
   if (!opened.ok || !decoded.ok) return false;
   if (!eip.checkSigma(decoded.sigma.sigma).ok) return false;
-  const point = decompressP256(slotValue, ecdsa);
-  if (!point) return false;
+  const point = eip.canonicalKey(0x01, slotValue.subarray(0, 33));
+  if (!point.ok) return false;
   try {
-    ecdsa.yParityByTrial(opened.sigmaDigest, decoded.sigma.sigma, point, ecdsa.P256);
+    ecdsa.yParityByTrial(opened.sigmaDigest, decoded.sigma.sigma, point.uncompressed, ecdsa.P256);
     return true;
   } catch {
     return false;
@@ -721,25 +771,34 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
 
   const slotValue = parsed.receipt.slotValue;
   const slotProof = parsed.receipt.slotProof;
+  const keySlotProof = parsed.receipt.keySlotProof;
+  const receiptEvent = events.find((event) => event.epoch === BigInt(parsed.receipt.epoch));
+  const priorEvent = parsed.receipt.epoch > 0
+    ? events.find((event) => event.epoch === BigInt(parsed.receipt.epoch - 1))
+    : undefined;
+  const receiptHour = receiptEvent && receiptEvent.hourStart <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(receiptEvent.hourStart)
+    : null;
   const hooks = {
     leafHash: loaded.merkle.leafHash,
     verifyInclusion: loaded.merkle.verifyInclusion,
-    proveKey: proveKey(loaded.line, line, slotValue, slotProof, {
+    proveKey: proveKey(loaded.line, line, slotValue, slotProof, keySlotProof, {
       chainId: line.chainId,
       admitting: parsed.receipt.contract,
       signedDomain: null,
-      admissionBlock: null,
-      previousAnchorBlock: null,
-      showingAnchorBlock: null,
+      admissionBlock: receiptEvent ? receiptEvent.blockNumber : null,
+      previousAnchorBlock: priorEvent ? priorEvent.blockNumber : 0,
+      showingAnchorBlock: receiptEvent ? receiptEvent.blockNumber : null,
       paymentBlock: line.blockNumber,
     }, {
       sha256: loaded.sha256,
-      keccak: loaded.keccak,
-      ecdsa: loaded.ecdsa,
       eip: loaded.eip,
     }, {
-      showingHour,
-      receiptHour: showingHour,
+      receiptHour,
+      block: receiptEvent ? receiptEvent.blockNumber : 0,
+      priorAnchor: priorEvent ? priorEvent.blockNumber : 0,
+      anchor: receiptEvent ? receiptEvent.blockNumber : 0,
+      emptySlotAtPrior: priorStatus === 'absent',
     }),
     sigmaOk: () => sigmaOk(loaded.line, loaded.ecdsa, loaded.eip, line.bytes, slotValue),
   };

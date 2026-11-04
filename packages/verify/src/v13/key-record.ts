@@ -203,7 +203,15 @@ export interface KeyStatusInput {
   slotRevokeKeyHash?: Uint8Array | null;
   registrationKeyHash?: Uint8Array | null;
   revokeByKeyOutsideKeySlot?: boolean;
-  tombstone: { revokedAtBlock: number | null; outOfBounds: boolean } | null;
+  tombstone: { revokedAtBlock: number | null; outOfBounds: boolean; signatureOk?: boolean } | null;
+  admission?: {
+    absentAtPrior: boolean;
+    emptySlotAtPrior?: boolean;
+    memberAtEpoch: boolean;
+    priorAnchor: number;
+    anchor: number;
+    block: number;
+  } | null;
 }
 
 export interface KeyStatusResult {
@@ -223,6 +231,27 @@ export function clearAdmissionCache(): void {
  * Cache around checkAdmission. An empty leaf at e−1 counts as absence.
  * A failed proof is not stored.
  */
+/** The module's admission rule. Callers pass the proof results they checked. */
+export function checkAdmissionProof(input: {
+  absentAtPrior: boolean;
+  emptySlotAtPrior?: boolean;
+  memberAtEpoch: boolean;
+  priorAnchor: number;
+  anchor: number;
+  block: number;
+}): { ok: true; block: bigint } | { ok: false; reason: string } {
+  const checked = keyStatusModule.checkAdmission({
+    absentAtPrev: input.absentAtPrior === true,
+    emptyAtPrev: input.emptySlotAtPrior === true,
+    memberAtEpoch: input.memberAtEpoch === true,
+    anchorPrev: BigInt(input.priorAnchor),
+    anchorEpoch: BigInt(input.anchor),
+    block: BigInt(input.block),
+  });
+  if (!checked.ok) return { ok: false, reason: checked.reason };
+  return { ok: true, block: checked.block };
+}
+
 export function cachedAdmission(input: {
   slotKey: string;
   seq: number;
@@ -236,14 +265,7 @@ export function cachedAdmission(input: {
   const id = `${input.slotKey}:${input.seq}`;
   const prior = admissionCache.get(id);
   if (prior != null) return { ok: true, block: prior, cached: true };
-  const checked = keyStatusModule.checkAdmission({
-    absentAtPrev: input.absentAtPrior === true,
-    emptyAtPrev: input.emptySlotAtPrior === true,
-    memberAtEpoch: input.memberAtEpoch === true,
-    anchorPrev: BigInt(input.priorAnchor),
-    anchorEpoch: BigInt(input.anchor),
-    block: BigInt(input.block),
-  });
+  const checked = checkAdmissionProof(input);
   if (!checked.ok) return { ok: false, exit: 2, reason: 'unproven' };
   admissionCache.set(id, input.block);
   return { ok: true, block: input.block, cached: false };
@@ -253,7 +275,7 @@ function status(exit: 0 | 1 | 2, reason: string | null, print: string | null = n
   return { proven: exit === 0, exit, reason, print };
 }
 
-function tombRecord(at: bigint, outOfBounds: boolean) {
+function tombRecord(at: bigint, outOfBounds: boolean, signatureOk = false) {
   const prev = outOfBounds ? at : 0n;
   const show = at > 0n ? at : 1n;
   return {
@@ -261,7 +283,7 @@ function tombRecord(at: bigint, outOfBounds: boolean) {
     prevAnchorBlock: prev,
     showAnchorBlock: show,
     decodeOk: true,
-    signatureOk: true,
+    signatureOk,
     keyHashOk: true,
     admission: {
       absentAtPrev: true,
@@ -284,7 +306,7 @@ function keyLeafOf(input: KeyStatusInput): unknown {
   const tomb = input.tombstone;
   if (!tomb) return { empty: true };
   if (tomb.revokedAtBlock == null) return { records: [{}] };
-  return { records: [tombRecord(BigInt(tomb.revokedAtBlock), tomb.outOfBounds)] };
+  return { records: [tombRecord(BigInt(tomb.revokedAtBlock), tomb.outOfBounds, tomb.signatureOk === true)] };
 }
 
 function fromShared(result: EipOk<{ status: string }> | EipNo, input: KeyStatusInput, print: string | null): KeyStatusResult {
@@ -324,7 +346,17 @@ export function keyStatus(input: KeyStatusInput): KeyStatusResult {
   const keyRoot = input.keyProof?.root ?? null;
   const stateRoot = input.stateRoot ?? payRoot ?? keyRoot ?? 'root';
   const otherRoot = [payRoot, keyRoot, input.stateRoot].find((root) => root != null && root !== stateRoot) ?? null;
-  const admitted = BigInt(reg.admissionBlock);
+  if (!input.admission) return status(2, 'unproven');
+  const admittedProof = checkAdmissionProof({
+    absentAtPrior: input.admission.absentAtPrior,
+    emptySlotAtPrior: input.admission.emptySlotAtPrior,
+    memberAtEpoch: input.admission.memberAtEpoch,
+    priorAnchor: input.admission.priorAnchor,
+    anchor: input.admission.anchor,
+    block: input.admission.block,
+  });
+  if (!admittedProof.ok || admittedProof.block !== BigInt(reg.admissionBlock)) return status(2, 'unproven');
+  const admitted = admittedProof.block;
   const slotRevoke = input.revokeByKeyOutsideKeySlot
     || input.slotRevokeBlock == null
     || input.slotRevokeKeyHash == null
@@ -349,11 +381,12 @@ export function keyStatus(input: KeyStatusInput): KeyStatusResult {
       expiry: reg.expiry,
       admissionBlock: admitted,
       admission: {
-        absentAtPrev: true,
-        memberAtEpoch: true,
-        anchorPrev: 0n,
-        anchorEpoch: admitted > 0n ? admitted : 1n,
-        block: admitted,
+        absentAtPrev: input.admission.absentAtPrior === true,
+        emptyAtPrev: input.admission.emptySlotAtPrior === true,
+        memberAtEpoch: input.admission.memberAtEpoch === true,
+        anchorPrev: BigInt(input.admission.priorAnchor),
+        anchorEpoch: BigInt(input.admission.anchor),
+        block: BigInt(input.admission.block),
       },
     },
     slotRevoke,
@@ -435,8 +468,8 @@ export function judgePayTo(input: {
   if (!equalBytes(bound.hash, input.keyHash)) return { ok: false, reason: 'key_hash_mismatch' };
   if (eip.tombstoned(input.tombstoned ? [bound.hex] : [], bound.hex)) return { ok: false, reason: 'key_revoked_tombstone' };
   const showing = BigInt(input.showingHour);
-  if (!eip.expiryAllows(showing, input.expiry)) return { ok: false, reason: 'expiry_not_after_hour' };
-  if (BigInt(input.receiptHour) >= input.expiry) return { ok: false, reason: 'key_expired' };
+  if (!eip.expiryAllows(BigInt(input.receiptHour), input.expiry)) return { ok: false, reason: 'expiry_not_after_hour' };
+  void showing;
   return { ok: true, reason: null };
 }
 

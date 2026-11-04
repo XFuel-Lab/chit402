@@ -2,7 +2,7 @@
  * The packed tarball has to run a v13 receipt. The line codec is vendored.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,10 +38,8 @@ test('the packed verifier loads the v13 path', () => {
       assert.equal(names.some((path) => path.endsWith(needle)), true, needle);
     }
     const tarball = join(pkg, listed[0].filename);
-    npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', tarball], {
-      cwd: dir,
-      encoding: 'utf8',
-    });
+    execFileSync('tar', ['-xzf', tarball, '-C', dir], { encoding: 'utf8' });
+    symlinkSync(join(pkg, 'node_modules'), join(dir, 'package', 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
     const script = `
       import { checkReceiptInput } from 'chit402-verify/check-input';
       const out = await checkReceiptInput(JSON.stringify({
@@ -57,7 +55,7 @@ test('the packed verifier loads the v13 path', () => {
       if (!JSON.stringify(out.verdict.notes || []).includes('anchor contract unaudited')) throw new Error('note');
     `;
     execFileSync(process.execPath, ['--input-type=module', '-e', script], {
-      cwd: dir,
+      cwd: join(dir, 'package'),
       encoding: 'utf8',
       env: { ...process.env, CHIT402_HERMETIC: '1' },
     });

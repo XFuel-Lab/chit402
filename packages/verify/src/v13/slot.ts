@@ -10,7 +10,7 @@
  * later than the anchor block of the first epoch that shows the record.
  */
 
-import { DOMAIN_NAME, DOMAIN_VERSION } from './key-record.js';
+import { DOMAIN_NAME, DOMAIN_VERSION, checkAdmissionProof } from './key-record.js';
 
 export { DOMAIN_NAME, DOMAIN_VERSION };
 
@@ -29,6 +29,9 @@ export interface VerifySlotInput {
   previousAnchorBlock: number | null;
   showingAnchorBlock: number | null;
   paymentBlock: number | null;
+  absentAtPrior?: boolean;
+  emptySlotAtPrior?: boolean;
+  memberAtEpoch?: boolean;
 }
 
 export interface VerifySlotResult {
@@ -48,8 +51,8 @@ export function domainFor(chainId: number, verifyingContract: string): SlotDomai
 }
 
 /**
- * Coverage is [genesisHourStart, retireHourStart]. A null retire hour
- * means the pin has not retired. The admitting contract is that pin.
+ * Coverage is [genesisHourStart, retireHourStart). The retire hour itself
+ * is outside. A null retire hour means the pin has not retired.
  */
 export function admittingContract(
   pins: readonly { address: string; chainId: number; genesisHourStart: number; retireHourStart: number | null }[],
@@ -59,7 +62,7 @@ export function admittingContract(
   for (const pin of pins) {
     if (pin.chainId !== chainId) continue;
     if (hourStart < pin.genesisHourStart) continue;
-    if (pin.retireHourStart != null && hourStart > pin.retireHourStart) continue;
+    if (pin.retireHourStart != null && hourStart >= pin.retireHourStart) continue;
     return pin.address;
   }
   return null;
@@ -70,19 +73,30 @@ export function verifySlot(input: VerifySlotInput): VerifySlotResult {
   if (
     input.signedDomain
     && domain
-    && input.signedDomain.verifyingContract.toLowerCase() !== domain.verifyingContract.toLowerCase()
+    && (
+      input.signedDomain.verifyingContract.toLowerCase() !== domain.verifyingContract.toLowerCase()
+      || input.signedDomain.name !== domain.name
+      || input.signedDomain.version !== domain.version
+      || input.signedDomain.chainId !== domain.chainId
+    )
   ) {
-    return { ignored: true, inBounds: false, domain, reason: 'old_domain_ignored' };
+    return { ignored: false, inBounds: false, domain, reason: 'domain_mismatch' };
   }
   if (
     input.admissionBlock != null
     && input.previousAnchorBlock != null
     && input.showingAnchorBlock != null
   ) {
-    const inBounds = input.admissionBlock > input.previousAnchorBlock
-      && input.admissionBlock <= input.showingAnchorBlock;
-    if (!inBounds) {
-      return { ignored: true, inBounds: false, domain, reason: 'admission_block_out_of_bounds' };
+    const checked = checkAdmissionProof({
+      absentAtPrior: input.absentAtPrior === true,
+      emptySlotAtPrior: input.emptySlotAtPrior === true,
+      memberAtEpoch: input.memberAtEpoch === true,
+      priorAnchor: input.previousAnchorBlock,
+      anchor: input.showingAnchorBlock,
+      block: input.admissionBlock,
+    });
+    if (!checked.ok) {
+      return { ignored: false, inBounds: false, domain, reason: 'admission_unproven' };
     }
   }
   return { ignored: false, inBounds: true, domain, reason: null };

@@ -60,7 +60,7 @@ setDefaultResultOrder('ipv4first');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = new URL('../../cs2-core/', import.meta.url);
 const { leafHash, nodeHash } = await import(new URL('merkle/index.js', CORE));
-const { encodeLine, commitments, slotKey, stateLeaf, isAllowedAlg } = await import(new URL('line/index.mjs', CORE));
+const { encodeLine, commitments, slotKey, stateLeaf, stateNode, isAllowedAlg } = await import(new URL('line/index.mjs', CORE));
 const { checkSigma, verifyPossession, canonicalKey } = await import(new URL('eip712/index.mjs', CORE));
 const { keccak256 } = await import(new URL('ecdsa/keccak.js', CORE));
 const { sha256 } = await import(new URL('sha256.js', CORE));
@@ -230,7 +230,7 @@ function sellerMaterial(line) {
   const x = Buffer.from(jwk.x, 'base64url');
   const y = Buffer.from(jwk.y, 'base64url');
   const compressed = Buffer.concat([Buffer.from([y[31] & 1 ? 3 : 2]), x]);
-  return { sigmaHex: Buffer.from(signed.raw).toString('hex'), compressed };
+  return { sigmaHex: Buffer.from(signed.raw).toString('hex'), compressed, d };
 }
 
 function receiptOf(line, extra = {}) {
@@ -390,22 +390,62 @@ function optionsFor(key, doc, url, file) {
   };
 }
 
+function registrationValue(compressed, pop, expiry = 4_000_000_000n) {
+  const body = new Uint8Array(33 + 8 + 2 + 2 + 2 + 64);
+  body.set(compressed, 0);
+  let exp = expiry;
+  for (let i = 7; i >= 0; i -= 1) {
+    body[33 + i] = Number(exp & 0xffn);
+    exp >>= 8n;
+  }
+  body[41] = 0;
+  body[42] = 2;
+  body[43] = 9;
+  body[44] = 8;
+  body[45] = 0;
+  body[46] = 64;
+  body.set(pop, 47);
+  return body;
+}
+
 function signedLine(over = {}) {
-  const draft = buildLine(paymentParts(over));
-  const seller = sellerMaterial(draft);
-  const line = buildLine(paymentParts(over), seller.sigmaHex);
-  const leaf = leafHash(line);
-  const opened = commitments(line);
-  const key = slotKey({ kind: 1, chainId: 84532, id: paymentParts(over).to });
-  const leafState = stateLeaf(key.bytes, new Uint8Array(seller.compressed));
-  return {
-    line,
-    leaf: hexOf(leaf.hash),
-    stateRoot: hexOf(leafState.bytes),
-    slotValue: hexOf(seller.compressed),
-    payment: paymentParts(over),
-    sigmaDigest: opened.sigmaDigest,
-  };
+  const { expiry, ...paymentOver } = over;
+  const payment = paymentParts(paymentOver);
+  const payKey = slotKey({ kind: 1, chainId: 84532, id: payment.to });
+  let built = null;
+  for (let attempt = 0; attempt < 12 && !built; attempt += 1) {
+    const draft = buildLine(payment);
+    const seller = sellerMaterial(draft);
+    const line = buildLine(payment, seller.sigmaHex);
+    const opened = commitments(line);
+    const preimage = sha256(opened.sigmaDigest);
+    const secret = seller.d;
+    let pop = null;
+    for (let k = 3n; pop == null && k < 40n; k += 2n) {
+      try { pop = signRawDigest(preimage, secret, k, P256); } catch { pop = null; }
+    }
+    if (!pop) continue;
+    const slotValue = registrationValue(seller.compressed, pop.raw, expiry);
+    const hash = sha256(Buffer.concat([Buffer.from([1]), Buffer.from(seller.compressed)]));
+    const keySlot = keySlotKey(84532, hash, sha256);
+    if (!payKey.ok || !keySlot || ((payKey.bytes[0] >> 7) === (keySlot[0] >> 7))) continue;
+    const payLeaf = stateLeaf(payKey.bytes, slotValue);
+    const keyLeaf = stateLeaf(keySlot, new Uint8Array(0));
+    const payBit = (payKey.bytes[0] >> 7) & 1;
+    const root = payBit === 1 ? stateNode(keyLeaf.bytes, payLeaf.bytes) : stateNode(payLeaf.bytes, keyLeaf.bytes);
+    built = {
+      line,
+      leaf: hexOf(leafHash(line).hash),
+      stateRoot: hexOf(root.bytes),
+      slotValue: hexOf(slotValue),
+      slotProof: [hexOf(keyLeaf.bytes)],
+      keySlotProof: [hexOf(payLeaf.bytes)],
+      payment,
+      sigmaDigest: opened.sigmaDigest,
+    };
+  }
+  if (!built) throw new Error('seller key');
+  return built;
 }
 
 function v13Receipt(built, extra = {}) {
@@ -418,6 +458,8 @@ function v13Receipt(built, extra = {}) {
     contract: extra.contract ?? CONTRACT,
     proof: extra.proof ?? [],
     slotValue: built.slotValue,
+    slotProof: extra.fields && extra.fields.slotProof !== undefined ? undefined : built.slotProof,
+    keySlotProof: extra.fields && extra.fields.keySlotProof !== undefined ? undefined : built.keySlotProof,
     ...extra.fields,
   };
 }
@@ -1249,8 +1291,8 @@ test('the admitting domain ignores an old contract and an admission block outsid
     showingAnchorBlock: 110,
     paymentBlock: 100,
   });
-  assert.equal(old.ignored, true);
-  assert.equal(old.reason, 'old_domain_ignored');
+  assert.equal(old.ignored, false);
+  assert.equal(old.reason, 'domain_mismatch');
   assert.equal(old.domain.version, DOMAIN_VERSION);
   const late = verifySlot({
     chainId: 84532,
@@ -1261,8 +1303,8 @@ test('the admitting domain ignores an old contract and an admission block outsid
     showingAnchorBlock: 110,
     paymentBlock: 100,
   });
-  assert.equal(late.ignored, true);
-  assert.equal(late.reason, 'admission_block_out_of_bounds');
+  assert.equal(late.ignored, false);
+  assert.equal(late.reason, 'admission_unproven');
   assert.equal(DOMAIN_TYPE.includes('salt'), false);
   assert.equal(PAYTO_CONTROL_TYPE, 'PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)');
   assert.equal(REVOKE_TYPE, 'Revoke(address payTo,bytes32 keyHash)');
@@ -1297,8 +1339,8 @@ test('keyHash binds the alg byte, a tombstone stays dead, and expiry is rechecke
   });
   assert.equal(judged({}).ok, true);
   assert.equal(judged({ tombstoned: true }).reason, 'key_revoked_tombstone');
-  assert.equal(judged({ expiry: BigInt(hour), receiptHour: hour - 1 }).reason, 'expiry_not_after_hour');
-  assert.equal(judged({ receiptHour: hour + 10 }).reason, 'key_expired');
+  assert.equal(judged({ expiry: BigInt(hour), receiptHour: hour }).reason, 'expiry_not_after_hour');
+  assert.equal(judged({ receiptHour: hour, expiry: BigInt(hour + 10) }).ok, true);
   assert.equal(judged({ keyHash: sha256(Buffer.from(key)) }).reason, 'key_hash_mismatch');
   assert.equal(judged({ alg: 0x02 }).reason, 'bad_alg');
   assert.equal(judged({ alg: undefined, key }).reason, 'bad_alg');
@@ -1413,8 +1455,21 @@ test('key status needs both proofs, and a tombstone applies only forward', () =>
     registration,
     slotRevokeBlock: null,
     tombstone: null,
+    admission: {
+      absentAtPrior: false,
+      emptySlotAtPrior: true,
+      memberAtEpoch: true,
+      priorAnchor: 10,
+      anchor: 200,
+      block: 90,
+    },
   };
   assert.equal(keyStatus(base).exit, 0);
+  assert.equal(keyStatus({ ...base, admission: null }).exit, 2);
+  assert.equal(keyStatus({
+    ...base,
+    registration: { ...registration, admissionBlock: 120 },
+  }).exit, 2);
   assert.equal(keyStatus({ ...base, schema: 'chit402.cs2.key-status.v1' }).exit, 2);
   assert.equal(keyStatus({ ...base, schema: null }).reason, 'old_schema');
   assert.equal(keyStatus({ ...base, payToProof: null }).reason, 'unproven');
@@ -1422,8 +1477,8 @@ test('key status needs both proofs, and a tombstone applies only forward', () =>
   assert.equal(keyStatus({ ...base, registration: { ...registration, payToSignature: null } }).reason, 'unproven');
   assert.equal(keyStatus({ ...base, registration: { ...registration, keySignature: null } }).reason, 'unproven');
   assert.equal(keyStatus({ ...base, registration: { ...registration, popOk: false } }).reason, 'unproven');
-  assert.equal(keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: 100, outOfBounds: false } }).reason, 'revoked');
-  const early = keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: 150, outOfBounds: false } });
+  assert.equal(keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: 100, outOfBounds: false, signatureOk: true } }).reason, 'revoked');
+  const early = keyStatus({ ...base, keyLeaf: null, tombstone: { revokedAtBlock: 150, outOfBounds: false, signatureOk: true } });
   assert.equal(early.exit, 0);
   assert.equal(early.print, 'seller key revoked at block 150 (by key)');
   assert.equal(keyStatus({ ...base, keyLeaf: 'bare' }).exit, 2);
@@ -1439,7 +1494,8 @@ test('key status needs both proofs, and a tombstone applies only forward', () =>
     block: 50,
     keyLeaf: null,
     registration: { ...registration, admissionBlock: 120 },
-    tombstone: { revokedAtBlock: 100, outOfBounds: false },
+    admission: { absentAtPrior: false, emptySlotAtPrior: true, memberAtEpoch: true, priorAnchor: 10, anchor: 200, block: 120 },
+    tombstone: { revokedAtBlock: 100, outOfBounds: false, signatureOk: true },
   }).reason, 'registered_after_tombstone');
   const sameHash = new Uint8Array(32).fill(9);
   const otherHash = new Uint8Array(32).fill(8);
@@ -1454,6 +1510,7 @@ test('key status needs both proofs, and a tombstone applies only forward', () =>
     ...base,
     block: 130,
     registration: { ...registration, admissionBlock: 120 },
+    admission: { absentAtPrior: false, emptySlotAtPrior: true, memberAtEpoch: true, priorAnchor: 10, anchor: 200, block: 120 },
     slotRevokeBlock: 100,
     slotRevokeKeyHash: sameHash,
     registrationKeyHash: sameHash,
@@ -1567,6 +1624,81 @@ test('an empty prior slot, a u16 signature prefix, and the test-vector key', () 
   });
   assert.equal(seen.exit, 1);
   assert.equal(seen.print, 'test vector key');
+});
+
+test('P1 a bare payTo key with no registration and no key-slot proof is not verified', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const bare = Buffer.from(built.slotValue, 'hex').subarray(0, 33);
+  const pay = slotKey({ kind: 1, chainId: 84532, id: built.payment.to });
+  const leaf = stateLeaf(pay.bytes, bare);
+  const doc = bundleFor(key);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog({ ...built, stateRoot: hexOf(leaf.bytes) })] },
+    v13Receipt(built, { fields: { slotValue: hexOf(bare), slotProof: [], keySlotProof: [] } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 1);
+  assert.equal(seen.v.reason, 'bare_key');
+});
+
+test('a wrong key-slot proof, a wrong payTo proof, a bad possession signature, and a short expiry do not verify', async () => {
+  const key = makeKey();
+  const doc = bundleFor(key);
+  const built = signedLine();
+  const wrongKey = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built, { fields: { keySlotProof: ['00'.repeat(32)] } }), (u) => optionsFor(key, doc, u));
+  assert.notEqual(wrongKey.v.exit_code, 0);
+  const wrongPay = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built, { fields: { slotProof: ['00'.repeat(32)] } }), (u) => optionsFor(key, doc, u));
+  assert.notEqual(wrongPay.v.exit_code, 0);
+  const body = Buffer.from(built.slotValue, 'hex');
+  body[body.length - 1] ^= 0x01;
+  const pay = slotKey({ kind: 1, chainId: 84532, id: built.payment.to });
+  const hash = sha256(Buffer.concat([Buffer.from([1]), body.subarray(0, 33)]));
+  const keySlot = keySlotKey(84532, hash, sha256);
+  const payLeaf = stateLeaf(pay.bytes, body);
+  const keyLeaf = stateLeaf(keySlot, new Uint8Array(0));
+  const payBit = (pay.bytes[0] >> 7) & 1;
+  const root = payBit === 1 ? stateNode(keyLeaf.bytes, payLeaf.bytes) : stateNode(payLeaf.bytes, keyLeaf.bytes);
+  const badPop = {
+    ...built,
+    slotValue: body.toString('hex'),
+    stateRoot: hexOf(root.bytes),
+    slotProof: [hexOf(keyLeaf.bytes)],
+    keySlotProof: [hexOf(payLeaf.bytes)],
+  };
+  const popped = await runScene({ payment: built.payment, logs: [okLog(badPop)] }, v13Receipt(badPop), (u) => optionsFor(key, doc, u));
+  assert.notEqual(popped.v.exit_code, 0);
+  const short = signedLine({ expiry: 1000n });
+  const expired = await runScene({ payment: short.payment, logs: [okLog(short)] }, v13Receipt(short), (u) => optionsFor(key, doc, u));
+  assert.notEqual(expired.v.exit_code, 0);
+  const broken = Buffer.from(built.slotValue, 'hex').subarray(0, 50);
+  const brokenSeen = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { slotValue: broken.toString('hex') } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.notEqual(brokenSeen.v.exit_code, 0);
+});
+
+test('a receipt hour equal to the retire hour is outside coverage', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key, [pinOf({ retireHourStart: HOUR })]);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built, { hour: HOUR })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 1);
+  assert.equal(seen.v.reason, 'hour_outside_coverage');
+});
+
+test('a trailing slash does not make a second RPC endpoint', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => ({
+    ...optionsFor(key, doc, u),
+    rpcUrls: [`${u}/`, u],
+  }));
+  assert.equal(seen.v.exit_code, 2);
+  assert.equal(seen.v.reason, 'rpc_unconfigured');
 });
 
 test('D23 the CLI refuses a bad shape and an unpinned contract', () => {

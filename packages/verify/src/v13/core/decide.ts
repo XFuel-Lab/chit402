@@ -38,7 +38,7 @@ export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  */
 export const CORPUS_FLIP_LIST: readonly string[] = Object.freeze([]);
 
-const RECEIPT_KEYS = new Set(['v', 'schema', 'line', 'index', 'epoch', 'contract', 'proof', 'slotValue', 'slotProof']);
+const RECEIPT_KEYS = new Set(['v', 'schema', 'line', 'index', 'epoch', 'contract', 'proof', 'slotValue', 'slotProof', 'keySlotProof']);
 const LEAF_KEYS = new Set(['leaf', 'leafHash', 'leaf_hash']);
 const SIZE_KEYS = new Set(['treeSize', 'tree_size', 'size']);
 const PIN_KEYS = ['chainId', 'address', 'codeHash', 'predecessor', 'checkpoint', 'genesisHourStart', 'retireHourStart'];
@@ -115,6 +115,7 @@ export interface ParsedReceipt {
   proof: string[];
   slotValue: Uint8Array | null;
   slotProof: string[];
+  keySlotProof: string[];
   lineHex: string;
 }
 
@@ -184,7 +185,7 @@ export interface V13Hooks {
     root: string,
     proof: string[],
   ) => { ok: boolean; reason?: string };
-  proveKey: (stateRoot: string) => boolean;
+  proveKey: (stateRoot: string) => boolean | { ok: boolean; reason: string | null };
   sigmaOk: () => boolean;
 }
 
@@ -306,6 +307,8 @@ const MESSAGES: Record<string, string> = {
   not_in_log: 'NOT_IN_LOG',
   pending_hourly_close: 'pending hourly close',
   key_status_unproven: 'key status unproven',
+  domain_mismatch: 'The slot signature domain does not match the admitting contract.',
+  bare_key: 'The payTo slot has no registration.',
   sigma_invalid: 'The seller signature does not verify under the payTo slot.',
   unknown_block: 'The block hash is not known to the RPC.',
   block_not_final: 'The payment block is not final.',
@@ -378,6 +381,16 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
       slotProof.push(hash);
     }
   }
+  const keySlotProof: string[] = [];
+  if (hasOwn(value, 'keySlotProof')) {
+    if (!Array.isArray(value.keySlotProof)) return { ok: false, exit: 1, reason: 'bad_receipt' };
+    for (const step of value.keySlotProof) {
+      if (typeof step !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
+      const hash = normHash(step);
+      if (!hash) return { ok: false, exit: 1, reason: 'bad_receipt' };
+      keySlotProof.push(hash);
+    }
+  }
   return {
     ok: true,
     receipt: {
@@ -387,6 +400,7 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
       proof,
       slotValue,
       slotProof,
+      keySlotProof,
       lineHex: lineBody,
     },
   };
@@ -594,7 +608,7 @@ export function firstHourly(events: AnchoredEvent[], index: number, finalizedNum
 
 function hourInCoverage(pin: ContractPin, hourStart: number): boolean {
   if (hourStart < pin.genesisHourStart) return false;
-  if (pin.retireHourStart != null && hourStart > pin.retireHourStart) return false;
+  if (pin.retireHourStart != null && hourStart >= pin.retireHourStart) return false;
   return true;
 }
 
@@ -778,11 +792,15 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (!included.ok) return fail(1, 'not_in_log', world, { log_inclusion: 'fail' }, messageOf('not_in_log'));
   const hourly = firstHourly(mine, parsed.receipt.index, world.finalizedNumber);
   const stateRoot = hourly ? hourly.stateRoot : head.stateRoot;
-  const proven = hooks.proveKey(stateRoot);
-  if (!proven && !hourly) {
+  const proved = hooks.proveKey(stateRoot);
+  const proof = proved === true ? { ok: true, reason: null } : proved === false ? { ok: false, reason: null } : proved;
+  if (proof.reason === 'domain_mismatch' || proof.reason === 'bare_key') {
+    return fail(1, proof.reason, world, { signature: 'fail' }, messageOf(proof.reason));
+  }
+  if (!proof.ok && !hourly) {
     return fail(2, 'pending_hourly_close', world, { signature: 'could_not_check' }, messageOf('pending_hourly_close'));
   }
-  if (!proven) return fail(1, 'key_status_unproven', world, { signature: 'fail' }, messageOf('key_status_unproven'));
+  if (!proof.ok) return fail(1, 'key_status_unproven', world, { signature: 'fail' }, messageOf('key_status_unproven'));
   if (!hooks.sigmaOk()) return fail(1, 'sigma_invalid', world, { signature: 'fail' }, messageOf('sigma_invalid'));
   if (world.canonical === 'unknown_block') return fail(2, 'unknown_block', world, { payment_binding: 'could_not_check' }, messageOf('unknown_block'));
   if (world.canonical === 'not_final') return fail(2, 'block_not_final', world, { payment_binding: 'could_not_check' }, messageOf('block_not_final'));

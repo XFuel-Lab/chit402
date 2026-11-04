@@ -1,0 +1,28 @@
+{
+  "suite": {
+    "argv": ["npx", "tsc", "--pretty", "false", "--incremental", "false"]
+  },
+  "test": ["node", "--test", "--test-concurrency=1", "test/v13-path.test.mjs"],
+  "mutants": [
+    {"id": "M01", "file": "packages/verify/src/v13/verify.ts", "find": "if (!slotValue || slotValue.length <= 33) return { ok: false, reason: 'bare_key' };", "replace": "if (!slotValue) return { ok: false, reason: 'bare_key' };"},
+    {"id": "M02", "file": "packages/verify/src/v13/verify.ts", "find": "if (!foldProof(line, keyLeaf.bytes, derivedSlot, keySlotProof, stateRoot)) return { ok: false, reason: null };", "replace": "if (false) return { ok: false, reason: null };"},
+    {"id": "M03", "file": "packages/verify/src/v13/key-record.ts", "find": "if (!input.admission) return status(2, 'unproven');", "replace": "if (!input.admission) return status(0, null);"},
+    {"id": "M04", "file": "packages/verify/src/v13/verify.ts", "find": "if (!foldProof(line, payLeaf.bytes, paySlot.bytes, slotProof, stateRoot)) return { ok: false, reason: null };", "replace": "if (false) return { ok: false, reason: null };"},
+    {"id": "M05", "file": "packages/verify/src/v13/verify.ts", "find": "const popOk = opened.ok && point.ok && crypto.eip.verifyPossession(opened.sigmaDigest, point.uncompressed, signatures.pop).ok;", "replace": "const popOk = opened.ok && point.ok;"},
+    {"id": "M06", "file": "packages/verify/src/v13/verify.ts", "find": "const popOk = opened.ok && point.ok && crypto.eip.verifyPossession(opened.sigmaDigest, point.uncompressed, signatures.pop).ok;", "replace": "const popOk = true;"},
+    {"id": "M07", "file": "packages/verify/src/v13/verify.ts", "find": "hourStart: hours.receiptHour,", "replace": "hourStart: hours.block,"},
+    {"id": "M08", "file": "packages/verify/src/v13/slot.ts", "find": "input.signedDomain.verifyingContract.toLowerCase() !== domain.verifyingContract.toLowerCase()", "replace": "false"},
+    {"id": "M09", "file": "packages/verify/src/v13/verify.ts", "find": "if (!signatures.ok) return { ok: false, reason: null };", "replace": "if (!signatures.ok) return { ok: true, reason: null };"},
+    {"id": "M10", "file": "packages/verify/src/v13/verify.ts", "find": "const keyHash = parseKeyHash(keyHashText);", "replace": "const keyHash = null;"},
+    {"id": "M11", "file": "packages/verify/src/v13/verify.ts", "find": "if (status.exit !== 0) return { ok: false, reason: null };", "replace": "if (false) return { ok: false, reason: null };"},
+    {"id": "M12", "file": "packages/verify/src/v13/key-record.ts", "find": "if (!eip.expiryAllows(BigInt(input.receiptHour), input.expiry)) return { ok: false, reason: 'expiry_not_after_hour' };", "replace": "if (input.expiry < 0n) return { ok: false, reason: 'expiry_not_after_hour' };"},
+    {"id": "M13", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (pin.retireHourStart != null && hourStart >= pin.retireHourStart) return false;", "replace": "if (pin.retireHourStart != null && hourStart > pin.retireHourStart) return false;"},
+    {"id": "M14", "file": "packages/verify/src/v13/verify.ts", "find": "return [...new Set(raw.map(canonRpc))];", "replace": "return [...new Set(raw)];"},
+    {"id": "M15", "file": "packages/verify/src/v13/slot.ts", "find": "return { ignored: false, inBounds: false, domain, reason: 'domain_mismatch' };", "replace": "return { ignored: true, inBounds: false, domain, reason: 'domain_mismatch' };"},
+    {"id": "M16", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (proof.reason === 'domain_mismatch' || proof.reason === 'bare_key') {", "replace": "if (proof.reason === 'domain_mismatch') {"},
+    {"id": "M17", "file": "packages/verify/src/v13/verify.ts", "find": "const point = eip.canonicalKey(0x01, slotValue.subarray(0, 33));\n  if (!point.ok) return false;", "replace": "const point = { ok: true as const, uncompressed: slotValue.subarray(0, 65) };"},
+    {"id": "M18", "file": "packages/verify/src/v13/key-record.ts", "find": "if (!admittedProof.ok || admittedProof.block !== BigInt(reg.admissionBlock)) return status(2, 'unproven');", "replace": "if (!admittedProof.ok || admittedProof.block !== BigInt(reg.admissionBlock)) return status(0, null);"},
+    {"id": "M19", "file": "packages/verify/src/v13/verify.ts", "find": "return bytesToHex(acc) === stateRoot.toLowerCase();", "replace": "return true;"},
+    {"id": "M20", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!proof.ok && !hourly) {", "replace": "if (!proof.ok && hourly) {"}
+  ]
+}

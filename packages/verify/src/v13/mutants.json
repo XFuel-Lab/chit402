@@ -73,8 +73,8 @@
     {
       "id": "pending_is_final",
       "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "if (!proven && !hourly)",
-      "replace": "if (false && !proven && !hourly)"
+      "find": "if (!proof.ok && !hourly)",
+      "replace": "if (false && !proof.ok && !hourly)"
     },
     {
       "id": "ignore_revoke",
@@ -151,8 +151,8 @@
     {
       "id": "D-pending-flip",
       "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "if (!proven && !hourly)",
-      "replace": "if (!proven && hourly)"
+      "find": "if (!proof.ok && !hourly)",
+      "replace": "if (!proof.ok && hourly)"
     },
     {
       "id": "D-pending-exit1",
@@ -271,7 +271,7 @@
     {
       "id": "D-ignore-retire",
       "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "if (pin.retireHourStart != null && hourStart > pin.retireHourStart) return false;",
+      "find": "if (pin.retireHourStart != null && hourStart >= pin.retireHourStart) return false;",
       "replace": ""
     },
     {
@@ -349,7 +349,7 @@
     {
       "id": "D-sigma-always",
       "file": "packages/verify/src/v13/verify.ts",
-      "find": "ecdsa.yParityByTrial(opened.sigmaDigest, decoded.sigma.sigma, point, ecdsa.P256);\n    return true;",
+      "find": "ecdsa.yParityByTrial(opened.sigmaDigest, decoded.sigma.sigma, point.uncompressed, ecdsa.P256);\n    return true;",
       "replace": "return true;"
     },
     {

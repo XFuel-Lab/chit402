@@ -20,6 +20,12 @@
  */
 
 import { sha256 as digest } from '../sha256.js';
+import { P256 } from '../ecdsa/curves.js';
+import { KIND_CHANNEL, KIND_KEY, KIND_PAYTO, SLOT_DOMAIN } from '../eip712/kinds.mjs';
+import { LAUNCH_ALGS } from '../eip712/registry.mjs';
+import { checkSigma } from '../eip712/sigma-range.mjs';
+
+export { KIND_CHANNEL, KIND_KEY, KIND_PAYTO, SLOT_DOMAIN, checkSigma };
 
 export const SCHEMA = 'chit402.cs2.line.v1';
 
@@ -40,7 +46,6 @@ export const PAD_BYTES = LINE_BYTES - USED_BYTES;
 export const HEADER_BYTE_0 = 0x63;
 export const HEADER_BYTE_1 = 0x32;
 
-export const KIND_PAYTO = 0x01;
 export const KIND_WALLET = 0x02;
 export const KIND_BOOK = 0x03;
 export const KIND_EPOCH = 0x04;
@@ -55,21 +60,20 @@ const DOMAIN_CNT = 'cnt';
 // "c" versus "-". Do not append a variable-length field to either.
 const DOMAIN_LINE = 'cs2';
 const DOMAIN_SIG = 'cs2-sig';
-const DOMAIN_STATE = 'chit402-state-v1';
+const DOMAIN_STATE = SLOT_DOMAIN;
 const DOMAIN_EMPTY = 'empty';
 
 const STATE_LEAF_PREFIX = 0x00;
 const STATE_NODE_PREFIX = 0x01;
 const STATE_EMPTY_PREFIX = 0x02;
 
-/** NIST P-256 order. Seller keys are compressed P-256, so σ is low-S on this n. */
-const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
-const P256_HALF_N = P256_N >> 1n;
+/** NIST P-256 order, from the frozen curve. Seller keys are compressed P-256. */
+export const P256_N = P256.order;
 
-const ALG_SET = new Set([1]);
+const ALG_SET = new Set(LAUNCH_ALGS);
 
-/** Algorithms this codec accepts. A frozen array, not a live Set. */
-export const ALLOWED_ALGS = Object.freeze([1]);
+/** Algorithms this codec accepts. The frozen registry is the only list. */
+export const ALLOWED_ALGS = Object.freeze([...LAUNCH_ALGS]);
 
 export function isAllowedAlg(alg) {
   return ALG_SET.has(alg);
@@ -374,15 +378,6 @@ function readUriPrefix(value) {
 
 function requireAlg(alg) {
   if (!isAllowedAlg(alg)) return fail('bad_alg');
-  return { ok: true };
-}
-
-export function checkSigma(sigma64) {
-  if (sigma64.length !== 64) return fail('bad_length');
-  const r = readBe(sigma64, 0, 32);
-  const s = readBe(sigma64, 32, 32);
-  if (r < 1n || r >= P256_N) return fail('bad_sigma');
-  if (s < 1n || s > P256_HALF_N) return fail('bad_sigma');
   return { ok: true };
 }
 

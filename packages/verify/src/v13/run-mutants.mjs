@@ -35,7 +35,8 @@ if (!root) {
   process.exit(2);
 }
 
-const spec = JSON.parse(readFileSync(join(HERE, 'mutants.json'), 'utf8'));
+const specPath = args.includes('--spec') ? resolve(args[args.indexOf('--spec') + 1]) : join(HERE, 'mutants.json');
+const spec = JSON.parse(readFileSync(specPath, 'utf8'));
 const mutants = spec.mutants.filter((mutant) => only.size === 0 || only.has(mutant.id));
 const originals = new Map();
 
