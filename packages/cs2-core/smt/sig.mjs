@@ -100,23 +100,6 @@ function digestOf(chainId, contract, struct) {
   ]));
 }
 
-function mod(a, p) {
-  const r = a % p;
-  return r >= 0n ? r : r + p;
-}
-
-function modPow(base, exp, m) {
-  let result = 1n;
-  let b = mod(base, m);
-  let e = exp;
-  while (e > 0n) {
-    if (e & 1n) result = mod(result * b, m);
-    b = mod(b * b, m);
-    e >>= 1n;
-  }
-  return result;
-}
-
 /** Bytes of the shared keyHash, or null when the registry rejects the key. */
 export function sellerKeyHash(alg, key) {
   const got = keyHash(alg, key);
@@ -131,26 +114,6 @@ function possess(digest, alg, key, sig) {
 
 export function verifySellerSig(digest, sig, key) {
   return possess(digest, 1, key, sig);
-}
-
-/** Uncompressed P-256 point, or null. Book creation still recovers a 65-byte signature. */
-export function decompressP256(compressed) {
-  if (!(compressed instanceof Uint8Array) || compressed.length !== 33) return null;
-  const prefix = compressed[0];
-  if (prefix !== 0x02 && prefix !== 0x03) return null;
-  const x = bytesToBig(compressed.subarray(1));
-  const p = P256.p;
-  if (x >= p) return null;
-  const rhs = mod(mod(mod(x * x, p) * x, p) + mod(P256.a * x, p) + P256.b, p);
-  const y0 = modPow(rhs, (p + 1n) / 4n, p);
-  if (mod(y0 * y0, p) !== rhs) return null;
-  const odd = (y0 & 1n) === 1n;
-  const y = odd === (prefix === 0x03) ? y0 : mod(p - y0, p);
-  const out = new Uint8Array(65);
-  out[0] = 0x04;
-  out.set(bigToBytes(x, 32), 1);
-  out.set(bigToBytes(y, 32), 33);
-  return out;
 }
 
 function parityOf(v) {
@@ -181,11 +144,11 @@ function verifyK1(digest, sig, address) {
 function verifyP256Key(digest, sig, compressed) {
   const parts = splitSig(sig, P256);
   if (!parts) return false;
-  const want = decompressP256(compressed);
-  if (!want) return false;
+  const canon = canonicalKey(0x01, compressed);
+  if (!canon.ok) return false;
   const pub = recoverPublicKey(digest, parts.r, parts.s, parts.yParity, P256);
   if (!pub) return false;
-  return equalBytes(pub, want);
+  return equalBytes(pub, canon.uncompressed);
 }
 
 export function payToControlDigest(chainId, contract, payTo, alg, key, expiry) {

@@ -6,7 +6,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { keySlotKey } from '../eip712/kinds.mjs';
 import assert from 'node:assert/strict';
 import { renderLineJson, VECTOR_PATH } from './build-line.mjs';
 import * as codec from './index.mjs';
@@ -250,17 +249,16 @@ test('§S5 slot keys match the published vectors', () => {
   assert.equal(wallet.hex, SPEC_KEYS.wallet);
   const epoch = slotKey({ kind: 0x04, chainId: '8453' });
   assert.equal(epoch.hex, SPEC_KEYS.epoch);
-  const keySlot = keySlotKey(8453n, new Uint8Array(32).fill(0x33));
-  assert.equal(keySlot.ok, true, keySlot.reason);
-  assert.equal(keySlot.hex, 'e791917a7c2f11b2f7d6db4b211822aa63593fd8a7e3b0abdfee3ec180e62613');
 });
 
-test('reserved kinds and id widths are rejected', () => {
+test('kind 6 is rejected and kind 5 is the 32-byte key slot', () => {
   const id20 = '11'.repeat(20);
   const id32 = '22'.repeat(32);
-  for (const kind of [0, 5, 0xff, -1, 1.5, 256, Number.NaN]) {
+  for (const kind of [0, 6, 0xff, -1, 1.5, 256, Number.NaN]) {
     assertFail(slotKey({ kind, chainId: 8453, id: id20 }), 'bad_kind');
   }
+  assertFail(slotKey({ kind: 0x05, chainId: 8453, id: id20 }), 'bad_id_length');
+  assert.equal(slotKey({ kind: 0x05, chainId: 8453, id: '33'.repeat(32) }).hex, 'e791917a7c2f11b2f7d6db4b211822aa63593fd8a7e3b0abdfee3ec180e62613');
   assertFail(slotKey({ kind: -0, chainId: 8453, id: id20 }), 'bad_kind');
   assertFail(slotKey({ kind: 0x01, chainId: 8453, id: '11'.repeat(19) }), 'bad_id_length');
   assertFail(slotKey({ kind: 0x01, chainId: 8453, id: id32 }), 'bad_id_length');

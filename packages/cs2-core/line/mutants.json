@@ -153,9 +153,9 @@
     },
     {
       "id": "L22_kind_05",
-      "file": "packages/cs2-core/eip712/kinds.mjs",
-      "find": "export function keySlotKey(chainId, keyHashBytes) {",
-      "replace": "export function keySlotKey() { return { ok: false, reason: 'bad_kind' }; }\nexport function keySlotKeyHidden(chainId, keyHashBytes) {",
+      "file": "packages/cs2-core/line/index.mjs",
+      "find": "  [KIND_KEY, 32],\n",
+      "replace": "",
       "note": "kind 0x05 is rejected"
     },
     {
@@ -314,9 +314,9 @@
     },
     {
       "id": "L45_high_s",
-      "file": "packages/cs2-core/line/index.mjs",
-      "find": "if (s < 1n || s > P256_HALF_N) return fail('bad_sigma');",
-      "replace": "if (s < 1n || s >= P256_N) return fail('bad_sigma');",
+      "file": "packages/cs2-core/eip712/sigma-range.mjs",
+      "find": "if (s < 1n || s > P256_HALF_N) return { ok: false, reason: 'bad_sigma' };",
+      "replace": "if (s < 1n || s >= P256_N) return { ok: false, reason: 'bad_sigma' };",
       "note": "high-S signatures are accepted"
     },
     {
@@ -363,30 +363,30 @@
     },
     {
       "id": "L52_wrong_curve",
-      "file": "packages/cs2-core/line/index.mjs",
-      "find": "const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;",
+      "file": "packages/cs2-core/eip712/sigma-range.mjs",
+      "find": "const P256_N = P256.order;",
       "replace": "const P256_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;",
       "note": "low-S uses the secp256k1 order"
     },
     {
       "id": "L53_alg_allowlist",
       "file": "packages/cs2-core/line/index.mjs",
-      "find": "const ALG_SET = new Set([1]);",
+      "find": "const ALG_SET = new Set(LAUNCH_ALGS);",
       "replace": "const ALG_SET = new Set([0, 1, 2, 7, 255]);",
       "note": "alg is not restricted to the allowlist"
     },
     {
       "id": "L55_export_mutable_set",
       "file": "packages/cs2-core/line/index.mjs",
-      "find": "const ALG_SET = new Set([1]);",
-      "replace": "export const ALG_SET = new Set([1]);",
+      "find": "const ALG_SET = new Set(LAUNCH_ALGS);",
+      "replace": "export const ALG_SET = new Set(LAUNCH_ALGS);",
       "note": "the mutable alg Set is exported"
     },
     {
       "id": "L54_s_zero",
-      "file": "packages/cs2-core/line/index.mjs",
-      "find": "if (s < 1n || s > P256_HALF_N) return fail('bad_sigma');",
-      "replace": "if (s > P256_HALF_N) return fail('bad_sigma');",
+      "file": "packages/cs2-core/eip712/sigma-range.mjs",
+      "find": "if (s < 1n || s > P256_HALF_N) return { ok: false, reason: 'bad_sigma' };",
+      "replace": "if (s > P256_HALF_N) return { ok: false, reason: 'bad_sigma' };",
       "note": "s = 0 is accepted"
     }
   ]

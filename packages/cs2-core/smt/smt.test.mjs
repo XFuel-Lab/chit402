@@ -26,6 +26,7 @@ import {
   stateNode,
 } from '../line/index.mjs';
 import { renderSlotProofs, VECTOR_PATH } from './build-vectors.mjs';
+import { decodeKeySlot } from './history.mjs';
 import {
   CITED_PROOF_BYTES,
   HOUR_SECONDS,
@@ -62,6 +63,7 @@ import {
   REVOKE_BY_KEY_TYPE,
   REVOKE_TYPE,
   contractForHour,
+  crossDigest,
   indexBytes,
   sellerKeyHash,
   keyStatus,
@@ -146,11 +148,42 @@ function seal(bytes, record, ctx) {
 }
 
 function status(bytes, query) {
+  const ctx = { epochs: [EPOCH], ...(query?.ctx || {}) };
+  const chain = typeof query?.chainId === 'bigint' ? query.chainId : CHAIN;
+  const decoded = decodeHistory(bytes);
+  const bare = { chainId: chain, hourStart: 0n, ...query, ctx };
+  if (!decoded.ok || !(query?.sellerKey instanceof Uint8Array)) return keyStatus(bytes, bare);
+  const payKey = slotKey({ kind: decoded.kind, chainId: chain, id: decoded.id });
+  const hashed = sellerKeyHash(1, query.sellerKey);
+  if (!payKey.ok || !hashed) return keyStatus(bytes, bare);
+  const queried = keySlotKey(chain, hashed);
+  if (!queried.ok) return keyStatus(bytes, bare);
+  let tree = putLeaf(createTree(), payKey.bytes, bytes).tree;
+  let keyValue = null;
+  if (ctx.keySlot instanceof Uint8Array) {
+    const slotDecoded = decodeHistory(ctx.keySlot);
+    if (slotDecoded.ok) {
+      const placed = keySlotKey(chain, slotDecoded.id);
+      if (placed.ok) {
+        tree = putLeaf(tree, placed.bytes, ctx.keySlot).tree;
+        if (bytesToHex(placed.bytes) === queried.hex) keyValue = ctx.keySlot;
+      }
+    }
+  }
+  const root = rootBytes(tree);
+  const prev = createTree();
+  const prevRoot = rootBytes(prev);
   return keyStatus(bytes, {
-    chainId: CHAIN,
-    hourStart: 0n,
-    ...query,
-    ctx: { epochs: [EPOCH], ...(query?.ctx || {}) },
+    ...bare,
+    root,
+    payToProof: prove(tree, payKey.bytes).proof,
+    keyProof: prove(tree, queried.bytes).proof,
+    keyValue,
+    prevRoot,
+    prevPayToProof: prove(prev, payKey.bytes).proof,
+    prevPayToValue: null,
+    prevKeyProof: prove(prev, queried.bytes).proof,
+    prevKeyValue: null,
   });
 }
 
@@ -1386,4 +1419,206 @@ test('F-rule7-other and a rollback are decided by proof of possession', () => {
   }
   assert.equal(detectEquivocation(anchor(extended, 1), anchor(base, 2)).equivocation, true);
   assert.equal(detectEquivocation(anchor(base, 1), anchor(extended, 2)).equivocation, false);
+});
+
+test('PR684-Q1 keyStatus with no SMT proof and no root is not proven', () => {
+  const b0 = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const registered = seal(b0, register(b0, payTo, payToScalar, sellerKey, 10n));
+  assert.equal(registered.ok, true, registered.reason);
+  const got = keyStatus(registered.bytes, {
+    chainId: CHAIN, hourStart: 0n, paymentBlock: 20n, sellerKey, transferTo: payTo, ctx: { epochs: [EPOCH] },
+  });
+  assert.notEqual(got.ok, true);
+  assert.equal(got.status, KEY_STATUS_UNPROVEN);
+  assert.equal(got.exitCode, 2);
+});
+
+test('PR684-Q2 keyStatus with a root that does not contain the slot is not proven', () => {
+  const b0 = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const registered = seal(b0, register(b0, payTo, payToScalar, sellerKey, 10n));
+  const other = putLeaf(createTree(), fill(0x99), fill(0x98)).tree;
+  const got = keyStatus(registered.bytes, {
+    chainId: CHAIN,
+    hourStart: 0n,
+    paymentBlock: 20n,
+    sellerKey,
+    transferTo: payTo,
+    root: rootBytes(other),
+    ctx: { epochs: [EPOCH] },
+  });
+  assert.notEqual(got.ok, true);
+  assert.equal(got.exitCode, 2);
+});
+
+test('the previous-epoch proof, membership block, and absence are checked', () => {
+  const b0 = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const registered = seal(b0, register(b0, payTo, payToScalar, sellerKey, 10n)).bytes;
+  const slot = slotKey({ kind: KIND_PAYTO, chainId: CHAIN, id: payTo }).bytes;
+  const tree = putLeaf(createTree(), slot, registered).tree;
+  const proof = prove(tree, slot).proof;
+  const root = rootBytes(tree);
+  const prev = createTree();
+  const prevProof = prove(prev, slot).proof;
+  const broken = new Uint8Array(prevProof);
+  broken[0] ^= 0x80;
+  assert.equal(verifyAdmission({
+    kind: KIND_PAYTO, chainId: CHAIN, id: payTo, value: registered, proof, root,
+    prevValue: null, prevProof: broken, prevRoot: rootBytes(prev),
+    block: 10n, prevAnchor: 0n, showAnchor: 1n << 40n, seq: 0n,
+  }).ok, false);
+  assert.equal(verifyAdmission({
+    kind: KIND_PAYTO, chainId: CHAIN, id: payTo, value: registered, proof, root,
+    prevValue: null, prevProof, prevRoot: rootBytes(prev),
+    block: 11n, prevAnchor: 0n, showAnchor: 1n << 40n, seq: 0n,
+  }).ok, false);
+  assert.equal(verifyAdmission({
+    kind: KIND_PAYTO, chainId: CHAIN, id: payTo, value: registered, proof, root,
+    prevValue: registered, prevProof: proof, prevRoot: root,
+    block: 10n, prevAnchor: 0n, showAnchor: 1n << 40n, seq: 0n,
+  }).ok, false);
+});
+
+test('a key slot with two records or a mismatched id is refused', () => {
+  const first = revoke(emptyHistory(KIND_KEY, CHAIN, sellerHash).bytes, sellerHash, 12n, keyRevokeSig(sellerHash), 'key');
+  const second = revoke(emptyHistory(KIND_KEY, CHAIN, sellerHash).bytes, sellerHash, 14n, keyRevokeSig(sellerHash), 'key');
+  second.seq = 1n;
+  const two = encodeHistory({ kind: KIND_KEY, chainId: CHAIN, id: sellerHash, records: [first, second] });
+  assert.equal(two.ok, true, two.reason);
+  assert.equal(decodeKeySlot(two.bytes).ok, false);
+  const mismatched = encodeHistory({
+    kind: KIND_KEY, chainId: CHAIN, id: sha256(sellerHash), records: [first],
+  });
+  assert.equal(decodeKeySlot(mismatched.bytes).ok, false);
+});
+
+test('an unsigned RevokeByKey is refused', () => {
+  const bad = admitKeyRevoke(CHAIN, revoke(
+    emptyHistory(KIND_KEY, CHAIN, sellerHash).bytes, sellerHash, 12n, new Uint8Array(64), 'key',
+  ), { epochs: [EPOCH] });
+  assert.equal(bad.ok, false);
+  const crafted = encodeHistory({
+    kind: KIND_KEY,
+    chainId: CHAIN,
+    id: sellerHash,
+    records: [revoke(emptyHistory(KIND_KEY, CHAIN, sellerHash).bytes, sellerHash, 12n, new Uint8Array(64), 'key')],
+  });
+  const again = admitKeyRevoke(CHAIN, revoke(
+    emptyHistory(KIND_KEY, CHAIN, sellerHash).bytes, sellerHash, 14n, keyRevokeSig(sellerHash), 'key',
+  ), { epochs: [EPOCH], keySlot: crafted.bytes });
+  assert.equal(again.reason, 'bad_history');
+});
+
+test('CrossPayTo sorts the two payTo addresses', () => {
+  const left = crossDigest(CHAIN, CONTRACT, payTo, otherPayTo, sellerHash);
+  const right = crossDigest(CHAIN, CONTRACT, otherPayTo, payTo, sellerHash);
+  assert.equal(bytesToHex(left), bytesToHex(right));
+});
+
+test('the showing anchor is inside the epoch window', () => {
+  const window = [{ prevAnchorBlock: 100n, showAnchorBlock: 200n, hourStart: 3600n, contract: CONTRACT }];
+  const b0 = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const atShow = seal(b0, register(b0, payTo, payToScalar, sellerKey, 200n, { expiry: 3601n }), { epochs: window });
+  assert.equal(atShow.ok, true, atShow.reason);
+});
+
+test('more than 255 payTo keys is refused', () => {
+  const records = [];
+  let cursor = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  for (let i = 0; i < 256; i += 1) {
+    const scalar = 1000n + BigInt(i);
+    const key = compress(publicPoint(scalar, P256));
+    const opened = BigInt(i * 2 + 1);
+    const rec = register(cursor, payTo, payToScalar, key, opened, { keyScalar: scalar });
+    records.push(rec);
+    cursor = encodeHistory({ kind: KIND_PAYTO, chainId: CHAIN, id: payTo, records }).bytes;
+    if (i < 255) {
+      const hash = sellerKeyHash(1, key);
+      const closed = revoke(cursor, hash, opened + 1n, payToRevokeSig(payTo, payToScalar, hash), 'payTo');
+      records.push(closed);
+      cursor = encodeHistory({ kind: KIND_PAYTO, chainId: CHAIN, id: payTo, records }).bytes;
+    }
+  }
+  const table = payToEntryBytes(cursor, { epochs: [EPOCH] });
+  assert.equal(table.reason, 'bad_size');
+});
+
+test('smt fixtures verify under the committed root', () => {
+  const dir = join(HERE, '..', 'smt-fixtures');
+  const sums = readFileSync(join(dir, 'SHA256SUMS'), 'utf8');
+  const files = new Map();
+  for (const line of sums.trim().split('\n')) {
+    const digest = line.slice(0, 64);
+    const name = line.slice(66);
+    const bytes = readFileSync(join(dir, name));
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), digest, name);
+    files.set(name, bytes);
+  }
+  const root = files.get('root.bytes');
+  assert.equal(verifyProof(files.get('payto-slot.bytes'), files.get('payto-value.bytes'), files.get('payto-member.proof'), root).ok, true);
+  assert.equal(verifyProof(files.get('key-slot.bytes'), files.get('key-value.bytes'), files.get('key-member.proof'), root).ok, true);
+  assert.equal(verifyProof(files.get('blank-key-slot.bytes'), null, files.get('blank-key.proof'), root).ok, true);
+  assert.equal(verifyProof(files.get('absent-payto-slot.bytes'), null, files.get('absent-payto.proof'), root).ok, true);
+  assert.equal(verifyProof(files.get('key-slot.bytes'), null, files.get('blank-key.proof'), root).ok, false);
+});
+
+test('an unsigned carried tombstone is not a leaf the builder can use', () => {
+  const b0 = emptyHistory(KIND_PAYTO, CHAIN, payTo).bytes;
+  const carried = seal(b0, register(b0, payTo, payToScalar, sellerKey, 10n), {
+    tombstones: [{
+      keyHash: sellerHash,
+      revokedAtBlock: 20n,
+      prevAnchorBlock: 0n,
+      showAnchorBlock: 100n,
+    }],
+  });
+  assert.equal(carried.reason, 'bad_history');
+});
+
+test('a second RevokeByKey in the same key history is refused', () => {
+  const base = emptyHistory(KIND_KEY, CHAIN, sellerHash).bytes;
+  const first = revoke(base, sellerHash, 12n, keyRevokeSig(sellerHash), 'key');
+  const mid = encodeHistory({ kind: KIND_KEY, chainId: CHAIN, id: sellerHash, records: [first] }).bytes;
+  const second = revoke(mid, sellerHash, 14n, keyRevokeSig(sellerHash), 'key');
+  const both = encodeHistory({ kind: KIND_KEY, chainId: CHAIN, id: sellerHash, records: [first, second] });
+  const view = assess(both.bytes, { epochs: [EPOCH] });
+  assert.equal(view.ok, true);
+  assert.equal(view.faults.some((item) => item.rule === 'rule_2'), true);
+});
+
+test('a foreign slot revoke stays in the status input', () => {
+  const text = readFileSync(new URL('./history.mjs', import.meta.url), 'utf8');
+  assert.equal(text.includes('const chosen = key.revokedAt !== 0n ? key : foreign;'), true);
+});
+
+test('source scan rejects literal booleans passed into shared-module checks', () => {
+  const text = readFileSync(new URL('./history.mjs', import.meta.url), 'utf8');
+  const names = ['checkAdmission', 'checkTombstone', 'readKeyLeaf', 'sharedKeyStatus'];
+  const consts = new Map();
+  for (const match of text.matchAll(/const\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(true|false)\b/g)) {
+    consts.set(match[1], match[2]);
+  }
+  for (const name of names) {
+    let from = 0;
+    while (from < text.length) {
+      const at = text.indexOf(`${name}(`, from);
+      if (at < 0) break;
+      const start = text.indexOf('(', at);
+      let depth = 0;
+      let end = start;
+      for (; end < text.length; end += 1) {
+        const ch = text[end];
+        if (ch === '(') depth += 1;
+        else if (ch === ')') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      const body = text.slice(start, end + 1);
+      assert.equal(/\b(true|false)\b/.test(body), false, name);
+      for (const [id, value] of consts) {
+        assert.equal(new RegExp(`\\b${id}\\b`).test(body), false, `${name} folds ${id} = ${value}`);
+      }
+      from = end + 1;
+    }
+  }
 });
