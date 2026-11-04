@@ -22,6 +22,7 @@ import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
 import { verifySlot, type VerifySlotInput } from './slot.js';
+import { blankHash, verifyStateProof } from './state-proof.js';
 import {
   KEY_STATUS_SCHEMA,
   cachedAdmission,
@@ -80,6 +81,7 @@ type LineModule = {
   slotKey: (input: { kind: number; chainId: number; id: string }) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateLeaf: (key: Uint8Array, value: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateNode: (left: Uint8Array, right: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
+  emptyHash: (depth: number) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   isAllowedAlg: (alg: number) => boolean;
   LAYOUT: { sigma: number };
 };
@@ -298,18 +300,12 @@ function lineView(decoded: { payment: Record<string, unknown> }, bytes: Uint8Arr
   };
 }
 
-function foldProof(line: LineModule, leaf: Uint8Array, slotKeyBytes: Uint8Array, proof: string[], stateRoot: string): boolean {
-  let acc = leaf;
-  for (let i = 0; i < proof.length; i += 1) {
-    const sibling = hexToBytes(proof[i]);
-    if (!sibling || sibling.length !== 32) return false;
-    const byte = slotKeyBytes[Math.floor(i / 8)] ?? 0;
-    const bit = (byte >> (7 - (i % 8))) & 1;
-    const node = bit === 1 ? line.stateNode(sibling, acc) : line.stateNode(acc, sibling);
-    if (!node.ok) return false;
-    acc = node.bytes;
-  }
-  return bytesToHex(acc) === stateRoot.toLowerCase();
+function foldProof(line: LineModule, leaf: Uint8Array, slotKeyBytes: Uint8Array, proof: Uint8Array, stateRoot: string): boolean {
+  return verifyStateProof(line, leaf, slotKeyBytes, proof, stateRoot);
+}
+
+function blankLeaf(line: LineModule): Uint8Array | null {
+  return blankHash(line, 0);
 }
 
 const LOW_SIGMA = (() => {
@@ -323,10 +319,10 @@ function proveKey(
   line: LineModule,
   view: LineView,
   slotValue: Uint8Array | null,
-  slotProof: string[],
-  keySlotProof: string[],
-  priorSlotProof: string[],
-  priorKeyProof: string[],
+  slotProof: Uint8Array,
+  keySlotProof: Uint8Array,
+  priorSlotProof: Uint8Array,
+  priorKeyProof: Uint8Array,
   keySlotValue: Uint8Array | null,
   slotInput: VerifySlotInput,
   crypto: {
@@ -357,8 +353,8 @@ function proveKey(
     if (judged.reason) return { ok: false, reason: judged.reason === 'domain_unsigned' ? 'domain_unsigned' : null, exit: judged.reason === 'domain_unsigned' ? 1 : 2 };
     if (!slotValue) {
       const emptySlot = line.slotKey({ kind: 1, chainId: view.chainId, id: view.to.slice(2) });
-      const emptyLeaf = emptySlot.ok ? line.stateLeaf(emptySlot.bytes, new Uint8Array(0)) : { ok: false as const };
-      const emptyShown = Boolean(emptySlot.ok && emptyLeaf.ok && foldProof(line, emptyLeaf.bytes, emptySlot.bytes, slotProof, stateRoot));
+      const emptyLeafBytes = blankLeaf(line);
+      const emptyShown = Boolean(emptySlot.ok && emptyLeafBytes && foldProof(line, emptyLeafBytes, emptySlot.bytes, slotProof, stateRoot));
       if (!emptyShown) return { ok: false, reason: null, exit: 2 };
       return { ok: false, reason: 'unregistered', exit: 1 };
     }
@@ -406,14 +402,18 @@ function proveKey(
     if (!paySlot.ok) return { ok: false, reason: null };
     const keyValue = keySlotValue && keySlotValue.length > 0 ? keySlotValue : new Uint8Array(0);
     const payLeaf = line.stateLeaf(paySlot.bytes, slotValue);
-    const keyLeaf = line.stateLeaf(derivedSlot, keyValue);
+    const absent = blankLeaf(line);
+    const keyLeaf = keyValue.length > 0
+      ? line.stateLeaf(derivedSlot, keyValue)
+      : (absent ? { ok: true as const, bytes: absent } : { ok: false as const, reason: 'bad_depth' });
     if (!payLeaf.ok || !keyLeaf.ok) return { ok: false, reason: null };
     if (!foldProof(line, payLeaf.bytes, paySlot.bytes, slotProof, stateRoot)) return { ok: false, reason: null, exit: 2 };
     if (!foldProof(line, keyLeaf.bytes, derivedSlot, keySlotProof, stateRoot)) return { ok: false, reason: null, exit: 2 };
     const memberAtEpoch = payLeaf.ok && keyLeaf.ok;
     const priorRoot = hours.priorRoot;
-    const priorPay = line.stateLeaf(paySlot.bytes, new Uint8Array(0));
-    const priorKey = line.stateLeaf(derivedSlot, new Uint8Array(0));
+    const absentLeaf = blankLeaf(line);
+    const priorPay = absentLeaf ? { ok: true as const, bytes: absentLeaf } : { ok: false as const };
+    const priorKey = priorPay;
     if (!priorPay.ok || !priorKey.ok || priorRoot == null) return { ok: false, reason: null, exit: 2 };
     const absentPay = foldProof(line, priorPay.bytes, paySlot.bytes, priorSlotProof, priorRoot);
     const absentKey = foldProof(line, priorKey.bytes, derivedSlot, priorKeyProof, priorRoot);
@@ -462,8 +462,8 @@ function proveKey(
       chainId: view.chainId,
       sha256: crypto.sha256,
       bundleKeySlot: derivedSlot,
-      payToProof: { siblings: slotProof, root: stateRoot },
-      keyProof: { siblings: keySlotProof, root: stateRoot },
+      payToProof: { siblings: ['present'], root: stateRoot },
+      keyProof: { siblings: ['present'], root: stateRoot },
       keyLeaf: tombstone ? null : 'empty',
       registration: {
         admissionBlock: recordedBlock,

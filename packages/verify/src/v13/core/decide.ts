@@ -114,12 +114,12 @@ export interface ParsedReceipt {
   contract: string;
   proof: string[];
   slotValue: Uint8Array | null;
-  slotProof: string[];
-  keySlotProof: string[];
+  slotProof: Uint8Array;
+  keySlotProof: Uint8Array;
   keySlotValue: Uint8Array | null;
   admissionBlock: number | null;
-  priorSlotProof: string[];
-  priorKeyProof: string[];
+  priorSlotProof: Uint8Array;
+  priorKeyProof: Uint8Array;
   signedDomain: { name: string; version: string; chainId: number; verifyingContract: string } | null;
   lineHex: string;
 }
@@ -346,17 +346,17 @@ function messageOf(reason: string): string {
   return MESSAGES[reason] || reason;
 }
 
-function readHashList(value: Record<string, unknown>, key: string): { ok: true; hashes: string[] } | { ok: false; exit: 1; reason: 'bad_receipt' } {
-  const hashes: string[] = [];
-  if (!hasOwn(value, key)) return { ok: true, hashes };
-  if (!Array.isArray(value[key])) return { ok: false, exit: 1, reason: 'bad_receipt' };
-  for (const step of value[key] as unknown[]) {
-    if (typeof step !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
-    const hash = normHash(step);
-    if (!hash) return { ok: false, exit: 1, reason: 'bad_receipt' };
-    hashes.push(hash);
+function readProof(value: Record<string, unknown>, key: string): { ok: true; proof: Uint8Array } | { ok: false; exit: 1; reason: 'bad_receipt' } {
+  if (!hasOwn(value, key)) return { ok: true, proof: new Uint8Array() };
+  const raw = value[key];
+  if (typeof raw !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
+  const body = raw.startsWith('0x') ? raw.slice(2) : raw;
+  if (body.length % 2 !== 0 || body !== body.toLowerCase() || !/^[0-9a-f]*$/.test(body)) {
+    return { ok: false, exit: 1, reason: 'bad_receipt' };
   }
-  return { ok: true, hashes };
+  const proof = hexToBytes(body);
+  if (!proof) return { ok: false, exit: 1, reason: 'bad_receipt' };
+  return { ok: true, proof };
 }
 
 export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedReceipt } | { ok: false; exit: 1; reason: string } {
@@ -395,30 +395,13 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
     }
     slotValue = raw;
   }
-  const slotProof: string[] = [];
-  if (hasOwn(value, 'slotProof')) {
-    if (!Array.isArray(value.slotProof)) return { ok: false, exit: 1, reason: 'bad_receipt' };
-    for (const step of value.slotProof) {
-      if (isPlain(step) && hasOwn(step, 'side')) return { ok: false, exit: 1, reason: 'bad_receipt' };
-      const raw = typeof step === 'string' ? step : (isPlain(step) && typeof step.hash === 'string' ? step.hash : '');
-      const hash = normHash(raw);
-      if (!hash) return { ok: false, exit: 1, reason: 'bad_receipt' };
-      slotProof.push(hash);
-    }
-  }
-  const keySlotProof: string[] = [];
-  if (hasOwn(value, 'keySlotProof')) {
-    if (!Array.isArray(value.keySlotProof)) return { ok: false, exit: 1, reason: 'bad_receipt' };
-    for (const step of value.keySlotProof) {
-      if (typeof step !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
-      const hash = normHash(step);
-      if (!hash) return { ok: false, exit: 1, reason: 'bad_receipt' };
-      keySlotProof.push(hash);
-    }
-  }
-  const priorRead = readHashList(value, 'priorSlotProof');
+  const slotRead = readProof(value, 'slotProof');
+  if (!slotRead.ok) return slotRead;
+  const keyRead = readProof(value, 'keySlotProof');
+  if (!keyRead.ok) return keyRead;
+  const priorRead = readProof(value, 'priorSlotProof');
   if (!priorRead.ok) return priorRead;
-  const priorKeyRead = readHashList(value, 'priorKeyProof');
+  const priorKeyRead = readProof(value, 'priorKeyProof');
   if (!priorKeyRead.ok) return priorKeyRead;
   let keySlotValue: Uint8Array | null = null;
   if (hasOwn(value, 'keySlotValue')) {
@@ -456,12 +439,12 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
       contract: normHex(value.contract, 20) as string,
       proof,
       slotValue,
-      slotProof,
-      keySlotProof,
+      slotProof: slotRead.proof,
+      keySlotProof: keyRead.proof,
       keySlotValue,
       admissionBlock,
-      priorSlotProof: priorRead.hashes,
-      priorKeyProof: priorKeyRead.hashes,
+      priorSlotProof: priorRead.proof,
+      priorKeyProof: priorKeyRead.proof,
       signedDomain,
       lineHex: lineBody,
     },
