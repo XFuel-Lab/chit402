@@ -30,8 +30,9 @@ import {
   trustedSender,
   isExactV13Receipt,
 } from '../dist/v13/core/decide.js';
-import { verifySlot } from '../dist/v13/slot.js';
+import { admittingContract, verifySlot } from '../dist/v13/slot.js';
 import {
+  DOMAIN_NAME,
   DOMAIN_TYPE,
   DOMAIN_VERSION,
   EXAMPLE_ANCHOR_CODE_HASH,
@@ -49,7 +50,7 @@ import {
   TEST_VECTOR_KEY_HASH,
   keyStatus,
   parseKeyHash,
-  readPayToSignatures,
+  parsePayToSlot,
   pointOnCurve,
   revokeByKeyDigest,
 } from '../dist/v13/key-record.js';
@@ -60,13 +61,15 @@ setDefaultResultOrder('ipv4first');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = new URL('../../cs2-core/', import.meta.url);
 const { leafHash, nodeHash } = await import(new URL('merkle/index.js', CORE));
-const { encodeLine, commitments, slotKey, stateLeaf, stateNode, isAllowedAlg } = await import(new URL('line/index.mjs', CORE));
+const { encodeLine, commitments, slotKey, stateLeaf, stateNode, isAllowedAlg, LAYOUT } = await import(new URL('line/index.mjs', CORE));
 const { checkSigma, verifyPossession, canonicalKey } = await import(new URL('eip712/index.mjs', CORE));
 const { keccak256 } = await import(new URL('ecdsa/keccak.js', CORE));
 const { sha256 } = await import(new URL('sha256.js', CORE));
-const { P256 } = await import(new URL('ecdsa/curves.js', CORE));
-const { signRawDigest } = await import(new URL('ecdsa/sign.js', CORE));
-const { bytesToBig } = await import(new URL('ecdsa/bytes.js', CORE));
+const { P256, SECP256K1 } = await import(new URL('ecdsa/curves.js', CORE));
+const { signRawDigest, publicPoint } = await import(new URL('ecdsa/sign.js', CORE));
+const { ethereumAddress } = await import(new URL('ecdsa/address.js', CORE));
+const { bytesToBig, bigToBytes } = await import(new URL('ecdsa/bytes.js', CORE));
+const { hashChit } = await import(new URL('../../chit-seller/eip712.mjs', import.meta.url));
 const { issuerHistoryEntryHash } = await import('../dist/issuer-history.js');
 
 const HOUR = 1_699_999_200;
@@ -258,7 +261,7 @@ function listen(handler) {
     req.on('end', () => {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       seen.push(body);
-      const result = handler(body.method, body.params, seen);
+      const result = handler(body.method, body.params, seen, req);
       res.setHeader('content-type', 'application/json');
       if (result && result.error) {
         res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32000, message: result.error } }));
@@ -268,7 +271,7 @@ function listen(handler) {
     });
   });
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, '0.0.0.0', () => {
       const { port } = server.address();
       resolve({
         url: `http://127.0.0.1:${port}`,
@@ -279,8 +282,8 @@ function listen(handler) {
   });
 }
 
-function anchoredLog({ epoch = 1, hour = HOUR, size = 1, root, stateRoot, kind = 0, block = 105, tx = `0x${'ee'.repeat(32)}` }) {
-  return {
+function anchoredLog({ epoch = 1, hour = HOUR, size = 1, root, stateRoot, kind = 0, block = 105, tx = `0x${'ee'.repeat(32)}`, prior = null }) {
+  const log = {
     address: CONTRACT,
     topics: [ANCHORED_TOPIC0, topicUint(BigInt(epoch)), topicUint(BigInt(hour))],
     data: `0x${word(size)}${root}${stateRoot}${word(kind)}`,
@@ -289,6 +292,31 @@ function anchoredLog({ epoch = 1, hour = HOUR, size = 1, root, stateRoot, kind =
     transactionHash: tx,
     logIndex: '0x0',
   };
+  if (prior) log.prior = prior;
+  return log;
+}
+
+function logsFor(scene, topics) {
+  const all = scene.logs ?? [];
+  if (!topics || topics[0] !== ANCHORED_TOPIC0) return scene.rotationLogs ?? [];
+  const epochTopic = topics[1];
+  const direct = all.filter((log) => log.topics?.[1] === epochTopic);
+  if (direct.length > 0) return direct;
+  const synthesized = [];
+  for (const log of all) {
+    if (!log.prior || topicUint(BigInt(log.prior.epoch)) !== epochTopic) continue;
+    synthesized.push(anchoredLog({
+      epoch: log.prior.epoch,
+      hour: log.prior.hour,
+      size: log.prior.size,
+      root: log.prior.root,
+      stateRoot: log.prior.stateRoot,
+      kind: log.prior.kind,
+      block: log.prior.block,
+      tx: log.prior.tx,
+    }));
+  }
+  return synthesized;
 }
 
 function chainHandler(scene) {
@@ -299,13 +327,7 @@ function chainHandler(scene) {
     if (method === 'eth_getBlockByNumber' && params[0] === 'finalized') {
       return { number: '0x6e', hash: `0x${'ab'.repeat(32)}` };
     }
-    if (method === 'eth_getLogs') {
-      const topics = params[0]?.topics ?? [];
-      if (topics[0] === ANCHORED_TOPIC0 && topics[1] === topicUint(BigInt(scene.epoch ?? 1))) {
-        return scene.logs ?? [];
-      }
-      return [];
-    }
+    if (method === 'eth_getLogs') return logsFor(scene, params[0]?.topics ?? []);
     if (method === 'eth_getTransactionReceipt' && params[0] === anchorTx) {
       return {
         from: scene.anchorFrom ?? CHECKPOINT,
@@ -376,7 +398,7 @@ async function withChain(scene, run) {
 
 function rpcPair(url) {
   if (typeof url !== 'string' || url === '') return [];
-  if (url.includes('127.0.0.1')) return [url, url.replaceAll('127.0.0.1', 'localhost')];
+  if (url.includes('127.0.0.1')) return [url, url.replaceAll('127.0.0.1', '127.0.0.2')];
   return [url, url];
 }
 
@@ -390,57 +412,120 @@ function optionsFor(key, doc, url, file) {
   };
 }
 
-function registrationValue(compressed, pop, expiry = 4_000_000_000n) {
-  const body = new Uint8Array(33 + 8 + 2 + 2 + 2 + 64);
-  body.set(compressed, 0);
+function u16(value) {
+  return Buffer.from([(value >> 8) & 0xff, value & 0xff]);
+}
+
+function expiryBytes(expiry) {
+  const body = Buffer.alloc(8);
   let exp = expiry;
   for (let i = 7; i >= 0; i -= 1) {
-    body[33 + i] = Number(exp & 0xffn);
+    body[i] = Number(exp & 0xffn);
     exp >>= 8n;
   }
-  body[41] = 0;
-  body[42] = 2;
-  body[43] = 9;
-  body[44] = 8;
-  body[45] = 0;
-  body[46] = 64;
-  body.set(pop, 47);
   return body;
 }
 
+function registrationValue(compressed, paySig, pop, expiry = 4_000_000_000n) {
+  return Buffer.concat([
+    Buffer.from(compressed),
+    expiryBytes(expiry),
+    u16(65),
+    Buffer.from(paySig),
+    u16(64),
+    Buffer.from(pop),
+  ]);
+}
+
+function signLow(digest, scalar, curve) {
+  for (let k = 3n; k < 80n; k += 2n) {
+    try { return signRawDigest(digest, scalar, k, curve); } catch { /* next nonce */ }
+  }
+  return null;
+}
+
+function compressedP256(scalar) {
+  const pub = publicPoint(scalar, P256);
+  const y = pub.subarray(33);
+  return { uncompressed: pub, compressed: Buffer.concat([Buffer.from([y[31] & 1 ? 3 : 2]), pub.subarray(1, 33)]) };
+}
+
+const PAY_SCALAR = 7n;
+
 function signedLine(over = {}) {
-  const { expiry, ...paymentOver } = over;
-  const payment = paymentParts(paymentOver);
+  const { expiry: expiryOver, keyValue, ...paymentOver } = over;
+  const expiry = expiryOver ?? 4_000_000_000n;
+  const payPoint = publicPoint(PAY_SCALAR, SECP256K1);
+  const payTo = ethereumAddress(payPoint).slice(2);
+  const payment = paymentParts({ ...paymentOver, to: payTo });
   const payKey = slotKey({ kind: 1, chainId: 84532, id: payment.to });
   let built = null;
-  for (let attempt = 0; attempt < 12 && !built; attempt += 1) {
+  for (let attempt = 0; attempt < 24 && !built; attempt += 1) {
+    const keyScalar = 11n + BigInt(attempt) * 2n;
+    if (keyScalar === PAY_SCALAR) continue;
+    const sellerKey = compressedP256(keyScalar);
     const draft = buildLine(payment);
-    const seller = sellerMaterial(draft);
-    const line = buildLine(payment, seller.sigmaHex);
+    const openedDraft = commitments(draft);
+    if (!openedDraft.ok) continue;
+    const sigma = signLow(openedDraft.sigmaDigest, keyScalar, P256);
+    if (!sigma) continue;
+    const line = buildLine(payment, Buffer.from(sigma.raw).toString('hex'));
     const opened = commitments(line);
-    const preimage = sha256(opened.sigmaDigest);
-    const secret = seller.d;
-    let pop = null;
-    for (let k = 3n; pop == null && k < 40n; k += 2n) {
-      try { pop = signRawDigest(preimage, secret, k, P256); } catch { pop = null; }
-    }
-    if (!pop) continue;
-    const slotValue = registrationValue(seller.compressed, pop.raw, expiry);
-    const hash = sha256(Buffer.concat([Buffer.from([1]), Buffer.from(seller.compressed)]));
+    if (!opened.ok) continue;
+    const control = hashChit('PayToControl', {
+      payTo,
+      keyAlg: 1,
+      key: sellerKey.compressed,
+      expiry,
+    }, 84532n, CONTRACT.slice(2));
+    if (!control.ok) continue;
+    const paySig = signLow(control.bytes, PAY_SCALAR, SECP256K1);
+    const pop = signLow(sha256(control.bytes), keyScalar, P256);
+    if (!paySig || !pop) continue;
+    const payBytes = Buffer.concat([Buffer.from(paySig.raw), Buffer.from([paySig.yParity])]);
+    const slotValue = registrationValue(sellerKey.compressed, payBytes, pop.raw, expiry);
+    const hash = sha256(Buffer.concat([Buffer.from([1]), sellerKey.compressed]));
     const keySlot = keySlotKey(84532, hash, sha256);
     if (!payKey.ok || !keySlot || ((payKey.bytes[0] >> 7) === (keySlot[0] >> 7))) continue;
+    const keyBody = keyValue ? Buffer.from(keyValue) : new Uint8Array(0);
     const payLeaf = stateLeaf(payKey.bytes, slotValue);
-    const keyLeaf = stateLeaf(keySlot, new Uint8Array(0));
+    const keyLeaf = stateLeaf(keySlot, keyBody);
+    const emptyPay = stateLeaf(payKey.bytes, new Uint8Array(0));
+    const emptyKey = stateLeaf(keySlot, new Uint8Array(0));
     const payBit = (payKey.bytes[0] >> 7) & 1;
     const root = payBit === 1 ? stateNode(keyLeaf.bytes, payLeaf.bytes) : stateNode(payLeaf.bytes, keyLeaf.bytes);
+    const priorRoot = payBit === 1 ? stateNode(emptyKey.bytes, emptyPay.bytes) : stateNode(emptyPay.bytes, emptyKey.bytes);
+    if (!root.ok || !priorRoot.ok) continue;
     built = {
       line,
       leaf: hexOf(leafHash(line).hash),
       stateRoot: hexOf(root.bytes),
+      priorStateRoot: hexOf(priorRoot.bytes),
       slotValue: hexOf(slotValue),
       slotProof: [hexOf(keyLeaf.bytes)],
       keySlotProof: [hexOf(payLeaf.bytes)],
+      priorSlotProof: [hexOf(emptyKey.bytes)],
+      priorKeyProof: [hexOf(emptyPay.bytes)],
+      admissionBlock: 80,
+      signedDomain: {
+        name: DOMAIN_NAME,
+        version: DOMAIN_VERSION,
+        chainId: 84532,
+        verifyingContract: CONTRACT,
+      },
+      prior: {
+        epoch: 0,
+        hour: HOUR,
+        size: 0,
+        root: '00'.repeat(32),
+        stateRoot: hexOf(priorRoot.bytes),
+        kind: 1,
+        block: 50,
+        tx: `0x${'dd'.repeat(32)}`,
+      },
       payment,
+      keyScalar,
+      sellerKey: sellerKey.compressed,
       sigmaDigest: opened.sigmaDigest,
     };
   }
@@ -460,6 +545,10 @@ function v13Receipt(built, extra = {}) {
     slotValue: built.slotValue,
     slotProof: extra.fields && extra.fields.slotProof !== undefined ? undefined : built.slotProof,
     keySlotProof: extra.fields && extra.fields.keySlotProof !== undefined ? undefined : built.keySlotProof,
+    admissionBlock: built.admissionBlock,
+    priorSlotProof: built.priorSlotProof,
+    priorKeyProof: built.priorKeyProof,
+    signedDomain: built.signedDomain,
     ...extra.fields,
   };
 }
@@ -510,7 +599,7 @@ test('a hourly receipt verifies and --json names the unaudited anchor', async ()
   const key = makeKey();
   const built = signedLine();
   const doc = bundleFor(key);
-  const log = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0 });
+  const log = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0, prior: built.prior });
   const verdict = await withChain({ payment: built.payment, logs: [log] }, async (server) => {
     const out = await checkReceiptInput(JSON.stringify(v13Receipt(built)), optionsFor(key, doc, server.url));
     assert.equal(server.seen.some((call) => JSON.stringify(call.params ?? []).includes(ROTATION_TOPIC0)), false);
@@ -560,7 +649,7 @@ test('anchor sender mismatch, wrong block hash, reorg, and unknown block', async
   const key = makeKey();
   const built = signedLine();
   const doc = bundleFor(key);
-  const log = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0 });
+  const log = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0, prior: built.prior });
   const cases = [
     [{ anchorFrom: OTHER }, 1, 'anchor_sender_mismatch'],
     [{ wrongBlock: true }, 1, 'wrong_block_hash'],
@@ -610,7 +699,7 @@ test('fast carried root proves or stays pending, and a hourly root can be unprov
   const key = makeKey();
   const built = signedLine();
   const doc = bundleFor(key);
-  const proven = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 1 });
+  const proven = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 1, prior: built.prior });
   const pending = anchoredLog({ root: built.leaf, stateRoot: '00'.repeat(32), kind: 1 });
   const unproven = anchoredLog({ root: built.leaf, stateRoot: '00'.repeat(32), kind: 0 });
   const a = await withChain({ payment: built.payment, logs: [proven] }, (server) => (
@@ -625,7 +714,7 @@ test('fast carried root proves or stays pending, and a hourly root can be unprov
   assert.equal(a.verdict.exit_code, 0, a.verdict.reason);
   assert.equal(b.verdict.exit_code, 2);
   assert.equal(b.verdict.reason, 'pending_hourly_close');
-  assert.equal(c.verdict.exit_code, 1);
+  assert.equal(c.verdict.exit_code, 2);
   assert.equal(c.verdict.reason, 'key_status_unproven');
 });
 
@@ -669,7 +758,7 @@ test('a live document that adds a pin is refused and the bundled pin still verif
     ...doc.entries,
     historyEntry(key, doc.head_hash, { not_after: '2026-01-01T00:00:00.000Z' }),
   ], { contracts: [pinOf({ address: OTHER })], narrowing: [] });
-  const log = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0 });
+  const log = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0, prior: built.prior });
   const fetchImpl = async (url) => {
     assert.match(url, /issuer-history\.json$/);
     return new Response(JSON.stringify(live), { status: 200 });
@@ -835,16 +924,17 @@ function sceneHandler(s) {
   const txHash = `0x${s.payment.txHash}`;
   const anchorTx = `0x${'ee'.repeat(32)}`;
   const calls = [];
-  const h = (method, params) => {
+  const h = (method, params, _seen, req) => {
     calls.push([method, params]);
+    const second = String(req?.socket?.localAddress ?? '').endsWith('.2');
+    if (s.failSecond && second) return { error: 'down' };
+    if (s.disagree && second && method === 'eth_getBlockByNumber' && params[0] === 'finalized') {
+      return { number: '0x1', hash: `0x${'11'.repeat(32)}` };
+    }
     if (method === 'eth_getBlockByNumber' && params[0] === 'finalized') {
       return { number: `0x${FIN.toString(16)}`, hash: `0x${'ab'.repeat(32)}` };
     }
-    if (method === 'eth_getLogs') {
-      const topics = params[0]?.topics ?? [];
-      if (topics[0] !== ANCHORED_TOPIC0) return s.rotationLogs ?? [];
-      return (s.logs ?? []).filter((log) => log.topics[1] === topics[1]);
-    }
+    if (method === 'eth_getLogs') return logsFor(s, params[0]?.topics ?? []);
     if (method === 'eth_getTransactionReceipt' && params[0] === anchorTx) {
       if (s.anchorReceiptNull) return null;
       return {
@@ -924,7 +1014,7 @@ function ext(key, doc, payloadExtra) {
   ], payloadExtra);
 }
 
-const okLog = (built, over = {}) => anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0, ...over });
+const okLog = (built, over = {}) => anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0, prior: built.prior, ...over });
 
 test('D00 honest hourly receipt verifies', async () => {
   const key = makeKey();
@@ -1589,20 +1679,17 @@ test('an empty prior slot, a u16 signature prefix, and the test-vector key', () 
   const pop = new Uint8Array(64);
   pop[31] = 1;
   pop[63] = 1;
-  const body = new Uint8Array(2 + 2 + 2 + pop.length);
-  body[0] = 0;
-  body[1] = 2;
-  body[2] = 1;
-  body[3] = 2;
-  body[4] = 0;
-  body[5] = 64;
-  body.set(pop, 6);
-  const opened = readPayToSignatures(body);
+  const key = Buffer.alloc(33, 2);
+  key[0] = 2;
+  const body = Buffer.concat([key, Buffer.alloc(8), u16(65), Buffer.alloc(65, 3), u16(64), pop]);
+  const opened = parsePayToSlot(body);
   assert.equal(opened.ok, true);
   assert.equal(opened.pop.length, 64);
-  const wide = new Uint8Array(body);
-  wide[5] = 65;
-  assert.equal(readPayToSignatures(wide).ok, false);
+  assert.equal(opened.payToSignature.length, 65);
+  const wide = Buffer.from(body);
+  wide[41] = 0;
+  wide[42] = 64;
+  assert.equal(parsePayToSlot(wide).ok, false);
   const vector = Buffer.from(TEST_VECTOR_KEY_HASH, 'hex');
   const seen = keyStatus({
     schema: KEY_STATUS_SCHEMA,
@@ -1667,7 +1754,8 @@ test('a wrong key-slot proof, a wrong payTo proof, a bad possession signature, a
     keySlotProof: [hexOf(payLeaf.bytes)],
   };
   const popped = await runScene({ payment: built.payment, logs: [okLog(badPop)] }, v13Receipt(badPop), (u) => optionsFor(key, doc, u));
-  assert.notEqual(popped.v.exit_code, 0);
+  assert.equal(popped.v.exit_code, 1);
+  assert.equal(popped.v.reason, 'possession_invalid');
   const short = signedLine({ expiry: 1000n });
   const expired = await runScene({ payment: short.payment, logs: [okLog(short)] }, v13Receipt(short), (u) => optionsFor(key, doc, u));
   assert.notEqual(expired.v.exit_code, 0);
@@ -1929,6 +2017,272 @@ test('D27 version 13 lookalikes are not dispatched', () => {
   assert.equal(isExactV13Receipt({ v: '13', schema: 'chit402.cs2.receipt.v1' }), false);
   assert.equal(isExactV13Receipt({ v: 13, schema: 'chit402.cs2.receipt.v1 ' }), false);
   assert.equal(isExactV13Receipt({ v: 13, schema: 'CHIT402.cs2.receipt.v1' }), false);
+});
+
+function rebuildSlot(built, slotHex, keyValue = null) {
+  const v = Buffer.from(slotHex, 'hex');
+  const payKey = slotKey({ kind: 1, chainId: 84532, id: built.payment.to });
+  const hash = sha256(Buffer.concat([Buffer.from([1]), v.subarray(0, 33)]));
+  const keySlot = keySlotKey(84532, hash, sha256);
+  const keyBody = keyValue ? Buffer.from(keyValue) : new Uint8Array(0);
+  const payLeaf = stateLeaf(payKey.bytes, v);
+  const keyLeaf = stateLeaf(keySlot, keyBody);
+  const bit = (payKey.bytes[0] >> 7) & 1;
+  const root = bit === 1 ? stateNode(keyLeaf.bytes, payLeaf.bytes) : stateNode(payLeaf.bytes, keyLeaf.bytes);
+  return {
+    ...built,
+    slotValue: slotHex,
+    stateRoot: hexOf(root.bytes),
+    slotProof: [hexOf(keyLeaf.bytes)],
+    keySlotProof: [hexOf(payLeaf.bytes)],
+  };
+}
+
+test('a missing key proof cannot be checked', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { slotProof: ['00'.repeat(32)] } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.equal(seen.v.reason, 'key_status_unproven');
+});
+
+test('a malformed key leaf cannot be checked', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const junk = Buffer.alloc(7, 7);
+  const next = rebuildSlot(built, built.slotValue, junk);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(next)] },
+    v13Receipt(next, { fields: { keySlotValue: hexOf(junk) } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.equal(seen.v.reason, 'key_status_unproven');
+});
+
+test('two key records in one leaf are ambiguous', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const pair = Buffer.alloc((8 + 8 + 8 + 64) * 2, 4);
+  const next = rebuildSlot(built, built.slotValue, pair);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(next)] },
+    v13Receipt(next, { fields: { keySlotValue: hexOf(pair) } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.equal(seen.v.reason, 'key_status_unproven');
+});
+
+test('an empty payTo slot is unregistered', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const pay = slotKey({ kind: 1, chainId: 84532, id: built.payment.to });
+  const empty = stateLeaf(pay.bytes, new Uint8Array(0));
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built, { stateRoot: hexOf(empty.bytes) })] },
+    v13Receipt(built, { fields: { slotValue: undefined, slotProof: [], keySlotProof: [] } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'unregistered');
+});
+
+test('an expired key is refused', async () => {
+  const key = makeKey();
+  const built = signedLine({ expiry: BigInt(HOUR) });
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'expired');
+});
+
+test('a key admitted after the payment block is unadmitted', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { admissionBlock: 102 } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'unadmitted');
+});
+
+test('PRD-2 a 1-byte junk payTo signature is refused', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const s = built.slotValue;
+  const junk = `${s.slice(0, 82)}0001ff${s.slice(82 + 4 + 130)}`;
+  const next = rebuildSlot(built, junk);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(next)] }, v13Receipt(next), (u) => optionsFor(key, doc, u));
+  assert.notEqual(seen.v.exit_code, 0, seen.v.reason);
+});
+
+test('PRD-4 expiry equal to the receipt hour is refused and the next second verifies', async () => {
+  const key = makeKey();
+  const doc = bundleFor(key);
+  const early = signedLine({ expiry: BigInt(HOUR) });
+  const refused = await runScene({ payment: early.payment, logs: [okLog(early)] }, v13Receipt(early), (u) => optionsFor(key, doc, u));
+  assert.notEqual(refused.v.exit_code, 0);
+  const later = signedLine({ expiry: BigInt(HOUR) + 1n });
+  const ok = await runScene({ payment: later.payment, logs: [okLog(later)] }, v13Receipt(later), (u) => optionsFor(key, doc, u));
+  assert.equal(ok.v.exit_code, 0, ok.v.reason);
+});
+
+test('PRD-5 a revoked key exits revoked', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const hashed = sha256(Buffer.concat([Buffer.from([1]), built.sellerKey]));
+  const revoke = hashChit('RevokeByKey', { keyHash: hashed }, 84532n, CONTRACT.slice(2));
+  assert.equal(revoke.ok, true);
+  const sig = signLow(revoke.bytes, built.keyScalar, P256);
+  assert.ok(sig);
+  const tomb = Buffer.concat([
+    expiryBytes(90n),
+    expiryBytes(50n),
+    expiryBytes(105n),
+    Buffer.from(sig.raw),
+  ]);
+  const next = rebuildSlot(built, built.slotValue, tomb);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(next)] },
+    v13Receipt(next, { fields: { keySlotValue: hexOf(tomb) } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'revoked');
+});
+
+test('PRD-5 a key-slot sibling that does not verify stays unproven', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const fake = '77'.repeat(32);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { slotProof: [fake] } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.notEqual(seen.v.exit_code, 0);
+  assert.notEqual(seen.v.reason, 'revoked');
+});
+
+test('PRD-7 localhost and the IPv6 loopback are the same host as 127.0.0.1', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const names = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => ({
+    ...optionsFor(key, doc, u),
+    rpcUrls: [u, u.replaceAll('127.0.0.1', 'localhost')],
+  }));
+  assert.equal(names.v.exit_code, 2, names.v.reason);
+  assert.equal(names.v.reason, 'rpc_unconfigured');
+  const v6 = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => {
+    const port = new URL(u).port;
+    return {
+      ...optionsFor(key, doc, u),
+      rpcUrls: [u, `http://[::1]:${port}`],
+    };
+  });
+  assert.equal(v6.v.exit_code, 2, v6.v.reason);
+  assert.equal(v6.v.reason, 'rpc_unconfigured');
+});
+
+test('a high-S line sigma is invalid', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const line = Buffer.from(built.line);
+  const sigmaAt = LAYOUT.sigma + 1;
+  const s = bytesToBig(line.subarray(sigmaAt + 32, sigmaAt + 64));
+  line.set(bigToBytes(P256.order - s, 32), sigmaAt + 32);
+  const leaf = hexOf(leafHash(line).hash);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built, { root: leaf })] },
+    { ...v13Receipt(built), line: hexOf(line) },
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'sigma_invalid');
+});
+
+test('two RPCs that disagree stay exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], disagree: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.equal(seen.v.reason, 'rpc_disagreement');
+});
+
+test('one answering RPC is not enough', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], failSecond: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+});
+
+test('a signed domain with the wrong name is refused', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const domain = { ...built.signedDomain, name: 'Other' };
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { signedDomain: domain } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'domain_mismatch');
+  const missing = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { signedDomain: undefined } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(missing.v.exit_code, 1);
+  assert.equal(missing.v.reason, 'domain_unsigned');
+});
+
+test('an admission block outside the anchors is unproven', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { admissionBlock: 50 } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.equal(seen.v.reason, 'key_status_unproven');
+});
+
+test('the retire hour is outside admittingContract coverage', () => {
+  const pins = [{ address: CONTRACT, chainId: 84532, genesisHourStart: HOUR, retireHourStart: HOUR + 3600 }];
+  assert.equal(admittingContract(pins, 84532, HOUR), CONTRACT);
+  assert.equal(admittingContract(pins, 84532, HOUR + 3600), null);
+});
+
+test('shared-module checks are not passed literal booleans', () => {
+  const root = join(HERE, '../src/v13');
+  const names = ['memberAtEpoch', 'absentAtPrior', 'absentAtPrev', 'emptySlotAtPrior', 'emptyAtPrev', 'popOk'];
+  const pattern = new RegExp(`\\b(${names.join('|')})\\s*:\\s*(true|false)\\b`);
+  for (const file of ['verify.ts', 'key-record.ts', 'slot.ts', 'core/decide.ts']) {
+    const text = readFileSync(join(root, file), 'utf8');
+    assert.equal(pattern.test(text), false, file);
+  }
 });
 
 test('one repeated RPC URL is not two endpoints', async () => {

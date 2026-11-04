@@ -142,27 +142,34 @@ export function keySlotKey(chainId: number, keyHash: Uint8Array, _sha256?: Sha):
   return got.ok ? got.bytes : null;
 }
 
-/** One u16 big-endian length prefix, then that many bytes. The module does not export a reader. */
-export function readU16Field(bytes: Uint8Array, offset: number): { ok: true; value: Uint8Array; next: number } | { ok: false } {
-  if (offset < 0 || offset + 2 > bytes.length) return { ok: false };
-  const len = (bytes[offset] << 8) | bytes[offset + 1];
-  const start = offset + 2;
-  const end = start + len;
-  if (end > bytes.length) return { ok: false };
-  return { ok: true, value: bytes.subarray(start, end), next: end };
-}
+const PAYTO_SIGNATURE_BYTES = 65;
+const POP_SIGNATURE_BYTES = 64;
 
 /**
- * PayTo-control signature, then the possession signature. Both prefixes are
- * u16 big-endian. The possession signature is exactly 64 bytes and low-S.
+ * One parse of a payTo slot: key, expiry, payTo signature (65 bytes) and
+ * possession signature (64 bytes). Inner lengths other than those two fail.
  */
-export function readPayToSignatures(bytes: Uint8Array): { ok: true; payTo: Uint8Array; pop: Uint8Array } | { ok: false } {
-  const payTo = readU16Field(bytes, 0);
-  if (!payTo.ok) return payTo;
-  const pop = readU16Field(bytes, payTo.next);
-  if (!pop.ok || pop.value.length !== 64 || pop.next !== bytes.length) return { ok: false };
-  if (!eip.checkSigma(pop.value).ok) return { ok: false };
-  return { ok: true, payTo: payTo.value, pop: pop.value };
+export function parsePayToSlot(bytes: Uint8Array): {
+  ok: true;
+  key: Uint8Array;
+  expiry: bigint;
+  payToSignature: Uint8Array;
+  pop: Uint8Array;
+} | { ok: false } {
+  const width = 33 + 8 + 2 + PAYTO_SIGNATURE_BYTES + 2 + POP_SIGNATURE_BYTES;
+  if (bytes.length !== width || (bytes[0] !== 2 && bytes[0] !== 3)) return { ok: false };
+  const key = bytes.subarray(0, 33);
+  let expiry = 0n;
+  for (let i = 0; i < 8; i += 1) expiry = (expiry << 8n) | BigInt(bytes[33 + i]);
+  let off = 41;
+  const payLen = (bytes[off] << 8) | bytes[off + 1];
+  if (payLen !== PAYTO_SIGNATURE_BYTES) return { ok: false };
+  off += 2;
+  const payToSignature = bytes.subarray(off, off + payLen);
+  off += payLen;
+  const popLen = (bytes[off] << 8) | bytes[off + 1];
+  if (popLen !== POP_SIGNATURE_BYTES || off + 2 + popLen !== bytes.length) return { ok: false };
+  return { ok: true, key, expiry, payToSignature, pop: bytes.subarray(off + 2) };
 }
 
 export interface SlotProof {
@@ -278,6 +285,7 @@ function status(exit: 0 | 1 | 2, reason: string | null, print: string | null = n
 function tombRecord(at: bigint, outOfBounds: boolean, signatureOk = false) {
   const prev = outOfBounds ? at : 0n;
   const show = at > 0n ? at : 1n;
+  const inside = prev < at && at <= show;
   return {
     revokedAtBlock: at,
     prevAnchorBlock: prev,
@@ -286,8 +294,8 @@ function tombRecord(at: bigint, outOfBounds: boolean, signatureOk = false) {
     signatureOk,
     keyHashOk: true,
     admission: {
-      absentAtPrev: true,
-      memberAtEpoch: true,
+      absentAtPrev: inside,
+      memberAtEpoch: inside,
       anchorPrev: prev,
       anchorEpoch: show,
       block: at,
@@ -315,6 +323,8 @@ function fromShared(result: EipOk<{ status: string }> | EipNo, input: KeyStatusI
   if (reason === 'inactive' && input.tombstone && input.registration && input.tombstone.revokedAtBlock != null && input.registration.admissionBlock >= input.tombstone.revokedAtBlock) {
     return status(1, 'registered_after_tombstone');
   }
+  if (reason === 'unregistered') return status(1, 'unregistered');
+  if (reason === 'inactive') return status(1, 'unadmitted');
   if (reason === 'slot_revoke' || reason === 'key_tombstone') return status(1, 'revoked');
   if (reason === 'slot_rebind') return status(1, 'registered_after_slot_revoke');
   if (reason === 'admitted_after_tombstone') return status(1, 'registered_after_tombstone');
@@ -332,8 +342,25 @@ function fromShared(result: EipOk<{ status: string }> | EipNo, input: KeyStatusI
 export function keyStatus(input: KeyStatusInput): KeyStatusResult {
   if (input.schema !== KEY_STATUS_SCHEMA) return status(2, 'old_schema');
   const reg = input.registration;
-  if (!reg || !reg.payToSignature || reg.payToSignature.length === 0) return status(2, 'unproven');
-  if (!reg.keySignature || reg.keySignature.length !== 64 || !reg.popOk) return status(2, 'unproven');
+  if (!reg || !reg.payToSignature || reg.payToSignature.length === 0) {
+    if (reg || input.payToProof?.siblings == null || input.keyProof?.siblings == null) return status(2, 'unproven');
+  } else if (!reg.keySignature || reg.keySignature.length !== 64 || !reg.popOk) return status(2, 'unproven');
+  if (!reg) {
+    const viewed = keyStatusModule.keyStatus({
+      proofs: {
+        payTo: input.payToProof != null && input.payToProof.siblings != null,
+        key: input.keyProof != null && input.keyProof.siblings != null,
+      },
+      stateRoot: input.stateRoot ?? input.payToProof?.root ?? 'root',
+      sigmaKey: input.sigmaKey ?? STAND_IN_KEY,
+      chainId: BigInt(input.chainId ?? 84532),
+      keyLeaf: { empty: true },
+      block: BigInt(input.block),
+      hourStart: BigInt(input.hourStart),
+      registration: null,
+    });
+    return fromShared(viewed, input, null);
+  }
   if (input.registrationKeyHash && eip.deniedKeyHash(eip.formatKeyHash(input.registrationKeyHash) ?? '')) {
     return status(1, 'test_vector_key', 'test vector key');
   }

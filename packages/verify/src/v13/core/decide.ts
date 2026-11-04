@@ -38,7 +38,7 @@ export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  */
 export const CORPUS_FLIP_LIST: readonly string[] = Object.freeze([]);
 
-const RECEIPT_KEYS = new Set(['v', 'schema', 'line', 'index', 'epoch', 'contract', 'proof', 'slotValue', 'slotProof', 'keySlotProof']);
+const RECEIPT_KEYS = new Set(['v', 'schema', 'line', 'index', 'epoch', 'contract', 'proof', 'slotValue', 'slotProof', 'keySlotProof', 'keySlotValue', 'admissionBlock', 'priorSlotProof', 'priorKeyProof', 'signedDomain']);
 const LEAF_KEYS = new Set(['leaf', 'leafHash', 'leaf_hash']);
 const SIZE_KEYS = new Set(['treeSize', 'tree_size', 'size']);
 const PIN_KEYS = ['chainId', 'address', 'codeHash', 'predecessor', 'checkpoint', 'genesisHourStart', 'retireHourStart'];
@@ -116,6 +116,11 @@ export interface ParsedReceipt {
   slotValue: Uint8Array | null;
   slotProof: string[];
   keySlotProof: string[];
+  keySlotValue: Uint8Array | null;
+  admissionBlock: number | null;
+  priorSlotProof: string[];
+  priorKeyProof: string[];
+  signedDomain: { name: string; version: string; chainId: number; verifyingContract: string } | null;
   lineHex: string;
 }
 
@@ -185,7 +190,7 @@ export interface V13Hooks {
     root: string,
     proof: string[],
   ) => { ok: boolean; reason?: string };
-  proveKey: (stateRoot: string) => boolean | { ok: boolean; reason: string | null };
+  proveKey: (stateRoot: string) => boolean | { ok: boolean; reason: string | null; exit?: 1 | 2 };
   sigmaOk: () => boolean;
 }
 
@@ -307,7 +312,14 @@ const MESSAGES: Record<string, string> = {
   not_in_log: 'NOT_IN_LOG',
   pending_hourly_close: 'pending hourly close',
   key_status_unproven: 'key status unproven',
+  unregistered: 'The payTo has no registered key.',
+  expired: 'The seller key is expired.',
+  unadmitted: 'The seller key is not admitted at this block.',
   domain_mismatch: 'The slot signature domain does not match the admitting contract.',
+  domain_unsigned: 'The slot record has no signed domain.',
+  possession_invalid: 'The payTo possession signature does not verify.',
+  admission_unproven: 'The key was not shown absent before this epoch and present after it.',
+  revoked: 'The seller key is revoked.',
   bare_key: 'The payTo slot has no registration.',
   sigma_invalid: 'The seller signature does not verify under the payTo slot.',
   unknown_block: 'The block hash is not known to the RPC.',
@@ -332,6 +344,19 @@ const MESSAGES: Record<string, string> = {
 
 function messageOf(reason: string): string {
   return MESSAGES[reason] || reason;
+}
+
+function readHashList(value: Record<string, unknown>, key: string): { ok: true; hashes: string[] } | { ok: false; exit: 1; reason: 'bad_receipt' } {
+  const hashes: string[] = [];
+  if (!hasOwn(value, key)) return { ok: true, hashes };
+  if (!Array.isArray(value[key])) return { ok: false, exit: 1, reason: 'bad_receipt' };
+  for (const step of value[key] as unknown[]) {
+    if (typeof step !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
+    const hash = normHash(step);
+    if (!hash) return { ok: false, exit: 1, reason: 'bad_receipt' };
+    hashes.push(hash);
+  }
+  return { ok: true, hashes };
 }
 
 export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedReceipt } | { ok: false; exit: 1; reason: string } {
@@ -391,6 +416,38 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
       keySlotProof.push(hash);
     }
   }
+  const priorRead = readHashList(value, 'priorSlotProof');
+  if (!priorRead.ok) return priorRead;
+  const priorKeyRead = readHashList(value, 'priorKeyProof');
+  if (!priorKeyRead.ok) return priorKeyRead;
+  let keySlotValue: Uint8Array | null = null;
+  if (hasOwn(value, 'keySlotValue')) {
+    if (typeof value.keySlotValue !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
+    const raw = hexToBytes(value.keySlotValue);
+    const body = value.keySlotValue.startsWith('0x') ? value.keySlotValue.slice(2) : value.keySlotValue;
+    if (!raw || !/^[0-9a-f]*$/.test(body) || body !== body.toLowerCase()) return { ok: false, exit: 1, reason: 'bad_receipt' };
+    keySlotValue = raw;
+  }
+  let admissionBlock: number | null = null;
+  if (hasOwn(value, 'admissionBlock')) {
+    if (!isJsonInteger(value.admissionBlock) || value.admissionBlock < 0 || !Number.isSafeInteger(value.admissionBlock)) {
+      return { ok: false, exit: 1, reason: 'bad_receipt' };
+    }
+    admissionBlock = value.admissionBlock;
+  }
+  let signedDomain: ParsedReceipt['signedDomain'] = null;
+  if (hasOwn(value, 'signedDomain')) {
+    const domain = value.signedDomain;
+    if (!isPlain(domain)) return { ok: false, exit: 1, reason: 'bad_receipt' };
+    if (typeof domain.name !== 'string' || typeof domain.version !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
+    if (!isJsonInteger(domain.chainId) || typeof domain.verifyingContract !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
+    signedDomain = {
+      name: domain.name,
+      version: domain.version,
+      chainId: domain.chainId,
+      verifyingContract: domain.verifyingContract,
+    };
+  }
   return {
     ok: true,
     receipt: {
@@ -401,6 +458,11 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
       slotValue,
       slotProof,
       keySlotProof,
+      keySlotValue,
+      admissionBlock,
+      priorSlotProof: priorRead.hashes,
+      priorKeyProof: priorKeyRead.hashes,
+      signedDomain,
       lineHex: lineBody,
     },
   };
@@ -793,14 +855,28 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   const hourly = firstHourly(mine, parsed.receipt.index, world.finalizedNumber);
   const stateRoot = hourly ? hourly.stateRoot : head.stateRoot;
   const proved = hooks.proveKey(stateRoot);
-  const proof = proved === true ? { ok: true, reason: null } : proved === false ? { ok: false, reason: null } : proved;
+  const proof = proved === true ? { ok: true, reason: null, exit: 0 as 0 | 1 | 2 } : proved === false ? { ok: false, reason: null, exit: 2 as 0 | 1 | 2 } : { ok: proved.ok, reason: proved.reason, exit: proved.exit ?? (proved.ok ? 0 : 2) };
   if (proof.reason === 'domain_mismatch' || proof.reason === 'bare_key') {
+    const reason = proof.reason === 'domain_mismatch' ? 'domain_mismatch' : 'bare_key';
+    return fail(1, reason, world, { signature: 'fail' }, messageOf(reason));
+  }
+  if (
+    proof.exit === 1
+    && (
+      proof.reason === 'domain_unsigned'
+      || proof.reason === 'revoked'
+      || proof.reason === 'possession_invalid'
+      || proof.reason === 'expired'
+      || proof.reason === 'unregistered'
+      || proof.reason === 'unadmitted'
+    )
+  ) {
     return fail(1, proof.reason, world, { signature: 'fail' }, messageOf(proof.reason));
   }
   if (!proof.ok && !hourly) {
     return fail(2, 'pending_hourly_close', world, { signature: 'could_not_check' }, messageOf('pending_hourly_close'));
   }
-  if (!proof.ok) return fail(1, 'key_status_unproven', world, { signature: 'fail' }, messageOf('key_status_unproven'));
+  if (!proof.ok) return fail(2, 'key_status_unproven', world, { signature: 'could_not_check' }, messageOf('key_status_unproven'));
   if (!hooks.sigmaOk()) return fail(1, 'sigma_invalid', world, { signature: 'fail' }, messageOf('sigma_invalid'));
   if (world.canonical === 'unknown_block') return fail(2, 'unknown_block', world, { payment_binding: 'could_not_check' }, messageOf('unknown_block'));
   if (world.canonical === 'not_final') return fail(2, 'block_not_final', world, { payment_binding: 'could_not_check' }, messageOf('block_not_final'));

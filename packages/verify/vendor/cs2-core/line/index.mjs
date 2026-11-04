@@ -20,12 +20,9 @@
  */
 
 import { sha256 as digest } from '../sha256.js';
-import { P256 } from '../ecdsa/curves.js';
-import { KIND_CHANNEL, KIND_KEY, KIND_PAYTO, SLOT_DOMAIN } from '../eip712/kinds.mjs';
 import { LAUNCH_ALGS } from '../eip712/registry.mjs';
-import { checkSigma } from '../eip712/sigma-range.mjs';
-
-export { KIND_CHANNEL, KIND_KEY, KIND_PAYTO, SLOT_DOMAIN, checkSigma };
+import { KIND_CHANNEL, KIND_KEY, KIND_PAYTO } from '../eip712/kinds.mjs';
+import { checkSigma as checkSigmaRange } from '../eip712/sigma-range.mjs';
 
 export const SCHEMA = 'chit402.cs2.line.v1';
 
@@ -49,6 +46,7 @@ export const HEADER_BYTE_1 = 0x32;
 export const KIND_WALLET = 0x02;
 export const KIND_BOOK = 0x03;
 export const KIND_EPOCH = 0x04;
+export { KIND_CHANNEL, KIND_KEY, KIND_PAYTO };
 
 /** Implementation limit for emptyHash. Not a wire field. */
 export const MAX_EMPTY_DEPTH = 64;
@@ -60,20 +58,17 @@ const DOMAIN_CNT = 'cnt';
 // "c" versus "-". Do not append a variable-length field to either.
 const DOMAIN_LINE = 'cs2';
 const DOMAIN_SIG = 'cs2-sig';
-const DOMAIN_STATE = SLOT_DOMAIN;
+const DOMAIN_STATE = 'chit402-state-v1';
 const DOMAIN_EMPTY = 'empty';
 
 const STATE_LEAF_PREFIX = 0x00;
 const STATE_NODE_PREFIX = 0x01;
 const STATE_EMPTY_PREFIX = 0x02;
 
-/** NIST P-256 order, from the frozen curve. Seller keys are compressed P-256. */
-export const P256_N = P256.order;
-
 const ALG_SET = new Set(LAUNCH_ALGS);
 
-/** Algorithms this codec accepts. The frozen registry is the only list. */
-export const ALLOWED_ALGS = Object.freeze([...LAUNCH_ALGS]);
+/** Algorithms this codec accepts. A frozen array, taken from the registry. */
+export const ALLOWED_ALGS = Object.freeze([...ALG_SET]);
 
 export function isAllowedAlg(alg) {
   return ALG_SET.has(alg);
@@ -84,6 +79,7 @@ const ID_LENGTH_BY_KIND = new Map([
   [KIND_WALLET, 20],
   [KIND_BOOK, 32],
   [KIND_EPOCH, 0],
+  [KIND_KEY, 32],
 ]);
 
 /** Ordered §S1 fields: name, width. Offsets are the running sum. */
@@ -381,6 +377,12 @@ function requireAlg(alg) {
   return { ok: true };
 }
 
+function checkSigma(sigma64) {
+  const got = checkSigmaRange(sigma64);
+  if (!got.ok) return fail(got.reason === 'bad_sigma' && sigma64.length !== 64 ? 'bad_length' : 'bad_sigma');
+  return { ok: true };
+}
+
 function checkSalts(saltP, saltC) {
   if (isZero(saltP) || isZero(saltC) || bytesEqual(saltP, saltC)) return fail('bad_salt');
   return { ok: true };
@@ -674,7 +676,8 @@ function chainBytes(chainId) {
 
 /**
  * Slot key H("chit402-state-v1" ‖ kind ‖ chainId ‖ id).
- * Kinds 0x00 and 0x05–0xFF are rejected. Id width is 20 / 20 / 32 / 0.
+ * Kind 0x05 is the key slot, id 32. Id width is 20 / 20 / 32 / 0 / 32.
+ * Kinds 0x00 and 0x06–0xFF are reserved. 0x06 is the channel kind.
  * @param {{ kind: number, chainId: bigint | number | string, id: Uint8Array | string }} input
  */
 export function slotKey(input) {

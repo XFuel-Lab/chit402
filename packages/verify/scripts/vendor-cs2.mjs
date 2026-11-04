@@ -83,7 +83,7 @@ line = mustReplace(
 );
 writeFileSync(join(OUT, 'line', 'index.mjs'), line);
 
-for (const name of ['curves.js', 'recover.js', 'bytes.js', 'keccak.js', 'sign.js']) {
+for (const name of ['curves.js', 'recover.js', 'bytes.js', 'keccak.js', 'sign.js', 'address.js']) {
   cpSync(join(CORE, 'ecdsa', name), join(OUT, 'ecdsa', name));
 }
 

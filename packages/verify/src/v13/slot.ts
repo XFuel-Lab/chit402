@@ -70,6 +70,9 @@ export function admittingContract(
 
 export function verifySlot(input: VerifySlotInput): VerifySlotResult {
   const domain = input.admitting ? domainFor(input.chainId, input.admitting) : null;
+  if (!input.signedDomain) {
+    return { ignored: false, inBounds: false, domain, reason: 'domain_unsigned' };
+  }
   if (
     input.signedDomain
     && domain

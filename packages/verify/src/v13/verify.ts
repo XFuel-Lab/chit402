@@ -29,7 +29,7 @@ import {
   keySlotKey,
   keyStatus,
   parseKeyHash,
-  readPayToSignatures,
+  parsePayToSlot,
 } from './key-record.js';
 import {
   ANCHORED_TOPIC0,
@@ -81,17 +81,22 @@ type LineModule = {
   stateLeaf: (key: Uint8Array, value: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateNode: (left: Uint8Array, right: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   isAllowedAlg: (alg: number) => boolean;
+  LAYOUT: { sigma: number };
 };
 
 type EipModule = {
   canonicalKey: (alg: number, key: Uint8Array) => { ok: true; uncompressed: Uint8Array } | { ok: false; reason: string };
+  keyHash: (alg: number, key: Uint8Array) => { ok: true; bytes: Uint8Array; hex: string } | { ok: false; reason: string };
   checkSigma: (sigma64: Uint8Array) => { ok: boolean; reason?: string };
   verifyPossession: (digest: Uint8Array, uncompressedKey: Uint8Array, signature: Uint8Array) => { ok: boolean; reason?: string };
 };
 
 type EcdsaModule = {
   P256: { p: bigint; a: bigint; b: bigint; order: bigint };
+  SECP256K1: { p: bigint; a: bigint; b: bigint; order: bigint; G: { x: bigint; y: bigint } };
   yParityByTrial: (digest: Uint8Array, sig64: Uint8Array, publicKey: Uint8Array, curve: unknown) => number;
+  recoverPublicKey: (digest: Uint8Array, r: Uint8Array, s: Uint8Array, yParity: 0 | 1, curve: unknown) => Uint8Array | null;
+  ethereumAddress: (publicKey: Uint8Array) => string;
   bytesToBig: (bytes: Uint8Array) => bigint;
   bigToBytes: (value: bigint, length: number) => Uint8Array;
 };
@@ -108,7 +113,7 @@ let cores: {
 async function loadCores() {
   if (cores) return cores;
   const root = pathToFileURL(join(dirname(__filename), '../../vendor/cs2-core/')).href;
-  const [merkle, line, curves, recover, bytes, keccakMod, shaMod, eip] = await Promise.all([
+  const [merkle, line, curves, recover, bytes, keccakMod, shaMod, eip, address] = await Promise.all([
     import(new URL('merkle/index.js', root).href),
     import(new URL('line/index.mjs', root).href),
     import(new URL('ecdsa/curves.js', root).href),
@@ -117,13 +122,17 @@ async function loadCores() {
     import(new URL('ecdsa/keccak.js', root).href),
     import(new URL('sha256.js', root).href),
     import(new URL('eip712/index.mjs', root).href),
+    import(new URL('ecdsa/address.js', root).href),
   ]);
   cores = {
     merkle: merkle as MerkleModule,
     line: line as LineModule,
     ecdsa: {
       P256: (curves as { P256: EcdsaModule['P256'] }).P256,
+      SECP256K1: (curves as { SECP256K1: EcdsaModule['SECP256K1'] }).SECP256K1,
       yParityByTrial: (recover as { yParityByTrial: EcdsaModule['yParityByTrial'] }).yParityByTrial,
+      recoverPublicKey: (recover as { recoverPublicKey: EcdsaModule['recoverPublicKey'] }).recoverPublicKey,
+      ethereumAddress: (address as { ethereumAddress: EcdsaModule['ethereumAddress'] }).ethereumAddress,
       bytesToBig: (bytes as { bytesToBig: EcdsaModule['bytesToBig'] }).bytesToBig,
       bigToBytes: (bytes as { bigToBytes: EcdsaModule['bigToBytes'] }).bigToBytes,
     },
@@ -181,7 +190,9 @@ function canonRpc(url: string): string {
   const trimmed = url.trim();
   try {
     const parsed = new URL(trimmed);
-    parsed.hostname = parsed.hostname.toLowerCase();
+    let host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (host === 'localhost' || host === '::1') host = '127.0.0.1';
+    parsed.hostname = host;
     parsed.hash = '';
     if ((parsed.protocol === 'https:' && parsed.port === '443') || (parsed.protocol === 'http:' && parsed.port === '80')) {
       parsed.port = '';
@@ -301,67 +312,150 @@ function foldProof(line: LineModule, leaf: Uint8Array, slotKeyBytes: Uint8Array,
   return bytesToHex(acc) === stateRoot.toLowerCase();
 }
 
+const LOW_SIGMA = (() => {
+  const bytes = new Uint8Array(64);
+  bytes[31] = 1;
+  bytes[63] = 1;
+  return bytes;
+})();
+
 function proveKey(
   line: LineModule,
   view: LineView,
   slotValue: Uint8Array | null,
   slotProof: string[],
   keySlotProof: string[],
+  priorSlotProof: string[],
+  priorKeyProof: string[],
+  keySlotValue: Uint8Array | null,
   slotInput: VerifySlotInput,
   crypto: {
     sha256: (message: Uint8Array) => Uint8Array;
     eip: EipModule;
+    ecdsa: EcdsaModule;
   },
-  hours: { receiptHour: number | null; block: number; priorAnchor: number; anchor: number; emptySlotAtPrior: boolean },
+  hours: {
+    receiptHour: number | null;
+    admissionBlock: number | null;
+    priorAnchor: number;
+    anchor: number;
+    priorRoot: string | null;
+  },
 ) {
   clearAdmissionCache();
-  return (stateRoot: string): boolean | { ok: boolean; reason: string | null } => {
+  return (stateRoot: string): boolean | { ok: boolean; reason: string | null; exit?: 1 | 2 } => {
     const judged = verifySlot({
-      ...slotInput,
-      absentAtPrior: false,
-      emptySlotAtPrior: hours.emptySlotAtPrior,
-      memberAtEpoch: true,
-      admissionBlock: hours.block,
-      previousAnchorBlock: hours.priorAnchor,
-      showingAnchorBlock: hours.anchor,
+      chainId: slotInput.chainId,
+      admitting: slotInput.admitting,
+      signedDomain: slotInput.signedDomain,
+      admissionBlock: null,
+      previousAnchorBlock: null,
+      showingAnchorBlock: null,
+      paymentBlock: slotInput.paymentBlock,
     });
-    if (judged.reason === 'domain_mismatch') return { ok: false, reason: 'domain_mismatch' };
-    if (judged.reason) return { ok: false, reason: null };
-    if (!slotValue || slotValue.length <= 33) return { ok: false, reason: 'bare_key' };
-    const sellerKey = slotValue.subarray(0, 33);
-    let expiry = 0n;
-    for (let i = 0; i < 8; i += 1) expiry = (expiry << 8n) | BigInt(slotValue[33 + i] ?? 0);
-    const signatures = readPayToSignatures(slotValue.subarray(41));
-    if (!signatures.ok) return { ok: false, reason: null };
-    const opened = line.commitments(view.bytes);
+    if (judged.reason === 'domain_mismatch') return { ok: false, reason: 'domain_mismatch', exit: 1 };
+    if (judged.reason) return { ok: false, reason: judged.reason === 'domain_unsigned' ? 'domain_unsigned' : null, exit: judged.reason === 'domain_unsigned' ? 1 : 2 };
+    if (!slotValue) {
+      const emptySlot = line.slotKey({ kind: 1, chainId: view.chainId, id: view.to.slice(2) });
+      const emptyLeaf = emptySlot.ok ? line.stateLeaf(emptySlot.bytes, new Uint8Array(0)) : { ok: false as const };
+      const emptyShown = Boolean(emptySlot.ok && emptyLeaf.ok && foldProof(line, emptyLeaf.bytes, emptySlot.bytes, slotProof, stateRoot));
+      if (!emptyShown) return { ok: false, reason: null, exit: 2 };
+      return { ok: false, reason: 'unregistered', exit: 1 };
+    }
+    if (!slotValue || slotValue.length <= 33) return { ok: false, reason: 'bare_key', exit: 1 };
+    const parsed = parsePayToSlot(slotValue);
+    if (!parsed.ok) return { ok: false, reason: null };
+    const sellerKey = parsed.key;
+    const expiry = parsed.expiry;
     const point = crypto.eip.canonicalKey(0x01, sellerKey);
-    const popOk = opened.ok && point.ok && crypto.eip.verifyPossession(opened.sigmaDigest, point.uncompressed, signatures.pop).ok;
-    if (!popOk || !point.ok) return { ok: false, reason: null };
-    const keyHashText = `0x${bytesToHex(crypto.sha256(Uint8Array.of(0x01, ...sellerKey)))}`;
-    const keyHash = parseKeyHash(keyHashText);
+    if (!point.ok) return { ok: false, reason: null };
+    const seller = createRequire(__filename)('../../../chit-seller/eip712.mjs') as {
+      hashChit: (primary: string, message: Record<string, unknown>, chainId: bigint, verifyingContract: string) => { ok: true; bytes: Uint8Array } | { ok: false };
+    };
+    const contract = (slotInput.admitting ?? '').replace(/^0x/, '');
+    const digest = seller.hashChit('PayToControl', {
+      payTo: view.to.replace(/^0x/, ''),
+      keyAlg: 1,
+      key: sellerKey,
+      expiry,
+    }, BigInt(view.chainId), contract);
+    if (!digest.ok) return { ok: false, reason: null };
+    const yParity = parsed.payToSignature[64];
+    const r = crypto.ecdsa.bytesToBig(parsed.payToSignature.subarray(0, 32));
+    const s = crypto.ecdsa.bytesToBig(parsed.payToSignature.subarray(32, 64));
+    const order = crypto.ecdsa.SECP256K1.order;
+    if (yParity !== 0 && yParity !== 1) return { ok: false, reason: null };
+    if (r <= 0n || r >= order || s <= 0n || s > (order >> 1n)) return { ok: false, reason: null };
+    const recovered = crypto.ecdsa.recoverPublicKey(
+      digest.bytes,
+      parsed.payToSignature.subarray(0, 32),
+      parsed.payToSignature.subarray(32, 64),
+      yParity,
+      crypto.ecdsa.SECP256K1,
+    );
+    if (!recovered) return { ok: false, reason: null };
+    const signer = crypto.ecdsa.ethereumAddress(recovered).toLowerCase();
+    if (signer !== view.to.toLowerCase()) return { ok: false, reason: null };
+    const popOk = crypto.eip.verifyPossession(digest.bytes, point.uncompressed, parsed.pop).ok;
+    if (!popOk || !point.ok) return { ok: false, reason: 'possession_invalid', exit: 1 };
+    const hashed = crypto.eip.keyHash(0x01, sellerKey);
+    const keyHash = hashed.ok ? parseKeyHash(`0x${hashed.hex}`) : null;
     const derivedSlot = keyHash ? keySlotKey(view.chainId, keyHash, crypto.sha256) : null;
     if (!keyHash || !derivedSlot) return { ok: false, reason: null };
     const paySlot = line.slotKey({ kind: 1, chainId: view.chainId, id: view.to.slice(2) });
     if (!paySlot.ok) return { ok: false, reason: null };
+    const keyValue = keySlotValue && keySlotValue.length > 0 ? keySlotValue : new Uint8Array(0);
     const payLeaf = line.stateLeaf(paySlot.bytes, slotValue);
-    const keyLeaf = line.stateLeaf(derivedSlot, new Uint8Array(0));
+    const keyLeaf = line.stateLeaf(derivedSlot, keyValue);
     if (!payLeaf.ok || !keyLeaf.ok) return { ok: false, reason: null };
-    if (!foldProof(line, payLeaf.bytes, paySlot.bytes, slotProof, stateRoot)) return { ok: false, reason: null };
-    if (!foldProof(line, keyLeaf.bytes, derivedSlot, keySlotProof, stateRoot)) return { ok: false, reason: null };
+    if (!foldProof(line, payLeaf.bytes, paySlot.bytes, slotProof, stateRoot)) return { ok: false, reason: null, exit: 2 };
+    if (!foldProof(line, keyLeaf.bytes, derivedSlot, keySlotProof, stateRoot)) return { ok: false, reason: null, exit: 2 };
+    const memberAtEpoch = payLeaf.ok && keyLeaf.ok;
+    const priorRoot = hours.priorRoot;
+    const priorPay = line.stateLeaf(paySlot.bytes, new Uint8Array(0));
+    const priorKey = line.stateLeaf(derivedSlot, new Uint8Array(0));
+    if (!priorPay.ok || !priorKey.ok || priorRoot == null) return { ok: false, reason: null, exit: 2 };
+    const absentPay = foldProof(line, priorPay.bytes, paySlot.bytes, priorSlotProof, priorRoot);
+    const absentKey = foldProof(line, priorKey.bytes, derivedSlot, priorKeyProof, priorRoot);
+    const absentAtPrior = absentPay && absentKey;
+    if (!absentAtPrior || hours.admissionBlock == null) return { ok: false, reason: null, exit: 2 };
+    let tombstone: { revokedAtBlock: number; outOfBounds: boolean; signatureOk: boolean } | null = null;
+    if (keyValue.length > 0) {
+      if (keyValue.length !== 8 + 8 + 8 + 64) return { ok: false, reason: null, exit: 2 };
+      const tomb = readTombstone(keyValue);
+      if (!tomb) return { ok: false, reason: null, exit: 2 };
+      const revoke = seller.hashChit('RevokeByKey', { keyHash: keyHash }, BigInt(view.chainId), contract);
+      let signatureOk = false;
+      if (revoke.ok && crypto.eip.checkSigma(tomb.signature).ok) {
+        try {
+          crypto.ecdsa.yParityByTrial(revoke.bytes, tomb.signature, point.uncompressed, crypto.ecdsa.P256);
+          signatureOk = tomb.prev < tomb.at && tomb.at <= tomb.show;
+        } catch {
+          signatureOk = false;
+        }
+      }
+      tombstone = {
+        revokedAtBlock: tomb.at,
+        outOfBounds: !(tomb.prev < tomb.at && tomb.at <= tomb.show),
+        signatureOk,
+      };
+    }
     const admitted = cachedAdmission({
       slotKey: bytesToHex(paySlot.bytes),
       seq: 0,
-      absentAtPrior: false,
-      emptySlotAtPrior: hours.emptySlotAtPrior,
-      memberAtEpoch: true,
+      absentAtPrior,
+      emptySlotAtPrior: absentAtPrior,
+      memberAtEpoch,
       priorAnchor: hours.priorAnchor,
       anchor: hours.anchor,
-      block: hours.block,
+      block: hours.admissionBlock,
     });
-    if (!admitted.ok || hours.receiptHour == null) return { ok: false, reason: null };
+    if (!admitted.ok || hours.receiptHour == null) return { ok: false, reason: null, exit: 2 };
+    const recordedBlock = admitted.ok ? admitted.block : hours.anchor;
+    if (recordedBlock == null) return { ok: false, reason: null, exit: 2 };
     const status = keyStatus({
       schema: KEY_STATUS_SCHEMA,
-      block: hours.block,
+      block: view.blockNumber,
       hourStart: hours.receiptHour,
       stateRoot,
       sigmaKey: sellerKey,
@@ -370,37 +464,77 @@ function proveKey(
       bundleKeySlot: derivedSlot,
       payToProof: { siblings: slotProof, root: stateRoot },
       keyProof: { siblings: keySlotProof, root: stateRoot },
-      keyLeaf: 'empty',
+      keyLeaf: tombstone ? null : 'empty',
       registration: {
-        admissionBlock: admitted.block,
+        admissionBlock: recordedBlock,
         expiry,
-        payToSignature: signatures.payTo,
-        keySignature: signatures.pop,
+        payToSignature: parsed.payToSignature,
+        keySignature: parsed.pop,
         popOk,
       },
       slotRevokeBlock: null,
-      tombstone: null,
+      tombstone,
       registrationKeyHash: keyHash,
       admission: {
-        absentAtPrior: false,
-        emptySlotAtPrior: hours.emptySlotAtPrior,
-        memberAtEpoch: true,
+        absentAtPrior,
+        emptySlotAtPrior: absentAtPrior,
+        memberAtEpoch,
         priorAnchor: hours.priorAnchor,
         anchor: hours.anchor,
-        block: admitted.block,
+        block: recordedBlock,
       },
     });
-    if (status.exit !== 0) return { ok: false, reason: null };
+    if (status.exit !== 0) {
+      const exit: 1 | 2 = status.exit === 1 ? 1 : 2;
+      return { ok: false, reason: exit === 1 ? status.reason : null, exit };
+    }
     return { ok: true, reason: null };
   };
 }
 
+function readTombstone(bytes: Uint8Array): { at: number; prev: number; show: number; signature: Uint8Array } | null {
+  if (bytes.length !== 8 + 8 + 8 + 64) return null;
+  const word = (off: number) => {
+    let value = 0n;
+    for (let i = 0; i < 8; i += 1) value = (value << 8n) | BigInt(bytes[off + i]);
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    return Number(value);
+  };
+  const at = word(0);
+  const prev = word(8);
+  const show = word(16);
+  if (at == null || prev == null || show == null) return null;
+  return { at, prev, show, signature: bytes.subarray(24) };
+}
+
+function patchedSigma(line: LineModule, bytes: Uint8Array): Uint8Array {
+  const patched = new Uint8Array(bytes);
+  patched.set(LOW_SIGMA, line.LAYOUT.sigma + 1);
+  return patched;
+}
+
+function sigmaSlice(line: LineModule, bytes: Uint8Array): Uint8Array | null {
+  const start = line.LAYOUT.sigma + 1;
+  if (bytes.length < start + 64) return null;
+  return bytes.subarray(start, start + 64);
+}
+
+function commitmentsOf(line: LineModule, bytes: Uint8Array) {
+  const opened = line.commitments(bytes);
+  if (opened.ok || opened.reason !== 'bad_sigma') return opened;
+  const patched = new Uint8Array(bytes);
+  patched.set(LOW_SIGMA, line.LAYOUT.sigma + 1);
+  return line.commitments(patched);
+}
+
 function sigmaOk(line: LineModule, ecdsa: EcdsaModule, eip: EipModule, bytes: Uint8Array, slotValue: Uint8Array | null): boolean {
   if (!slotValue || slotValue.length < 33) return false;
-  const opened = line.commitments(bytes);
-  const decoded = line.decodeLine(bytes);
-  if (!opened.ok || !decoded.ok) return false;
+  const sigma = sigmaSlice(line, bytes);
+  if (!sigma) return false;
+  const decoded = { sigma: { sigma } };
   if (!eip.checkSigma(decoded.sigma.sigma).ok) return false;
+  const opened = commitmentsOf(line, bytes);
+  if (!opened.ok) return false;
   const point = eip.canonicalKey(0x01, slotValue.subarray(0, 33));
   if (!point.ok) return false;
   try {
@@ -533,7 +667,8 @@ async function fetchEvents(
       }
     } catch (err) {
       const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
-      if (code === 'rpc_disagreement' || n !== epoch - 1) throw err;
+      const disagreed = code === 'rpc_disagreement';
+      if (disagreed || n !== epoch - 1) throw err;
       priorStatus = 'unreadable';
       return 0;
     }
@@ -645,9 +780,12 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   if (parsed.ok && loaded) {
     const bytes = hexToBytes(parsed.receipt.lineHex);
     const decoded = bytes ? loaded.line.decodeLine(bytes) : { ok: false as const, reason: 'bad_line' };
-    if (!bytes || !decoded.ok) lineReason = 'bad_line';
+    const opened = !bytes || decoded.ok || decoded.reason !== 'bad_sigma'
+      ? decoded
+      : loaded.line.decodeLine(patchedSigma(loaded.line, bytes));
+    if (!bytes || !opened.ok) lineReason = 'bad_line';
     else {
-      line = lineView(decoded, bytes);
+      line = lineView(opened, bytes);
       if (!line) lineReason = 'bad_line';
     }
   }
@@ -782,24 +920,37 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   const hooks = {
     leafHash: loaded.merkle.leafHash,
     verifyInclusion: loaded.merkle.verifyInclusion,
-    proveKey: proveKey(loaded.line, line, slotValue, slotProof, keySlotProof, {
-      chainId: line.chainId,
-      admitting: parsed.receipt.contract,
-      signedDomain: null,
-      admissionBlock: receiptEvent ? receiptEvent.blockNumber : null,
-      previousAnchorBlock: priorEvent ? priorEvent.blockNumber : 0,
-      showingAnchorBlock: receiptEvent ? receiptEvent.blockNumber : null,
-      paymentBlock: line.blockNumber,
-    }, {
-      sha256: loaded.sha256,
-      eip: loaded.eip,
-    }, {
-      receiptHour,
-      block: receiptEvent ? receiptEvent.blockNumber : 0,
-      priorAnchor: priorEvent ? priorEvent.blockNumber : 0,
-      anchor: receiptEvent ? receiptEvent.blockNumber : 0,
-      emptySlotAtPrior: priorStatus === 'absent',
-    }),
+    proveKey: proveKey(
+      loaded.line,
+      line,
+      slotValue,
+      slotProof,
+      keySlotProof,
+      parsed.receipt.priorSlotProof,
+      parsed.receipt.priorKeyProof,
+      parsed.receipt.keySlotValue,
+      {
+        chainId: line.chainId,
+        admitting: parsed.receipt.contract,
+        signedDomain: parsed.receipt.signedDomain,
+        admissionBlock: parsed.receipt.admissionBlock,
+        previousAnchorBlock: priorEvent ? priorEvent.blockNumber : 0,
+        showingAnchorBlock: receiptEvent ? receiptEvent.blockNumber : null,
+        paymentBlock: line.blockNumber,
+      },
+      {
+        sha256: loaded.sha256,
+        eip: loaded.eip,
+        ecdsa: loaded.ecdsa,
+      },
+      {
+        receiptHour,
+        admissionBlock: parsed.receipt.admissionBlock,
+        priorAnchor: priorEvent ? priorEvent.blockNumber : 0,
+        anchor: receiptEvent ? receiptEvent.blockNumber : 0,
+        priorRoot: priorEvent ? priorEvent.stateRoot : null,
+      },
+    ),
     sigmaOk: () => sigmaOk(loaded.line, loaded.ecdsa, loaded.eip, line.bytes, slotValue),
   };
   return verdictOf(runV13(receipt, blankWorld(history, {
