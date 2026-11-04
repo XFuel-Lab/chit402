@@ -837,6 +837,7 @@ export async function settleBoundPayment({
       phase: 'pre_settle',
       hint,
       subDetail: hint.code,
+      tx: verified.txRef || null,
     });
   }
   if (typeof active.noteVerifiedPayment === 'function') {
@@ -1199,10 +1200,12 @@ function refused(req, reason, extra = {}) {
     ? reason
     : clientPaymentCode(reason);
   // pre_settle: /settle was not called. A /verify refusal is pre_settle
-  // too, though its row has stage settle (extra.phase). The response and
-  // the row both say preSettle whenever that phase is pre_settle.
+  // too, though its row has stage settle (extra.phase). preSettle is true
+  // only when that phase has no tx. A tx means money may have moved, and
+  // the register stamp must not say nothing was settled.
   const phase = extra.phase || (extra.preSettle ? 'pre_settle' : 'post_submit');
-  const preSettle = phase === 'pre_settle';
+  const tx = extra.tx || null;
+  const preSettle = phase === 'pre_settle' && !(typeof tx === 'string' && tx.trim().length > 0);
   const sub = refusalSubReason(extra.sub);
   const hint = publicVerifyHint(extra.hint);
   if (extra.capture !== false) {
@@ -1210,7 +1213,7 @@ function refused(req, reason, extra = {}) {
       network: extra.network || null,
       stage: extra.stage || (extra.preSettle ? 'pre-check' : 'settle'),
       reason: code,
-      tx: extra.tx || null,
+      tx,
       outcome: extra.outcome || 'refused',
       requestId: req?.id || null,
       preSettle,

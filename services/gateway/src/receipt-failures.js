@@ -4,8 +4,8 @@
  * Pre-check refusals are day/network/reason counts, not rows.
  * A settle-stage row whose phase is pre_settle is still recorded for ops.
  * When its tx is null, nothing was submitted: the row is tagged preSettle
- * and counted as pre_settle_refusals, not receipt_failures. A tx, or any
- * other phase, still counts as a receipt failure.
+ * and counted as pre_settle_refusals, not receipt_failures. A tx, any other
+ * phase, or any stage other than settle still counts as a receipt failure.
  * Memory keeps 5,000 rows. The JSONL file rotates at 5 MB.
  * No payer, no payload, no header.
  *
@@ -324,16 +324,16 @@ function shape(input) {
     out.sub_reason = refusalSubReason(input.sub_reason ?? input.subReason);
     out.phase = refusalPhase(input.phase);
   }
-  // Tag a pre-settle row so ops can tell it from a settle that may have moved money.
-  if (out.phase === 'pre_settle') out.preSettle = true;
+  // Tag only a settle-stage pre-settle row with no tx. A tx, or another stage, is not "nothing settled".
+  if (out.stage === 'settle' && out.phase === 'pre_settle' && out.tx == null) out.preSettle = true;
   const detail = verifyHintCode(input.sub_detail ?? input.subDetail);
   if (detail) out.sub_detail = detail;
   return out;
 }
 
-/** pre_settle and no transaction: money has not moved. */
+/** Settle-stage pre_settle with no transaction: money has not moved. */
 function isPreSettleNoMoney(row) {
-  return row?.phase === 'pre_settle' && (row.tx == null || row.tx === '');
+  return row?.stage === 'settle' && row?.phase === 'pre_settle' && (row.tx == null || row.tx === '');
 }
 
 /**

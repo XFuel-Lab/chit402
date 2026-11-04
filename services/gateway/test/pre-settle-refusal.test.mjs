@@ -8,9 +8,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import http from 'node:http';
 import { publicHealthBody } from '../src/public-metrics.js';
 import { paymentFailureBody } from '../src/x402-flags.js';
 import { openAiFailurePayload } from '../src/openai-gateway.js';
+import { verifyPayment, ChallengeStore } from '../src/x402-adapter.js';
+import { verifyViaFacilitator } from '../src/x402-facilitator.js';
 import {
   listReceiptFailures,
   preSettleRefusalCount,
@@ -26,8 +29,9 @@ import {
   VERIFY_HINT_MESSAGES,
   publicVerifyHint,
   verifyHint,
+  verifyHintCode,
 } from '../src/verify-hint.js';
-import { SCENARIOS, attempt } from './fixtures/refusal-scenarios.mjs';
+import { SCENARIOS, attempt, paymentHeader } from './fixtures/refusal-scenarios.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const GATEWAY = path.resolve(HERE, '..');
@@ -153,8 +157,8 @@ test('public health keeps existing fields and adds pre_settle_refusals', () => {
 });
 
 test('GET /health reads receipt failures and pre-settle refusals', () => {
-  assert.match(SERVER_SRC, /receiptFailures: receiptFailureCount\(\)/);
-  assert.match(SERVER_SRC, /preSettleRefusals: preSettleRefusalCount\(\)/);
+  assert.equal(SERVER_SRC.includes('receiptFailures: receiptFailureCount()'), true);
+  assert.equal(SERVER_SRC.includes('preSettleRefusals: preSettleRefusalCount()'), true);
 });
 
 test('receipt_failures counts money that may have moved; pre_settle with no tx is separate and still a row', () => {
@@ -183,7 +187,7 @@ test('receipt_failures counts money that may have moved; pre_settle with no tx i
   assert.equal(noMoney.sub_detail, 'insufficient_funds');
   const withTx = rows.find((row) => row.tx === 'sig111');
   assert.equal(withTx.phase, 'pre_settle');
-  assert.equal(withTx.preSettle, true);
+  assert.equal(withTx.preSettle, undefined);
   assert.equal(withTx.sub_detail, 'unknown');
   assert.equal(JSON.stringify(withTx).includes('evil.example'), false);
   const post = rows.find((row) => row.phase === 'post_submit');
@@ -239,8 +243,8 @@ test('a reloaded pre-settle row with no tx is tagged and leaves receipt_failures
   process.env.RECEIPT_FAILURES_FILE = file;
   try {
     resetReceiptFailuresForTests();
-    assert.equal(receiptFailureCount(), 1);
     assert.equal(preSettleRefusalCount(), 1);
+    assert.equal(receiptFailureCount(), 1);
     const rows = listReceiptFailures();
     assert.equal(rows.length, 2);
     const tagged = rows.find((row) => row.reason === 'verify_failed');
@@ -336,4 +340,180 @@ test('a post-settle failure still counts as a receipt failure and carries no hin
   assert.equal(row.sub_detail, undefined);
   assert.equal(row.stage, 'settle');
   resetReceiptFailuresForTests();
+});
+
+test('a /verify refusal that reports a tx stores it and counts as a receipt failure', async () => {
+  resetReceiptFailuresForTests();
+  const tx = `0x${'cd'.repeat(32)}`;
+  const { decision } = await attempt({ fac: { verify: 'invalid', verifyTx: tx } });
+  assert.equal(decision.preSettle, false);
+  assert.equal(decision.code, 'verify_failed');
+  assert.equal(decision.hint.code, 'insufficient_funds');
+  const body = paymentFailureBody(decision);
+  assert.equal(body.hint.code, 'insufficient_funds');
+  assert.equal(JSON.stringify(body).includes('Nothing was settled'), false);
+  const chat = openAiFailurePayload(decision);
+  assert.equal(chat.body.error.hint.code, 'insufficient_funds');
+  assert.equal(receiptFailureCount(), 1);
+  assert.equal(preSettleRefusalCount(), 0);
+  const row = listReceiptFailures()[0];
+  assert.equal(row.tx, tx);
+  assert.equal(row.phase, 'pre_settle');
+  assert.equal(row.stage, 'settle');
+  assert.equal(row.preSettle, undefined);
+  assert.equal(row.sub_reason, 'facilitator_invalid');
+  assert.equal(row.sub_detail, 'insufficient_funds');
+  const health = publicHealthBody({
+    receiptFailures: receiptFailureCount(),
+    preSettleRefusals: preSettleRefusalCount(),
+  });
+  assert.equal(health.receipt_failures, 1);
+  assert.equal(health.pre_settle_refusals, 0);
+  resetReceiptFailuresForTests();
+});
+
+test('a sign or log row with phase pre_settle and no tx stays a receipt failure', () => {
+  resetReceiptFailuresForTests();
+  for (const stage of ['sign', 'log', 'anchor', 'confirm']) {
+    recordReceiptFailure({
+      stage, outcome: 'refused', reason: 'verify_failed', network: 'base',
+      phase: 'pre_settle', sub_reason: 'facilitator_invalid',
+    });
+  }
+  assert.equal(listReceiptFailures().length, 4);
+  assert.equal(receiptFailureCount(), 4);
+  assert.equal(preSettleRefusalCount(), 0);
+  for (const row of listReceiptFailures()) assert.equal(row.preSettle, undefined);
+  resetReceiptFailuresForTests();
+});
+
+test('hint caps and an empty sub detail are not returned', () => {
+  const overCode = 'c'.repeat(VERIFY_HINT_CODE_MAX + 1);
+  const overMessage = publicVerifyHint({ code: 'cap_probe', message: 'http://evil.example/raw' });
+  const overCodeHint = publicVerifyHint({ code: overCode, message: 'http://evil.example/raw' });
+  assert.deepEqual(overMessage, { code: 'unknown', message: VERIFY_HINT_MESSAGES.unknown });
+  assert.deepEqual(overCodeHint, { code: 'unknown', message: VERIFY_HINT_MESSAGES.unknown });
+  assert.equal(JSON.stringify(overMessage).includes('m'.repeat(20)), false);
+  assert.equal(JSON.stringify(overCodeHint).includes(overCode), false);
+  assert.equal(overMessage.message.length <= VERIFY_HINT_MESSAGE_MAX, true);
+  assert.equal(verifyHintCode(''), null);
+  assert.equal(verifyHintCode(null), null);
+  resetReceiptFailuresForTests();
+  recordReceiptFailure({
+    stage: 'settle', outcome: 'refused', reason: 'verify_failed', network: 'base',
+    phase: 'pre_settle', sub_reason: 'facilitator_invalid', subDetail: '',
+  });
+  assert.equal(listReceiptFailures()[0].sub_detail, undefined);
+  resetReceiptFailuresForTests();
+});
+
+test('the hint allowlist ignores inherited property names', () => {
+  assert.equal(publicVerifyHint({ code: 'toString', message: 'http://evil.example/toString' }), null);
+  assert.equal(publicVerifyHint({ code: 'constructor', message: 'http://evil.example/constructor' }), null);
+  assert.equal(publicVerifyHint({ code: '__proto__', message: 'http://evil.example/proto' }), null);
+  assert.equal(verifyHint('toString').code, 'unknown');
+  assert.equal(verifyHint('constructor').code, 'unknown');
+});
+
+function listenJson(handler) {
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      handler(req, res, Buffer.concat(chunks).toString('utf8'));
+    });
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
+    resolve({ url: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((r) => server.close(r)) });
+  }));
+}
+
+test('verify results drop an over-long or non-string invalidReason before it is stored', async () => {
+  const previousEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'test';
+  const long = `L${'x'.repeat(VERIFY_HINT_INPUT_MAX)}`;
+  const hostile = { leak: 'http://evil.example/token' };
+  const header = paymentHeader();
+  const decoded = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+  const challenge = {
+    network: decoded.accepted.network,
+    amount: decoded.accepted.amount,
+    payTo: decoded.accepted.payTo,
+    asset: decoded.accepted.asset,
+  };
+  const zan = await listenJson((_req, res) => {
+    res.end(JSON.stringify({ valid: false, reason: 'mock_rejected', invalidReason: long }));
+  });
+  const httpError = await listenJson((_req, res) => {
+    res.statusCode = 400;
+    res.end(JSON.stringify({ invalidReason: long, errorMessage: hostile.leak }));
+  });
+  const rejected = await listenJson((_req, res) => {
+    res.end(JSON.stringify({ isValid: false, invalidReason: hostile }));
+  });
+  try {
+    const store = new ChallengeStore();
+    const nonce = `0x${'11'.repeat(32)}`;
+    store.put(nonce, { network: 'base', amount: '2000', payTo: '0xtreasury' });
+    const adapter = await verifyPayment('X-PAYMENT-blob', {
+      provider: 'zan', gatewayUrl: zan.url, apiKey: 'k', store, nonce,
+    });
+    assert.equal(adapter.valid, false);
+    assert.equal(adapter.invalidReason, null);
+    assert.equal(JSON.stringify(adapter).includes(long), false);
+
+    const onError = await verifyViaFacilitator(header, { gateway: httpError.url, challenge, x402Version: 2 });
+    assert.equal(onError.valid, false);
+    assert.equal(onError.invalidReason, null);
+    assert.equal(JSON.stringify(onError).includes(long), false);
+    assert.equal(JSON.stringify(onError).includes('evil.example'), false);
+
+    const onReject = await verifyViaFacilitator(header, { gateway: rejected.url, challenge, x402Version: 2 });
+    assert.equal(onReject.valid, false);
+    assert.equal(onReject.invalidReason, null);
+    assert.equal(JSON.stringify(onReject).includes('evil.example'), false);
+  } finally {
+    await zan.close();
+    await httpError.close();
+    await rejected.close();
+    if (previousEnv == null) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+  }
+});
+
+test('GET /health reports the live pre-settle and receipt-failure counts', async () => {
+  process.env.M2M_DEMO_MODE = 'true';
+  process.env.HUB_CATALOG_OFFLINE = 'true';
+  process.env.X402_ENABLED = 'false';
+  const { createApp } = await import('../src/server.js');
+  resetReceiptFailuresForTests();
+  const app = await createApp();
+  const server = await new Promise((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const before = await (await fetch(`${base}/health`)).json();
+    recordReceiptFailure({
+      stage: 'settle', outcome: 'refused', reason: 'verify_failed', network: 'solana',
+      phase: 'pre_settle', sub_reason: 'facilitator_invalid',
+    });
+    const mid = await (await fetch(`${base}/health`)).json();
+    assert.equal(mid.pre_settle_refusals, before.pre_settle_refusals + 1);
+    assert.equal(mid.receipt_failures, before.receipt_failures);
+    assert.equal(mid.free_tier, 'available');
+    recordReceiptFailure({
+      stage: 'settle', outcome: 'refused', reason: 'verify_failed', network: 'solana',
+      phase: 'pre_settle', sub_reason: 'facilitator_invalid', tx: `0x${'ab'.repeat(32)}`,
+    });
+    const after = await (await fetch(`${base}/health`)).json();
+    assert.equal(after.pre_settle_refusals, mid.pre_settle_refusals);
+    assert.equal(after.receipt_failures, mid.receipt_failures + 1);
+    assert.equal(after.status, before.status);
+  } finally {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    resetReceiptFailuresForTests();
+  }
 });

@@ -1069,6 +1069,12 @@ function walletTail(addr) {
   return `${s.slice(0, 6)}…${s.slice(-4)}`;
 }
 
+function facilitatorTxRef(data) {
+  if (!data || typeof data !== 'object') return null;
+  const tx = data.txRef || data.transaction || data.txHash || null;
+  return typeof tx === 'string' && tx.trim() ? tx.trim() : null;
+}
+
 export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, challenge, x402Version } = {}) {
   const decoded = decodePaymentHeader(paymentHeader);
   if (!decoded) return { valid: false, reason: 'payment_header_undecodable' };
@@ -1125,7 +1131,12 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       );
       // Upstream text stays in the log. The client reason stays a closed code.
       // invalidReason is passed through, length-capped, for the payer hint.
-      return { valid: false, reason: 'verify_failed', invalidReason: boundedInvalidReason(data.invalidReason) };
+      return {
+        valid: false,
+        reason: 'verify_failed',
+        invalidReason: boundedInvalidReason(data.invalidReason),
+        txRef: facilitatorTxRef(data),
+      };
     }
     logBazaarResponses('/verify', extensionResponses, paymentPayload);
     if (!data.isValid) {
@@ -1144,7 +1155,10 @@ export async function verifyViaFacilitator(paymentHeader, { gateway, apiKey, cha
       valid: !!data.isValid,
       payer: data.payer || null,
       reason: data.isValid ? null : 'verify_failed',
-      ...(data.isValid ? {} : { invalidReason: boundedInvalidReason(data.invalidReason) }),
+      ...(data.isValid ? {} : {
+        invalidReason: boundedInvalidReason(data.invalidReason),
+        txRef: facilitatorTxRef(data),
+      }),
     };
   } catch (err) {
     // Log gateway host (not secrets), elapsedMs, and network for debugging.

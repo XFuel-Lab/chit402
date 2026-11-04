@@ -16,12 +16,20 @@ export const VERIFY_HINT_MESSAGES = Object.freeze({
   invalid_signature: 'The payment signature did not verify.',
   invalid_network: 'The payment network does not match the quote.',
   unknown: 'The facilitator refused this payment before settlement.',
+  // Over the caps on purpose. hintFor must not return them.
+  cap_probe: 'm'.repeat(81),
+  ['c'.repeat(33)]: 'overlong code',
 });
 
-export const VERIFY_HINT_CODES = Object.freeze(Object.keys(VERIFY_HINT_MESSAGES));
+export const VERIFY_HINT_CODES = Object.freeze(
+  Object.keys(VERIFY_HINT_MESSAGES).filter((code) => {
+    const message = VERIFY_HINT_MESSAGES[code];
+    return code.length <= VERIFY_HINT_CODE_MAX && typeof message === 'string' && message.length <= VERIFY_HINT_MESSAGE_MAX;
+  }),
+);
 
-/** Exact facilitator identifiers that mean one allowlist code. */
-const ALIASES = Object.freeze({
+/** Exact facilitator identifiers that mean one allowlist code. Null prototype. */
+const ALIASES = Object.freeze(Object.assign(Object.create(null), {
   insufficient_funds: 'insufficient_funds',
   insufficientfunds: 'insufficient_funds',
   invalid_fee_payer: 'invalid_fee_payer',
@@ -38,7 +46,7 @@ const ALIASES = Object.freeze({
   invalid_network: 'invalid_network',
   invalidnetwork: 'invalid_network',
   unknown: 'unknown',
-});
+}));
 
 function hintFor(code) {
   const message = VERIFY_HINT_MESSAGES[code];
@@ -74,8 +82,10 @@ export function boundedInvalidReason(raw) {
  */
 export function verifyHint(raw) {
   const bounded = boundedInvalidReason(raw);
-  if (bounded == null || !/^[A-Za-z0-9_]+$/.test(bounded)) return hintFor('unknown');
-  const code = ALIASES[bounded.toLowerCase()];
+  const match = typeof bounded === 'string' ? /^[A-Za-z0-9_]+$/.exec(bounded) : null;
+  if (match == null) return hintFor('unknown');
+  const key = match[0].toLowerCase();
+  const code = Object.hasOwn(ALIASES, key) ? ALIASES[key] : null;
   return hintFor(code || 'unknown');
 }
 
@@ -99,6 +109,6 @@ export function verifyHintCode(raw) {
 export function publicVerifyHint(hint) {
   if (!hint || typeof hint !== 'object' || Array.isArray(hint)) return null;
   const code = hint.code;
-  if (typeof code !== 'string' || !Object.prototype.hasOwnProperty.call(VERIFY_HINT_MESSAGES, code)) return null;
+  if (typeof code !== 'string' || !Object.hasOwn(VERIFY_HINT_MESSAGES, code)) return null;
   return hintFor(code);
 }
