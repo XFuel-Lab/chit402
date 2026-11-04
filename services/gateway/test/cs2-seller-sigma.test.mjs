@@ -36,8 +36,8 @@ function runTap(file) {
 test('cs2 seller sigma suite (gateway CI hook)', () => {
   const seller = runTap('packages/chit-seller/seller.test.mjs');
   assert.ok(seller.tests, seller.out.slice(-2000));
-  assert.equal(seller.tests[1], '64');
-  assert.equal(seller.passed && seller.passed[1], '64');
+  assert.equal(seller.tests[1], '73');
+  assert.equal(seller.passed && seller.passed[1], '73');
   assert.equal(seller.failed && seller.failed[1], '0');
   assert.equal(seller.skipped && seller.skipped[1], '0');
   assert.equal(seller.cancelled && seller.cancelled[1], '0');

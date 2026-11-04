@@ -49,7 +49,7 @@ async function signInner(input) {
   const triple = requireObservedTriple(payment, authorization);
   if (!triple.ok) return deny(triple.reason, onRefuse);
   if (typeof input.alg !== 'number' || !isAllowedAlg(input.alg)) return deny('bad_alg', onRefuse);
-  if (!input.store || typeof input.store.claim !== 'function' || typeof input.store.release !== 'function' || typeof input.store.has !== 'function') {
+  if (!input.store || typeof input.store.claim !== 'function' || typeof input.store.release !== 'function' || typeof input.store.has !== 'function' || typeof input.store.list !== 'function') {
     return deny('bad_type', onRefuse);
   }
   if (!sameAddress(authorization.token, input.pinnedToken)) return deny('token_mismatch', onRefuse);
@@ -162,7 +162,7 @@ function bundledReaders() {
 
 export function createSeller({ privateKey, store, token, payee, readers } = {}) {
   if (arguments[0] && Object.hasOwn(arguments[0], 'k')) return refuse('bad_key');
-  if (!store || typeof store.claim !== 'function' || typeof store.release !== 'function' || typeof store.has !== 'function') {
+  if (!store || typeof store.claim !== 'function' || typeof store.release !== 'function' || typeof store.has !== 'function' || typeof store.list !== 'function') {
     return refuse('bad_type');
   }
   const pinnedToken = addressHex(token);

@@ -401,24 +401,34 @@ async function releaseChecked(store, id) {
   return { ok: true };
 }
 
+function storeReady(store) {
+  if (!store || typeof store.claim !== 'function' || typeof store.release !== 'function'
+    || typeof store.has !== 'function' || typeof store.list !== 'function') {
+    return refuse('bad_type');
+  }
+  return { ok: true };
+}
+
 async function clearLiveKey(store, hex) {
   if (!store) return { ok: true };
+  const ready = storeReady(store);
+  if (!ready.ok) return ready;
+  let seats;
+  try {
+    seats = await store.list(`seat:${hex}:`);
+  } catch {
+    return refuse('bad_payment');
+  }
+  if (!Array.isArray(seats)) return refuse('bad_payment');
   const ids = [`open:${hex}`];
-  if (typeof store.list === 'function') {
-    let seats;
-    try {
-      seats = await store.list(`seat:${hex}:`);
-    } catch {
-      return refuse('bad_payment');
-    }
-    if (!Array.isArray(seats)) return refuse('bad_payment');
-    const prefix = `seat:${hex}:`;
-    for (const seat of seats) {
-      if (typeof seat !== 'string' || !seat.startsWith(prefix)) return refuse('bad_payment');
-      const payTo = seat.slice(prefix.length);
-      ids.push(seat);
-      ids.push(`live:${payTo}`, `cur:${payTo}:${hex}`);
-    }
+  const prefix = `seat:${hex}:`;
+  for (const seat of seats) {
+    if (typeof seat !== 'string' || !seat.startsWith(prefix)) return refuse('bad_payment');
+    const payTo = seat.slice(prefix.length);
+    const current = await storeBool(store.has(`cur:${payTo}:${hex}`));
+    if (current === undefined) return refuse('bad_payment');
+    ids.push(seat);
+    if (current === true) ids.push(`live:${payTo}`, `cur:${payTo}:${hex}`);
   }
   for (const id of ids) {
     const released = await releaseChecked(store, id);
@@ -562,6 +572,8 @@ export async function signPayToControl(input) {
     const ready = controlReady(input, parsed);
     if (!ready.ok) return ready;
     store = input.store;
+    const readyStore = storeReady(store);
+    if (store && !readyStore.ok) return readyStore;
     const clear = await keyClear(store, ready.hex);
     if (!clear.ok) return clear;
     const opened = await bindingOpen(input, ready.hex, admitted.chainId, parsed.message.payTo);
@@ -638,15 +650,23 @@ export async function signRevoke(input) {
     if (!digest.ok) return digest;
     const signed = signDigest(digest.bytes, input.privateKey, SECP256K1);
     if (!signed.ok) return signed;
+    const readyStore = storeReady(input.store);
+    if (input.store && !readyStore.ok) return readyStore;
     const hex = bytesToHex(parsed.message.keyHash);
     const dead = await markDead(input.store, hex);
     if (!dead.ok) return dead;
     const payTo = parsed.message.payTo;
-    for (const id of [`live:${payTo}`, `cur:${payTo}:${hex}`, `seat:${hex}:${payTo}`]) {
-      const released = await releaseChecked(input.store, id);
-      if (!released.ok) return released;
+    const currentId = `cur:${payTo}:${hex}`;
+    const current = input.store ? await storeBool(input.store.has(currentId)) : false;
+    if (current === undefined) return refuse('bad_payment');
+    if (current === true) {
+      for (const id of [`live:${payTo}`, currentId, `seat:${hex}:${payTo}`]) {
+        const released = await releaseChecked(input.store, id);
+        if (!released.ok) return released;
+      }
     }
-    await clearLiveKey(input.store, hex);
+    const cleared = await clearLiveKey(input.store, hex);
+    if (!cleared.ok) return cleared;
     return {
       ok: true,
       digest: digest.bytes,
@@ -679,6 +699,8 @@ export async function signRevokeByKey(input) {
     if (!admitted.ok) return admitted;
     const parsed = parseRevokeByKey(input, admitted);
     if (!parsed.ok) return parsed;
+    const readyStore = storeReady(input.store);
+    if (input.store && !readyStore.ok) return readyStore;
     if (!Object.hasOwn(input, 'keyAlg') || input.keyAlg == null) return refuse('bad_alg');
     const d = parseScalar(input.privateKey, P256.order);
     if (d == null) return refuse('bad_key');
@@ -705,7 +727,8 @@ export async function signRevokeByKey(input) {
       await releaseIds(input.store, [tombId]);
       return dead;
     }
-    await clearLiveKey(input.store, hashed.hex);
+    const cleared = await clearLiveKey(input.store, hashed.hex);
+    if (!cleared.ok) return cleared;
     return {
       ok: true,
       digest: digest.bytes,

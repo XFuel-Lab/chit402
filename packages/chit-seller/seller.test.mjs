@@ -16,6 +16,7 @@ import { publicPoint, signRawDigest } from '../cs2-core/ecdsa/sign.js';
 import { sigmaDigest } from '../cs2-core/line/index.mjs';
 import { possessionPreimage } from '../cs2-core/eip712/index.mjs';
 import { readAgreedPayment, selectNonce } from './chain.mjs';
+import { addressHex } from './hex.mjs';
 import { productionPinList, setTestPinSigning } from './pins.mjs';
 
 setTestPinSigning(true);
@@ -543,6 +544,7 @@ test('the payment claim is refused even when the authorization claim would succe
     },
     release() {},
     has() { return false; },
+    list() { return []; },
   };
   const who = seller(world(), { store });
   assertSigned(await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 }));
@@ -1279,6 +1281,11 @@ test('a duplicate authorization releases the payment claim', async () => {
       held.delete(id);
     },
     has(id) { return held.has(id); },
+    list(prefix) {
+      const out = [];
+      for (const id of held) if (typeof prefix !== 'string' || id.startsWith(prefix)) out.push(id);
+      return out;
+    },
   };
   const who = seller(world({ logs }), { store });
   assertSigned(await who.sign({ payment: payment(), authorization: authorization(), K, alg: 1 }));
@@ -1457,6 +1464,11 @@ test('an async store signs one sigma and a failed claim is a refusal', async () 
     },
     async release(id) { held.delete(id); },
     async has(id) { return held.has(id); },
+    list(prefix) {
+      const out = [];
+      for (const id of held) if (typeof prefix !== 'string' || id.startsWith(prefix)) out.push(id);
+      return out;
+    },
   };
   const who = seller(world(), { store: asyncStore });
   const req = { payment: payment(), authorization: authorization(), K, alg: 1 };
@@ -1467,6 +1479,7 @@ test('an async store signs one sigma and a failed claim is a refusal', async () 
     claim() { return Promise.resolve(false); },
     release() { return Promise.resolve(); },
     has() { return Promise.resolve(false); },
+    list() { return []; },
   };
   const hashed = keyHash(1, input.key);
   assertRefusal(await signRevokeByKey({
@@ -1482,6 +1495,7 @@ test('an async store signs one sigma and a failed claim is a refusal', async () 
     async claim() { return 'yes'; },
     async release() {},
     async has() { return false; },
+    list() { return []; },
   };
   const yes = await seller(world(), { store: truthy }).sign(req);
   assertRefusal(yes, 'duplicate_sigma');
@@ -1489,6 +1503,7 @@ test('an async store signs one sigma and a failed claim is a refusal', async () 
     async claim() { throw new Error('db down'); },
     async release() {},
     async has() { return false; },
+    list() { return []; },
   };
   const thrown = await seller(world(), { store: thrower }).sign(req);
   assertRefusal(thrown, 'duplicate_sigma');
@@ -1614,6 +1629,7 @@ test('off-curve keys and tombstones are refused, and the same key may bind a sec
     claim() { return true; },
     release() {},
     has(id) { return id.startsWith('tomb:'); },
+    list() { return []; },
   };
   assertRefusal(await signPayToControl({ ...input, store: tomb }), 'bad_payment');
   assertRefusal(await signPayToControl({ ...input, keyAlg: 2, key: new Uint8Array(65), store: createMemoryStore() }), 'bad_alg');
@@ -1708,12 +1724,14 @@ test('quorum counts distinct readers and pairs an AuthorizationUsed with its Tra
     },
     async claim() { return true; },
     async release() {},
+    list() { return []; },
   };
   assertRefusal(await signPayToControl({ ...bound, store: tombThrow }), 'bad_payment');
   const yesClaim = {
     async has() { return false; },
     async claim() { return 'yes'; },
     async release() {},
+    list() { return []; },
   };
   assertRefusal(await signPayToControl({ ...bound, store: yesClaim }), 'bad_payment');
   const core = await import('../cs2-core/eip712/index.mjs');
@@ -1783,6 +1801,11 @@ test('H2 a failed claim releases the ids already taken', async () => {
       return true;
     },
     release: (id) => { held.delete(id); },
+    list(prefix) {
+      const out = [];
+      for (const id of held) if (typeof prefix !== 'string' || id.startsWith(prefix)) out.push(id);
+      return out;
+    },
   };
   const { input } = controlInput(HOUR_A);
   assertRefusal(await signPayToControl({ ...input, store: failing }), 'bad_payment');
@@ -1795,6 +1818,7 @@ test('H5 a new store object over the same data can still rotate', async () => {
     has: (id) => base.has(id),
     claim: (id) => base.claim(id),
     release: (id) => base.release(id),
+    list: (prefix) => base.list(prefix),
   });
   const k1 = BigInt(`0x${eipVector.slot_scalar}`);
   const pay = (scalar, extra = {}) => {
@@ -1889,11 +1913,169 @@ test('an async rejection from the dead lookup is refused', async () => {
     },
     claim: (id) => base.claim(id),
     release: (id) => base.release(id),
+    list: (prefix) => base.list(prefix),
   };
   const { input } = controlInput(HOUR_A);
   const refused = await signPayToControl({ ...input, store: flaky });
   assertRefusal(refused, 'bad_payment');
   assert.equal(JSON.stringify(refused).includes('dead down'), false);
+});
+
+function seatedPay(scalar, store, extra = {}) {
+  const { input } = controlInput(HOUR_A);
+  return {
+    ...input,
+    key: k1Compressed(scalar),
+    keyPrivateKey: scalar,
+    store,
+    ...extra,
+  };
+}
+
+function plantSeat(store, payTo, hex, marks = {}) {
+  store.claim(`open:${hex}`);
+  store.claim(`seat:${hex}:${payTo}`);
+  store.claim(`cur:${payTo}:${hex}`);
+  if (marks.live !== false) store.claim(`live:${payTo}`);
+  if (marks.dead) store.claim(`dead:${hex}`);
+  if (marks.tomb) store.claim(`tomb:${hex}`);
+}
+
+test('K1 a dead key leaves its seat free for a new key', async () => {
+  const store = createMemoryStore();
+  const payTo = addressHex(eipVector.payTo);
+  const stale = 21n;
+  const hex = keyHash(1, k1Compressed(stale)).hex;
+  plantSeat(store, payTo, hex, { dead: true });
+  const next = 22n;
+  assert.equal((await signPayToControl(seatedPay(next, store))).ok, true);
+  assert.deepEqual(store.list(`cur:${payTo}:`), [`cur:${payTo}:${keyHash(1, k1Compressed(next)).hex}`]);
+  assertRefusal(await signPayToControl(seatedPay(stale, store)), 'bad_payment');
+});
+
+test('K2a a dead current key frees the seat', async () => {
+  const store = createMemoryStore();
+  const payTo = addressHex(eipVector.payTo);
+  const hex = keyHash(1, k1Compressed(31n)).hex;
+  plantSeat(store, payTo, hex, { dead: true });
+  assert.equal((await signPayToControl(seatedPay(32n, store))).ok, true);
+  assert.equal(store.list(`cur:${payTo}:`).length, 1);
+});
+
+test('K2b a tombstoned current key frees the seat', async () => {
+  const store = createMemoryStore();
+  const payTo = addressHex(eipVector.payTo);
+  const hex = keyHash(1, k1Compressed(33n)).hex;
+  plantSeat(store, payTo, hex, { tomb: true });
+  assert.equal((await signPayToControl(seatedPay(34n, store))).ok, true);
+  assert.equal(store.has(`cur:${payTo}:${hex}`), false);
+});
+
+test('K2c a live current key keeps the seat', async () => {
+  const store = createMemoryStore();
+  const payTo = addressHex(eipVector.payTo);
+  const hex = keyHash(1, k1Compressed(35n)).hex;
+  plantSeat(store, payTo, hex);
+  assertRefusal(await signPayToControl(seatedPay(36n, store)), 'bad_payment');
+  assert.deepEqual(store.list(`cur:${payTo}:`), [`cur:${payTo}:${hex}`]);
+});
+
+test('K2d a rejecting list refuses the registration', async () => {
+  const base = createMemoryStore();
+  const payTo = addressHex(eipVector.payTo);
+  plantSeat(base, payTo, keyHash(1, k1Compressed(41n)).hex);
+  const store = {
+    has: (id) => base.has(id),
+    claim: (id) => base.claim(id),
+    release: (id) => base.release(id),
+    list() { throw new Error('list down'); },
+  };
+  const refused = await signPayToControl(seatedPay(37n, store));
+  assertRefusal(refused, 'bad_payment');
+  assert.equal(JSON.stringify(refused).includes('list down'), false);
+});
+
+test('K2e one live key among dead seats keeps the payTo', async () => {
+  const store = createMemoryStore();
+  const payTo = addressHex(eipVector.payTo);
+  const liveHex = keyHash(1, k1Compressed(38n)).hex;
+  const deadHex = keyHash(1, k1Compressed(39n)).hex;
+  plantSeat(store, payTo, liveHex);
+  plantSeat(store, payTo, deadHex, { dead: true, live: false });
+  assertRefusal(await signPayToControl(seatedPay(40n, store)), 'bad_payment');
+  assert.equal(store.has(`cur:${payTo}:${liveHex}`), true);
+  assert.equal(store.has(`live:${payTo}`), true);
+});
+
+test('K3 a rejecting list does not return a revoke', async () => {
+  const base = createMemoryStore();
+  const rejecting = {
+    has: (id) => base.has(id),
+    claim: (id) => base.claim(id),
+    release: (id) => base.release(id),
+    list() { return Promise.reject(new Error('list down')); },
+  };
+  const { input } = controlInput(HOUR_A);
+  assert.equal((await signPayToControl({ ...input, store: base })).ok, true);
+  const hash = keyHash(1, input.key);
+  const revoked = await signRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: input.payTo,
+    keyHash: hash.bytes,
+    privateKey: input.privateKey,
+    store: rejecting,
+  });
+  assert.equal(revoked.ok, false);
+  const byKey = await signRevokeByKey({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    keyHash: hash.bytes,
+    key: input.key,
+    keyAlg: 1,
+    privateKey: input.keyPrivateKey,
+    store: rejecting,
+  });
+  assert.equal(byKey.ok, false);
+  assert.equal(JSON.stringify(revoked).includes('list down'), false);
+  assert.equal(JSON.stringify(byKey).includes('list down'), false);
+});
+
+test('XJ3 a revoke clears the seat only when that key is current', async () => {
+  const store = createMemoryStore();
+  const k1 = BigInt(`0x${eipVector.slot_scalar}`);
+  const payTo = addressHex(eipVector.payTo);
+  assert.equal((await signPayToControl(seatedPay(k1, store))).ok, true);
+  const other = keyHash(1, k1Compressed(k1 + 8n));
+  const revoked = await signRevoke({
+    chainId: CHAIN,
+    hourStart: HOUR_A,
+    payTo: eipVector.payTo,
+    keyHash: other.bytes,
+    privateKey: BigInt(`0x${eipVector.test_key}`),
+    store,
+  });
+  assert.equal(revoked.ok, true, revoked.reason);
+  assertRefusal(await signPayToControl(seatedPay(k1 + 1n, store)), 'bad_payment');
+  assert.deepEqual(store.list(`cur:${payTo}:`), [`cur:${payTo}:${keyHash(1, k1Compressed(k1)).hex}`]);
+  assert.equal(store.has(`live:${payTo}`), true);
+});
+
+test('a store without list is refused', async () => {
+  const bare = {
+    claim() { return true; },
+    release() {},
+    has() { return false; },
+  };
+  assertRefusal(createSeller({
+    privateKey: SELLER_KEY,
+    store: bare,
+    token: TOKEN,
+    payee: PAYEE,
+    readers: readersOf(world()),
+  }), 'bad_type');
+  const { input } = controlInput(HOUR_A);
+  assertRefusal(await signPayToControl({ ...input, store: bare }), 'bad_type');
 });
 
 test('H4 the key scalar is required and distinct from the payTo scalar', async () => {
