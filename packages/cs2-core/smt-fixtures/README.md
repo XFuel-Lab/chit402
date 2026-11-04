@@ -30,4 +30,4 @@ Bit `d` is set only when the sibling at that depth is not the blank subtree of h
 
 An absent slot uses the blank hash of height 0 as the leaf, not `stateLeaf`. A present slot uses `stateLeaf(slotKey, value)`. Internal nodes are `stateNode(left, right)`. The blank recurrence is the line module's empty hash: `blank(0) = H(0x02 ‖ "empty")`, and `blank(h+1) = stateNode(blank(h), blank(h))`.
 
-There is one proof format. Proofs are not capped at 480 bytes.
+There is one proof format. Proofs are not capped at 480 bytes. `#685` verifies these files byte for byte against `SHA256SUMS`.
