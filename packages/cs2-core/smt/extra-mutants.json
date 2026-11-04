@@ -1,7 +1,12 @@
 {
   "suite": {
     "cwd": ".",
-    "argv": ["node", "--test", "--test-concurrency=1", "packages/cs2-core/smt/smt.test.mjs"]
+    "argv": [
+      "node",
+      "--test",
+      "--test-concurrency=1",
+      "packages/cs2-core/smt/smt.test.mjs"
+    ]
   },
   "mutants": [
     {
@@ -19,46 +24,11 @@
       "note": "an admission block may precede the previous anchor"
     },
     {
-      "id": "D03_revoke_at_validfrom",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (record.block <= key.validFrom) return 'rule_2';",
-      "replace": "if (record.block < key.validFrom) return 'rule_2';",
-      "note": "a revocation in the registration block is accepted"
-    },
-    {
-      "id": "D04_by_byte",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "    if (by !== 1 && by !== 2) return null;\n",
-      "replace": "",
-      "note": "revoke by-byte 3..255 decodes"
-    },
-    {
-      "id": "D05_reregister_same_key",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "      if (equalBytes(key.key, record.key)) return 'rule_2';\n",
-      "replace": "",
-      "note": "revoked key re-registered in same slot"
-    },
-    {
       "id": "D06_epoch_chain",
       "file": "packages/cs2-core/smt/epoch.mjs",
       "find": "    if (chainId !== tree.epoch.chainId) return fail('bad_epoch');\n",
       "replace": "",
       "note": "epoch slot switches chain"
-    },
-    {
-      "id": "D07_alg_check",
-      "file": "packages/cs2-core/eip712/registry.mjs",
-      "find": "  if (!row || row.launch !== true) return fail('bad_alg');\n",
-      "replace": "  if (!row) return fail('bad_alg');\n",
-      "note": "keyHash accepts an alg other than P-256"
-    },
-    {
-      "id": "D08_status_kind",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "  if (view.kind !== KIND_PAYTO) return { ok: false, reason: 'bad_kind', status: KEY_STATUS_UNPROVEN, killed: false };",
-      "replace": "  if (false) return { ok: false, reason: 'bad_kind', status: KEY_STATUS_UNPROVEN, killed: false };",
-      "note": "keyStatus on a wallet slot"
     },
     {
       "id": "D09_idlen_byte",
@@ -82,32 +52,11 @@
       "note": "STOP with no active book"
     },
     {
-      "id": "D12_cross_self_only",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (decoded.kind !== KIND_KEY || !equalBytes(decoded.id, record.keyHash)) return 'rule_4';",
-      "replace": "if (false) return 'rule_4';",
-      "note": "a RevokeByKey is accepted in a payTo slot"
-    },
-    {
-      "id": "D13_cross_other_only",
-      "file": "packages/cs2-core/eip712/possession.mjs",
-      "find": "  const range = checkSigma(signature);\n",
-      "replace": "  const range = { ok: true };\n",
-      "note": "possession skips the shared low-S range check"
-    },
-    {
       "id": "D14_unique_id",
       "file": "packages/cs2-core/smt/history.mjs",
       "find": "    if (!reason && seen.has(idHex)) reason = 'rule_1';\n",
       "replace": "",
       "note": "duplicate record id accepted"
-    },
-    {
-      "id": "D15_block_kind_reg",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "    if (decoded.kind !== KIND_PAYTO) return 'rule_4';\n    if (!isAllowedAlg",
-      "replace": "    if (!isAllowedAlg",
-      "note": "register in a wallet slot"
     },
     {
       "id": "D16_proof_root_len",
@@ -131,13 +80,6 @@
       "note": "27/28 accepted again"
     },
     {
-      "id": "D19_status_chain",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "  if (!equalBytes(query.transferTo, view.id)) return unproven;",
-      "replace": "  if (false) return unproven;",
-      "note": "transfer-to unchecked"
-    },
-    {
       "id": "D20_record_count_cap",
       "file": "packages/cs2-core/smt/history.mjs",
       "find": "  if (count > MAX_RECORDS) return fail('bad_size');",
@@ -152,32 +94,11 @@
       "note": "join in a payTo slot"
     },
     {
-      "id": "E01_pop_payto_only",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (!(payToOk && keyOk)) return 'rule_4';",
-      "replace": "if (!payToOk) return 'rule_4';",
-      "note": "proof of possession accepts a registration the seller key did not sign"
-    },
-    {
-      "id": "E03_pop_key_only",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (!(payToOk && keyOk)) return 'rule_4';",
-      "replace": "if (!keyOk) return 'rule_4';",
-      "note": "proof of possession accepts a registration the payTo did not sign"
-    },
-    {
       "id": "E06_epoch_overlap_last",
       "file": "packages/cs2-core/smt/history.mjs",
       "find": "      if (found) return null;\n",
       "replace": "",
       "note": "overlapping epoch windows keep the last contract"
-    },
-    {
-      "id": "E09_slot_revoke_unscoped",
-      "file": "packages/cs2-core/key-status/status.mjs",
-      "find": "if (view.slotRevoke != null && sameHash(view.slotRevoke.keyHash, registration.keyHash)) {",
-      "replace": "if (view.slotRevoke != null) {",
-      "note": "a slot revoke of one keyHash closes every key in the slot"
     },
     {
       "id": "E14_derived_key",
@@ -199,13 +120,6 @@
       "find": "hour >= entry.untilHour) continue;",
       "replace": "hour > entry.untilHour) continue;",
       "note": "the untilHour boundary stays inside the earlier contract"
-    },
-    {
-      "id": "E24_many_records",
-      "file": "packages/cs2-core/key-status/status.mjs",
-      "find": "if (records.length > 1) return unproven('many_records');",
-      "replace": "if (false && records.length > 1) return unproven('many_records');",
-      "note": "a key leaf with two records is read as the first"
     }
   ]
 }

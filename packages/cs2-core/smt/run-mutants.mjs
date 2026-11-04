@@ -6,10 +6,12 @@
  *   node packages/cs2-core/smt/run-mutants.mjs --only S01_safe_integer
  *
  * Each mutant is a literal find/replace applied to the original file.
- * The SMT suite must pass before any mutant runs. A mutant whose suite
- * fails is KILLED. One that still passes SURVIVED. A find that misses is
- * NOT_APPLIED. The file is restored after every mutant and checked by sha256.
- * Score is killed / (killed + survived). The run fails below 90%.
+ * The SMT suite must pass before any mutant runs. A kill is an
+ * ERR_ASSERTION from a test that is not a source scan, a fixture hash,
+ * a vector pin, a §S5 literal, or a snapshot. Any other failure is not a
+ * kill. A find that misses is NOT_APPLIED. The file is restored after
+ * every mutant and checked by sha256. Score is killed / (killed + survived
+ * + other). The run fails below 90%.
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -92,12 +94,23 @@ function applyMutant(mutant) {
   return false;
 }
 
+const SKIP = 'source scan|fixtures verify|implementation files do not take|§S5|snapshot';
+
+function withSkip(argv) {
+  const next = argv.slice();
+  const at = next.indexOf('--test');
+  const flag = `--test-skip-pattern=${SKIP}`;
+  if (at >= 0) next.splice(at + 1, 0, flag);
+  else next.push(flag);
+  return next;
+}
+
 function runSuite() {
   const suite = spec.suite;
   const tmp = mkdtempSync(join(tmpdir(), 'cs2-smt-mut-'));
   const argv = useUnshare
-    ? ['-rn', 'sh', '-c', 'ip link set lo up 2>/dev/null; exec "$@"', 'sh', ...suite.argv]
-    : suite.argv.slice(1);
+    ? ['-rn', 'sh', '-c', 'ip link set lo up 2>/dev/null; exec "$@"', 'sh', ...withSkip(suite.argv)]
+    : withSkip(suite.argv).slice(1);
   const cmd = useUnshare ? 'unshare' : suite.argv[0];
   return new Promise((resolveRun) => {
     let out = '';
@@ -151,7 +164,10 @@ function runSuite() {
           finish('ERROR');
           return;
         }
-        finish(timedOut ? 'TIMEOUT' : (code === 0 ? 'PASS' : 'FAIL'));
+        if (timedOut) finish('TIMEOUT');
+        else if (code === 0) finish('PASS');
+        else if (/ERR_ASSERTION/.test(out)) finish('FAIL');
+        else finish('OTHER');
       });
     });
   });
@@ -160,6 +176,7 @@ function runSuite() {
 function label(result) {
   if (result === 'PASS') return 'SURVIVED';
   if (result === 'FAIL') return 'KILLED';
+  if (result === 'OTHER') return 'OTHER';
   if (result === 'TIMEOUT') return 'TIMEOUT';
   return 'ERROR';
 }
@@ -190,12 +207,13 @@ for (const mutant of mutants) {
 const dirty = touched.filter((file) => sha256(join(root, file)) !== before[file]);
 const killed = tally.KILLED || 0;
 const survived = tally.SURVIVED || 0;
-const applicable = killed + survived;
+const other = tally.OTHER || 0;
+const applicable = killed + survived + other;
 const score = applicable === 0 ? 0 : killed / applicable;
 process.stdout.write(`TALLY\t${JSON.stringify(tally)}\tRESTORED\t${dirty.length ? `NO: ${dirty.join(',')}` : 'yes'}\n`);
 process.stdout.write(`SCORE\t${killed}/${applicable}\t${(score * 100).toFixed(1)}%\n`);
 
 if (dirty.length) process.exit(4);
-if (tally.NOT_APPLIED || tally.ERROR || tally.TIMEOUT) process.exit(1);
+if (tally.NOT_APPLIED || tally.ERROR || tally.TIMEOUT || other) process.exit(1);
 if (score < 0.9) process.exit(1);
 process.exit(0);

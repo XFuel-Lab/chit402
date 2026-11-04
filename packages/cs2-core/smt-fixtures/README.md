@@ -2,6 +2,8 @@
 
 One depth-256 sparse Merkle tree. Every proof in this directory verifies against `root.bytes`. `#685` checks these bytes exactly; do not regenerate them unless the tree encoding changes.
 
+The payTo value and the `0x05` key value are histories this branch cannot decode or regenerate. Their generator lives on the seller-key add-on at `d2f80683`. The bytes stay opaque tree leaves. `SHA256SUMS` stays `189083cf310a6445f9cd65c973b01937405c72c395443ba15d12a548d5bada4e`.
+
 ## Tree
 
 Leaves are state-slot values. The slot key is not stored again inside the value.

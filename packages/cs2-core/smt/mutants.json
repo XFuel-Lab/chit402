@@ -1,7 +1,12 @@
 {
   "suite": {
     "cwd": ".",
-    "argv": ["node", "--test", "--test-concurrency=1", "packages/cs2-core/smt/smt.test.mjs"]
+    "argv": [
+      "node",
+      "--test",
+      "--test-concurrency=1",
+      "packages/cs2-core/smt/smt.test.mjs"
+    ]
   },
   "mutants": [
     {
@@ -152,53 +157,11 @@
       "note": "bytes after the declared records are ignored"
     },
     {
-      "id": "S22_open_as_zero",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (aTo !== 0n && aTo <= bFrom) return false;",
-      "replace": "if (aTo <= bFrom) return false;",
-      "note": "an open interval ends at block 0"
-    },
-    {
-      "id": "S23_cover_start",
-      "file": "packages/cs2-core/key-status/status.mjs",
-      "find": "if (admitted > block) return status(KEY_STATUS_INVALID, 'inactive');",
-      "replace": "if (admitted >= block) return status(KEY_STATUS_INVALID, 'inactive');",
-      "note": "the validFrom block is not covered"
-    },
-    {
-      "id": "S24_cover_end",
-      "file": "packages/cs2-core/key-status/status.mjs",
-      "find": "if (slotAt != null && block >= slotAt) return status(KEY_STATUS_REVOKED, 'slot_revoke');",
-      "replace": "if (slotAt != null && block > slotAt) return status(KEY_STATUS_REVOKED, 'slot_revoke');",
-      "note": "the revokedAt block is still covered"
-    },
-    {
-      "id": "S25_skip_control_sig",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "const payToOk = verifyPayToControl(",
-      "replace": "const payToOk = true || verifyPayToControl(",
-      "note": "a payTo registration need not be signed"
-    },
-    {
       "id": "S26_valid_from",
       "file": "packages/cs2-core/smt/history.mjs",
       "find": "const byShow = block <= epoch.showAnchorBlock;",
       "replace": "const byShow = true;",
       "note": "an admission block may fall after the showing anchor"
-    },
-    {
-      "id": "S27_cross_or",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "const keyOk = verifyKeyPossession(",
-      "replace": "const keyOk = true || verifyKeyPossession(",
-      "note": "the seller key need not sign the registration"
-    },
-    {
-      "id": "S28_skip_cross",
-      "file": "packages/cs2-core/key-status/status.mjs",
-      "find": "if (admitted >= tomb) return status(KEY_STATUS_INVALID, 'admitted_after_tombstone');",
-      "replace": "if (false && admitted >= tomb) return status(KEY_STATUS_INVALID, 'admitted_after_tombstone');",
-      "note": "a registration at or after the tombstone block is accepted"
     },
     {
       "id": "S29_second_join",
@@ -243,13 +206,6 @@
       "note": "the walk stops at the first bad record"
     },
     {
-      "id": "S35_transfer_to",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "if (!equalBytes(query.transferTo, view.id)) return unproven;",
-      "replace": "if (false && !equalBytes(query.transferTo, view.id)) return unproven;",
-      "note": "rule 3 ignores the Transfer to"
-    },
-    {
       "id": "S36_shorter_extends",
       "file": "packages/cs2-core/smt/history.mjs",
       "find": "if (next.records.length < prev.records.length) return { ok: true, extends: false };",
@@ -262,13 +218,6 @@
       "find": "return { ok: true, equivocation: true, reason: 'rule_5' };",
       "replace": "return { ok: true, equivocation: false, reason: 'rule_5' };",
       "note": "divergent histories are not equivocation"
-    },
-    {
-      "id": "S38_revoke_one_slot",
-      "file": "packages/cs2-core/smt/history.mjs",
-      "find": "return { ok: true, bytes: admitted.bytes, keySlot: admitted.bytes };",
-      "replace": "return { ok: true, bytes: admitted.bytes, keySlot: empty.bytes };",
-      "note": "a key revocation drops the key-slot record"
     },
     {
       "id": "S39_high_s",

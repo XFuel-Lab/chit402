@@ -29,6 +29,7 @@ import {
   BOOK_CREATE_TYPE,
   CITED_PROOF_BYTES,
   HOUR_SECONDS,
+  MAX_RECORDS,
   MAX_SMT_ENTRIES,
   PAD_ENTRIES,
   REC_BOOK,
@@ -463,9 +464,10 @@ test('a wallet holds one book unless it stops, and a bad signature does not kill
   assert.equal(resume.ok, true, resume.reason);
   assert.equal(viewOf(resume.bytes).stopped, false);
   assert.equal(viewOf(resume.bytes).active, null);
-  assert.equal(seal(emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, walletLeave(
-    emptyHistory(KIND_WALLET, CHAIN, wallet).bytes, 5n,
-  )).reason, 'rule_2');
+  assert.equal(seal(afterStop.bytes, walletJoin(afterStop.bytes, 6n, commitment)).reason, 'rule_2');
+  const emptyWallet = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;
+  assert.equal(seal(emptyWallet, walletLeave(emptyWallet, 5n)).reason, 'rule_2');
+  assert.equal(seal(emptyWallet, walletStop(emptyWallet, 4n, sha256(ascii('stop-empty')))).reason, 'rule_2');
 });
 
 test('a wallet signature under the pinned contract is accepted, and high-S is refused', () => {
@@ -490,10 +492,20 @@ test('a wallet signature under the pinned contract is accepted, and high-S is re
   const malleable = walletJoin(bytes, 11n, commitment);
   malleable.sig = highS(malleable.sig, SECP256K1);
   assert.equal(seal(bytes, malleable).reason, 'rule_4');
-  const parity27 = walletJoin(bytes, 12n, commitment);
-  parity27.sig = new Uint8Array(parity27.sig);
-  parity27.sig[64] = 27;
-  assert.equal(seal(bytes, parity27).reason, 'rule_4');
+  const seenParity = new Map();
+  let parityBlock = 20n;
+  while (seenParity.size < 2 && parityBlock < 40n) {
+    const rec = walletJoin(bytes, parityBlock, commitment);
+    seenParity.set(rec.sig[64], rec);
+    parityBlock += 1n;
+  }
+  assert.equal(seenParity.size, 2);
+  for (const rec of seenParity.values()) {
+    assert.ok(rec.sig[64] === 0 || rec.sig[64] === 1);
+    rec.sig = new Uint8Array(rec.sig);
+    rec.sig[64] = 27 + rec.sig[64];
+    assert.equal(seal(bytes, rec).reason, 'rule_4');
+  }
 });
 
 test('the epoch window admits a block after the previous anchor and through the showing anchor', () => {
@@ -512,6 +524,25 @@ test('the epoch window admits a block after the previous anchor and through the 
   const inside = seal(bytes, walletJoin(bytes, 101n, commitment), { epochs: window });
   assert.equal(inside.ok, true, inside.reason);
   assert.equal(seal(bytes, walletJoin(bytes, 0n, commitment)).reason, 'rule_1');
+  const noContract = [{
+    prevAnchorBlock: 0n,
+    showAnchorBlock: 1n << 40n,
+    hourStart: 0n,
+  }];
+  assert.doesNotThrow(() => {
+    const refused = seal(bytes, walletJoin(bytes, 10n, commitment), { epochs: noContract });
+    assert.equal(refused.reason, 'rule_1');
+  });
+  const listed = [{ address: CONTRACT, fromHour: 0n, untilHour: null }];
+  const fromList = seal(bytes, walletJoin(bytes, 10n, commitment), {
+    epochs: noContract,
+    contracts: listed,
+  });
+  assert.equal(fromList.ok, true, fromList.reason);
+  assert.equal(seal(bytes, walletJoin(bytes, 10n, commitment), {
+    epochs: noContract,
+    contracts: [{ address: OTHER_CONTRACT, fromHour: 0n, untilHour: null }],
+  }).reason, 'rule_4');
 });
 
 test('two epochs that both cover the block refuse the record', () => {
@@ -576,6 +607,24 @@ test('the epoch slot takes fresh randomness every hourly epoch', () => {
   assert.equal(verifyProof(epochKey.bytes, fill(1), proof.proof, rootBytes(second.tree)).reason, 'bad_proof');
   assert.equal(entryCount(first.tree), 1);
   assert.equal(entryCount(second.tree), 1);
+  assert.equal(drawEpoch(createTree(), {
+    chainId: CHAIN,
+    epoch: 1,
+    hourStart: 0,
+    randomness: fill(4),
+  }).reason, 'bad_epoch');
+  assert.equal(drawEpoch(first.tree, {
+    chainId: CHAIN,
+    epoch: 2,
+    hourStart: HOUR_SECONDS,
+    randomness: fill(5),
+  }).reason, 'bad_epoch');
+  assert.equal(drawEpoch(first.tree, {
+    chainId: 84532n,
+    epoch: 1,
+    hourStart: HOUR_SECONDS,
+    randomness: fill(6),
+  }).reason, 'bad_epoch');
 });
 
 test('padding reaches 1,024 leaves and a redraw keeps the wallet slot', () => {
@@ -599,7 +648,12 @@ test('padding reaches 1,024 leaves and a redraw keeps the wallet slot', () => {
   const again = redrawDummies(padded.tree, fill(10));
   assert.equal(entryCount(again.tree), 1024);
   assert.notEqual(bytesToHex(rootBytes(padded.tree)), bytesToHex(rootBytes(again.tree)));
-  assert.equal(bytesToHex(getLeaf(again.tree, placed.slotKey.bytes).value), bytesToHex(bytes));
+  const epochLeaf = getLeaf(again.tree, slotKey({ kind: KIND_EPOCH, chainId: CHAIN, id: new Uint8Array(0) }).bytes);
+  assert.ok(epochLeaf);
+  assert.equal(bytesToHex(epochLeaf.value), bytesToHex(fill(8)));
+  const historyLeaf = getLeaf(again.tree, placed.slotKey.bytes);
+  assert.ok(historyLeaf);
+  assert.equal(bytesToHex(historyLeaf.value), bytesToHex(bytes));
   const refreshed = prove(again.tree, placed.slotKey.bytes);
   assert.equal(verifyProof(placed.slotKey.bytes, bytes, refreshed.proof, rootBytes(again.tree)).ok, true);
   assert.equal(verifyProof(placed.slotKey.bytes, bytes, proof.proof, rootBytes(again.tree)).reason, 'bad_proof');
@@ -754,6 +808,10 @@ test('equivocation follows epoch order and stays on one wallet slot', () => {
   other = seal(other, walletJoin(other, 7n, commitment, otherWalletScalar)).bytes;
   assert.equal(detectEquivocation(anchor(base, 6), anchor(other, 7)).equivocation, false);
   assert.equal(detectEquivocation(anchor(other, 8), anchor(base, 7)).reason, 'bad_epoch');
+  const sameEpochLeft = anchor(base, 9);
+  const sameEpochRight = anchor(mutated.bytes, 10);
+  sameEpochRight.epoch = sameEpochLeft.epoch;
+  assert.equal(detectEquivocation(sameEpochLeft, sameEpochRight).reason, 'bad_epoch');
   const wrongKey = fill(9);
   const wrongTree = putLeaf(createTree(), wrongKey, base).tree;
   assert.equal(detectEquivocation({
@@ -816,6 +874,104 @@ test('verifySlot checks the wallet header against the proved leaf', () => {
     prove(planted, foreignKey).proof,
     rootBytes(planted),
   ).reason, 'bad_history');
+  const otherBytes = seal(
+    emptyHistory(KIND_WALLET, CHAIN, otherWallet).bytes,
+    walletJoin(emptyHistory(KIND_WALLET, CHAIN, otherWallet).bytes, 6n, commitment, otherWalletScalar),
+  ).bytes;
+  const keyA = slotKey({ kind: KIND_WALLET, chainId: CHAIN, id: wallet }).bytes;
+  const namedOther = putLeaf(createTree(), keyA, otherBytes).tree;
+  assert.equal(verifySlot(
+    KIND_WALLET,
+    CHAIN,
+    wallet,
+    otherBytes,
+    prove(namedOther, keyA).proof,
+    rootBytes(namedOther),
+  ).reason, 'bad_history');
+});
+
+test('retained boundaries reject a bad root, a full history, and a cross-kind record', () => {
+  const key = fill(7);
+  let tree = createTree();
+  tree = putLeaf(tree, key, fill(1)).tree;
+  const proof = prove(tree, key).proof;
+  const trailing = new Uint8Array(proof.length + 32);
+  trailing.set(proof);
+  trailing.set(fill(9), proof.length);
+  assert.equal(verifyProof(key, fill(1), trailing, rootBytes(tree)).reason, 'bad_proof');
+  assert.equal(putLeaf(createTree(), new Uint8Array(31), fill(1)).reason, 'bad_key');
+  assert.equal(verifyProof(fill(1), fill(2), new Uint8Array(32), rootBytes(createTree()).subarray(0, 31)).reason, 'bad_length');
+
+  const walletBytes = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;
+  const patchedLen = walletBytes.slice();
+  patchedLen[10] = 19;
+  assert.equal(decodeHistory(patchedLen).reason, 'bad_kind');
+  const capped = walletBytes.slice();
+  const countAt = 11 + wallet.length;
+  const over = MAX_RECORDS + 1;
+  capped[countAt] = Math.floor(over / 16777216) % 256;
+  capped[countAt + 1] = Math.floor(over / 65536) % 256;
+  capped[countAt + 2] = Math.floor(over / 256) % 256;
+  capped[countAt + 3] = over % 256;
+  assert.equal(decodeHistory(capped).reason, 'bad_size');
+
+  const bookOnWallet = bookCreate(walletBytes, 6n, identityKey, identityScalar);
+  const walletWithBook = encodeHistory({
+    kind: KIND_WALLET,
+    chainId: CHAIN,
+    id: wallet,
+    records: [bookOnWallet],
+  });
+  assert.doesNotThrow(() => {
+    const view = assess(walletWithBook.bytes, { epochs: [EPOCH] });
+    assert.equal(view.ok, true);
+    assert.equal(view.killed, false);
+    assert.equal(view.book, null);
+    assert.equal(view.faults[0].rule, 'rule_4');
+  });
+
+  const bookId = new Uint8Array(32).fill(0x41);
+  const joinOnBook = {
+    seq: 0n,
+    block: 6n,
+    fromBlock: null,
+    id: freshId(),
+    type: REC_JOIN,
+    commitment: sha256(ascii('cross-kind')),
+    sig: new Uint8Array(65),
+  };
+  const bookWithJoin = encodeHistory({
+    kind: KIND_BOOK,
+    chainId: CHAIN,
+    id: bookId,
+    records: [joinOnBook],
+  });
+  assert.doesNotThrow(() => {
+    const view = assess(bookWithJoin.bytes, { epochs: [EPOCH] });
+    assert.equal(view.ok, true);
+    assert.equal(view.killed, false);
+    assert.equal(view.faults[0].rule, 'rule_4');
+  });
+
+  const offCurve = new Uint8Array(33);
+  offCurve[0] = 0x02;
+  offCurve.fill(0x01, 1);
+  const offBook = new Uint8Array(32).fill(0x42);
+  const offBytes = emptyHistory(KIND_BOOK, CHAIN, offBook).bytes;
+  const offRecord = bookCreate(offBytes, 1n, offCurve, identityScalar);
+  const anchored = encodeHistory({
+    kind: KIND_BOOK,
+    chainId: CHAIN,
+    id: offBook,
+    records: [offRecord],
+  });
+  assert.doesNotThrow(() => {
+    const view = assess(anchored.bytes, { epochs: [EPOCH] });
+    assert.equal(view.ok, true);
+    assert.equal(view.killed, false);
+    assert.equal(view.book, null);
+    assert.equal(view.faults[0].rule, 'rule_4');
+  });
 });
 
 test('payTo and the 0x05 key slot are not histories in this module', () => {
