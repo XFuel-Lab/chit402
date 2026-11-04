@@ -22,6 +22,7 @@ packages/cs2-core/ecdsa/bytes.js text eol=lf
 packages/cs2-core/ecdsa/curves.js text eol=lf
 packages/cs2-core/ecdsa/recover.js text eol=lf
 packages/cs2-core/key-status/status.mjs text eol=lf
+packages/cs2-core/smt-fixtures/** -text
 packages/verify/vendor/cs2-core/eip712/domain.mjs text eol=lf
 packages/verify/vendor/cs2-core/eip712/index.mjs text eol=lf
 packages/verify/vendor/cs2-core/eip712/key-hash.mjs text eol=lf
