@@ -1,7 +1,8 @@
 /**
- * Byte-for-byte copy of the 13-file set in #687 VENDOR.md at
- * 5554480be1286fa1c0a29fc1162130b7f58196b3. Hashes are of LF bytes.
- * eip712 test files are not part of the set. A rebase onto #687 drops this copy.
+ * Byte-for-byte copy of the 14-file set in packages/cs2-core/VENDOR.md.
+ * The first 13 match #687 5554480be1286fa1c0a29fc1162130b7f58196b3.
+ * key-status/status.mjs matches #687 62bddfe8cf6ac843956522f42a877591ec38bed9.
+ * Hashes are of LF bytes. eip712 test files are not part of the set.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -25,6 +26,7 @@ const PINNED = {
   'ecdsa/bytes.js': '1626523e9f3e878693c0ae7c203a8eb62620c974f199cff767c1419d53222692',
   'ecdsa/curves.js': 'e0bf67c3f1c80332276ff4d5acafb17eff3f8b529de2d68cff8bd2b1ef221932',
   'ecdsa/recover.js': '53960460d0155c31446e474196d9fd72590729530431c9bbcb50ec20c63d8b09',
+  'key-status/status.mjs': '49c0d22ea6baf800b2c24205925a1f715b643ca02686960b433ca3a576b4355f',
 };
 
 function lfBytes(path) {
@@ -33,7 +35,7 @@ function lfBytes(path) {
   return Buffer.from(text, 'utf8');
 }
 
-test('the 13 vendored module files match 5554480 on LF bytes', () => {
+test('the 14 vendored module files match the pinned LF bytes', () => {
   for (const [name, expect] of Object.entries(PINNED)) {
     const digest = createHash('sha256').update(lfBytes(join(ROOT, name))).digest('hex');
     assert.equal(digest, expect, name);
