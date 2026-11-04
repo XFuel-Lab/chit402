@@ -101,6 +101,7 @@ const FROZEN = [
   'ecdsa/bytes.js',
   'ecdsa/curves.js',
   'ecdsa/recover.js',
+  'key-status/status.mjs',
 ];
 for (const rel of FROZEN) {
   const text = lf(readFileSync(join(CORE, rel), 'utf8'));
@@ -108,10 +109,6 @@ for (const rel of FROZEN) {
   mkdirSync(dirname(dest), { recursive: true });
   writeFileSync(dest, text);
 }
-const statusSrc = join(CORE, 'key-status', 'status.mjs');
-const statusDest = join(OUT, 'key-status', 'status.mjs');
-mkdirSync(dirname(statusDest), { recursive: true });
-writeFileSync(statusDest, lf(readFileSync(statusSrc, 'utf8')));
 for (const stale of ['eip712/slots.mjs', 'eip712/eip712.test.mjs', 'eip712/rev5.test.mjs']) {
   rmSync(join(OUT, stale), { force: true });
 }
