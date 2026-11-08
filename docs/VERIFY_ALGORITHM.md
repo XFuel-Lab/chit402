@@ -4,8 +4,10 @@ This document describes how to verify a Chit402 receipt offline, without
 trusting the Chit402 API. Use this when:
 
 - Chit402 is down or unreachable
-- You want independent verification
-- You hold a co-signer key and Chit has ceased operations
+- You want to check a receipt yourself instead of asking the Chit402 API
+
+Receipts are not independently witnessed yet. Every signature and attestation
+on a receipt today is produced by the Chit402 gateway (see section 2).
 
 ## 1. What a receipt attests
 
@@ -61,7 +63,9 @@ A receipt may carry:
 
 - `issuer_signature.jws` — primary ES256 compact JWS (see section 10)
 - `hmac_attestation` — HMAC attestor (`alg: HMAC-SHA256`, `value: sha256=<hex>`)
-- `co_attestation` — second HMAC attestor, when configured
+- `co_attestation`: second HMAC attestation, when configured. It is computed by
+  the same gateway with a second secret the gateway holds; it is not an
+  independent witness, and chit402-verify does not read it
 
 Legacy names `signature` and `co_signature` are the same HMAC construction on
 older receipts.
@@ -78,8 +82,10 @@ Each signature block:
 }
 ```
 
-Either signature validates the receipt. If you hold the co-signer secret and
-Chit has disappeared, verify against `co_signature`.
+Either HMAC validates the receipt for someone who holds that secret. Both are
+computed by the Chit402 gateway, so `co_attestation` (legacy `co_signature`) is
+not an independent witness: it does not show anything the gateway could not
+also produce. Receipts are not independently witnessed yet.
 
 ## 3. Canonical payload
 
@@ -352,9 +358,10 @@ section will describe the on-chain check when the add-on ships.
 - **Rotate secrets** by adding a new co-signer, then retiring the old primary.
 - **Constant-time compare** the HMAC digests to prevent timing attacks.
 
-## 9. What can be proven if Chit disappears
+## 9. What a secret holder can check
 
-With this algorithm and either the primary or co-signer secret:
+With this algorithm and either HMAC secret (both are held by the Chit402
+gateway; neither is an independent witness):
 
 1. **The receipt is authentic** — no tampering with any signed field.
 2. **Payment moved on-chain** — verify `payment.ref` on a block explorer.
