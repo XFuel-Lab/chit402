@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 process.env.M2M_DEMO_MODE = 'true';
 process.env.HUB_CATALOG_OFFLINE = 'true';
 process.env.X402_ENABLED = 'false';
+process.env.GATEWAY_COMMIT = 'fedcba9876543210fedcba9876543210fedcba98';
 
 const { createApp } = await import('../src/server.js');
 
@@ -39,6 +40,7 @@ test('GET /health keeps only status, the last anchor, and free tier available', 
   assert.ok('last_anchored_tx' in body);
   assert.deepEqual(Object.keys(body).sort(), [
     'anchor_lag_s',
+    'commit',
     'free_tier',
     'issuance',
     'last_anchored_root',
@@ -50,4 +52,5 @@ test('GET /health keeps only status, the last anchor, and free tier available', 
   assert.deepEqual(Object.keys(body.issuance.cap).sort(), ['day_used', 'hour_used', 'state']);
   assert.equal(body.issuance.cap.state, 'off');
   assert.equal(typeof body.receipt_failures, 'number');
+  assert.equal(body.commit, 'fedcba9876543210fedcba9876543210fedcba98');
 });

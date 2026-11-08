@@ -70,7 +70,7 @@ quietly — the service starts, serves traffic, and is wrong:
 | `RECEIPT_POLICY_*` | Required under the same shared production check as the fee caps, so a launcher that starts the gateway with `NODE_ENV` unset needs them too, or boot refuses. See docs/product/issuer-root.md |
 | `ANCHOR_MAX_PRIORITY_WEI` | Same rule for `maxPriorityFeePerGas`. Deploy default `2000000000` (2 gwei) |
 | `M2M_RELAYER_AUDIENCE` | Required when relayer addresses are set. Signatures bind this audience and a single-use nonce |
-| `GATEWAY_COMMIT` | Deploy must export this. Set it to `$(git rev-parse HEAD)` for the checkout that is about to run. Receipt-check feedback names the commit. Unset is recorded as `GATEWAY_COMMIT unset` |
+| `GATEWAY_COMMIT` | Deploy must export this before the restart. Set it to `$(git rev-parse HEAD)`, the full 40-hex sha of the checkout that is about to run (`install-api.sh` writes it into `.env`). `/health` reports it as `commit`, or null when it is not a full 40-hex sha. Receipt-check feedback names the commit. Unset is recorded there as `GATEWAY_COMMIT unset` |
 
 Check names without printing values, from the gateway directory:
 
@@ -111,9 +111,16 @@ Day-to-day:
 ```bash
 cd "$XFUEL_REPO" && git pull
 cd services/gateway && npm ci --omit=dev
-# Deploy must export the commit this process will run.
-# Write GATEWAY_COMMIT=$(git rev-parse HEAD) into services/gateway/.env, then restart.
+# Deploy must export the full 40-hex commit this process will run, before
+# the restart. The unit sources .env, so write it there (in place, keeping
+# the file's owner and mode). /health reports it as `commit`.
+export GATEWAY_COMMIT="$(git rev-parse HEAD)"
+[[ "$GATEWAY_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo "not a 40-hex sha"; exit 1; }
+tmp="$(mktemp)"
+{ grep -v '^GATEWAY_COMMIT=' .env; printf 'GATEWAY_COMMIT=%s\n' "$GATEWAY_COMMIT"; } > "$tmp"
+cat "$tmp" > .env && rm -f "$tmp"
 sudo systemctl restart "$XFUEL_SYSTEMD_UNIT"
+curl -sS http://127.0.0.1:3002/health | grep -o '"commit":"[0-9a-f]*"'
 sudo systemctl status "$XFUEL_SYSTEMD_UNIT" --no-pager
 ```
 

@@ -5,6 +5,7 @@
  */
 import { createRequire } from 'node:module';
 import { verifierBuildDigest } from './verifier-digest.js';
+import { gatewayCommit } from './gateway-commit.js';
 
 const require = createRequire(import.meta.url);
 const CHECK_NAMES = ['signature', 'key_window', 'payment_binding', 'log_inclusion', 'anchor', 'shape'];
@@ -16,7 +17,7 @@ const LABEL_URL = 'https://api.github.com/repos/XFuel-Lab/chit402/labels';
 export const FEEDBACK_NOTE_MAX = 1000;
 export const FEEDBACK_INTENT_MAX = 200;
 export const FEEDBACK_TOKEN_ENV = 'CHECK_FEEDBACK_GITHUB_TOKEN';
-export const GATEWAY_COMMIT_ENV = 'GATEWAY_COMMIT';
+export { GATEWAY_COMMIT_ENV, gatewayCommit } from './gateway-commit.js';
 
 export function feedbackToken(options = {}, env = process.env) {
   if (Object.prototype.hasOwnProperty.call(options, 'feedbackToken')) {
@@ -36,18 +37,6 @@ function verifierVersion() {
   } catch {
     return 'unknown';
   }
-}
-
-/**
- * Commit the running process was started from.
- * Deploy must export `GATEWAY_COMMIT=$(git rev-parse HEAD)` into the gateway
- * environment before restart. A missing value is recorded as
- * `GATEWAY_COMMIT unset`.
- */
-export function gatewayCommit(env = process.env) {
-  const value = String(env[GATEWAY_COMMIT_ENV] || '').trim();
-  if (/^[0-9a-f]{7,64}$/i.test(value)) return value.toLowerCase();
-  return `${GATEWAY_COMMIT_ENV} unset`;
 }
 
 export function stripUrlsAndEmails(text) {
