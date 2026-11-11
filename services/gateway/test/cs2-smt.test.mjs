@@ -26,7 +26,7 @@ test('cs2 smt suite (gateway CI hook)', () => {
   const failed = out.match(/^# fail (\d+)$/m);
   const tests = out.match(/^# tests (\d+)$/m);
   assert.ok(passed, out.slice(-2000));
-  assert.equal(passed[1], '23');
+  assert.equal(passed[1], '30');
   assert.equal(failed && failed[1], '0');
-  assert.equal(tests && tests[1], '23');
+  assert.equal(tests && tests[1], '30');
 });
