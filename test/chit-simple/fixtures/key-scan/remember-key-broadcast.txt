@@ -1,0 +1,2 @@
+vm.rememberKey(envOr("KEY", "x"));
+vm.startBroadcast();

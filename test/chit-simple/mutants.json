@@ -1,0 +1,423 @@
+{
+  "about": "ChitAnchor on Base Sepolia, v0. Run from the repo root: node scripts/mutants/run-mutants.mjs . --list test/chit-simple/mutants.json --timeout-sec 180. Score is KILLED / (KILLED + SURVIVED). forge and node must be on PATH. The suite runs pretest.sh, then forge test --force, skipping invariant fuzz and test_example_runtime_code_hash. R19 matches the inner shift at 20-space indent.",
+  "timeoutSec": 180,
+  "suites": {
+    "anchor": {
+      "cwd": "test/chit-simple",
+      "argv": [
+        "sh",
+        "-c",
+        "sh pretest.sh >/dev/null && forge test --force --offline --no-match-contract Invariant --no-match-test test_example_runtime_code_hash"
+      ],
+      "env": {
+        "FOUNDRY_DISABLE_NIGHTLY_WARNING": "1"
+      }
+    }
+  },
+  "mutants": [
+    {
+      "id": "A1_anchor_sender_inverted",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(msg\\.sender != checkpoint\\) revert NotCheckpoint\\(\\);",
+      "replace": "if (msg.sender == checkpoint) revert NotCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "anchor accepts only the checkpoint"
+    },
+    {
+      "id": "A2_rotate_sender_inverted",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(msg\\.sender != checkpoint\\) revert NotCheckpoint\\(\\);",
+      "replace": "if (msg.sender == checkpoint) revert NotCheckpoint();",
+      "nth": 2,
+      "suite": "anchor",
+      "note": "rotation accepts only the checkpoint"
+    },
+    {
+      "id": "A3_domain_inverted",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(domain_ != domain\\) revert BadDomain\\(\\);",
+      "replace": "if (domain_ == domain) revert BadDomain();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the domain argument must equal the immutable"
+    },
+    {
+      "id": "A4_epoch_not_plus_one",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(epoch_ != _head\\.epoch \\+ 1\\) revert BadEpoch\\(\\);",
+      "replace": "if (epoch_ != _head.epoch) revert BadEpoch();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "epoch is the stored epoch plus one"
+    },
+    {
+      "id": "A5_hour_alignment_inverted",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(hourStart_ % 3600 != 0\\) revert BadHour\\(\\);",
+      "replace": "if (hourStart_ % 3600 == 0) revert BadHour();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "hourStart is a multiple of 3600"
+    },
+    {
+      "id": "A6_hour_equal_allowed",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(hourStart_ <= _head\\.hourStart\\) revert HourNotIncreasing\\(\\);",
+      "replace": "if (hourStart_ < _head.hourStart) revert HourNotIncreasing();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "hourStart is strictly increasing"
+    },
+    {
+      "id": "A7_unfinished_hour_allowed",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(uint256\\(hourStart_\\) \\+ 3600 > block\\.timestamp\\) revert HourNotFinished\\(\\);",
+      "replace": "if (uint256(hourStart_) > block.timestamp) revert HourNotFinished();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the hour must already have ended"
+    },
+    {
+      "id": "A8_exact_hour_end_rejected",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(uint256\\(hourStart_\\) \\+ 3600 > block\\.timestamp\\) revert HourNotFinished\\(\\);",
+      "replace": "if (uint256(hourStart_) + 3600 >= block.timestamp) revert HourNotFinished();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "hourStart + 3600 == now is a finished hour"
+    },
+    {
+      "id": "A9_equal_size_allowed",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(size_ <= _head\\.size\\) revert SizeNotIncreasing\\(\\);",
+      "replace": "if (size_ < _head.size) revert SizeNotIncreasing();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "size strictly increases"
+    },
+    {
+      "id": "A10_consistency_inverted",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "!= Rfc9162\\.OK",
+      "replace": "== Rfc9162.OK",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a bad consistency proof is refused"
+    },
+    {
+      "id": "A11_kind_not_hourly",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "uint8 internal constant KIND_HOURLY = 0;",
+      "replace": "uint8 internal constant KIND_HOURLY = 1;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "v0 emits kind 0"
+    },
+    {
+      "id": "A12_constructor_accepts_zero",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(checkpoint_ == address\\(0\\)\\) revert ZeroCheckpoint\\(\\);",
+      "replace": "if (checkpoint_ == address(1)) revert ZeroCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the constructor refuses the zero address"
+    },
+    {
+      "id": "A13_rotate_accepts_zero",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newAddr == address\\(0\\)\\) revert ZeroCheckpoint\\(\\);",
+      "replace": "if (newAddr == address(1)) revert ZeroCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "rotation refuses the zero address"
+    },
+    {
+      "id": "A14_rotate_same_key",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newAddr == checkpoint\\) revert SameCheckpoint\\(\\);",
+      "replace": "if (newAddr == address(1)) revert SameCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "rotation must change the key"
+    },
+    {
+      "id": "A15_version_replay",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(version <= checkpointVersion\\) revert BadVersion\\(\\);",
+      "replace": "if (version < checkpointVersion) revert BadVersion();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "version must be strictly higher"
+    },
+    {
+      "id": "A16_rotate_does_not_stick",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "checkpoint = newAddr;",
+      "replace": "checkpoint = old;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "rotation stores the new key"
+    },
+    {
+      "id": "A17_domain_is_keccak",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "domain = sha256\\(abi\\.encodePacked\\(\"chit402-checkpoint-v1\"",
+      "replace": "domain = keccak256(abi.encodePacked(\"chit402-checkpoint-v1\"",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the domain is SHA-256, not keccak"
+    },
+    {
+      "id": "R1_empty_root_byte",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "replace": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b856",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "empty root is SHA-256 of the empty string"
+    },
+    {
+      "id": "R2_m_ge_n",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(m > n\\) return M_GT_N;",
+      "replace": "if (m >= n) return M_GT_N;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "m == n is a separate case from m > n"
+    },
+    {
+      "id": "R3_genesis_proof_ignored",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(proof\\.length != 0\\) return PROOF_NOT_EMPTY;",
+      "replace": "if (proof.length == 0) return PROOF_NOT_EMPTY;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "genesis accepts only an empty proof"
+    },
+    {
+      "id": "R4_equal_size_proof_ignored",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(proof\\.length != 0\\) return PROOF_NOT_EMPTY;",
+      "replace": "if (proof.length == 0) return PROOF_NOT_EMPTY;",
+      "nth": 2,
+      "suite": "anchor",
+      "note": "m == n accepts only an empty proof"
+    },
+    {
+      "id": "R5_genesis_old_root",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(oldRoot != EMPTY_ROOT\\) return ROOT_MISMATCH;",
+      "replace": "if (false) return ROOT_MISMATCH;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "genesis requires the empty-tree old root"
+    },
+    {
+      "id": "R6_genesis_n0_new_root",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(n == 0 && newRoot != EMPTY_ROOT\\) return ROOT_MISMATCH;",
+      "replace": "if (false) return ROOT_MISMATCH;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "m = n = 0 requires the empty new root"
+    },
+    {
+      "id": "R7_equal_roots",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(oldRoot != newRoot\\) return ROOT_MISMATCH;",
+      "replace": "if (false) return ROOT_MISMATCH;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "m == n requires equal roots"
+    },
+    {
+      "id": "R8_empty_extension_proof",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(proof\\.length == 0\\) return PROOF_TOO_SHORT;",
+      "replace": "if (false) return PROOF_TOO_SHORT;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "an extension needs a proof"
+    },
+    {
+      "id": "R9_node_prefix",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "bytes1\\(0x01\\)",
+      "replace": "bytes1(0x00)",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a node is prefixed with 0x01"
+    },
+    {
+      "id": "R10_node_order",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "sha256\\(abi\\.encodePacked\\(bytes1\\(0x01\\), left, right\\)\\)",
+      "replace": "sha256(abi.encodePacked(bytes1(0x01), right, left))",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "node hash order is left then right"
+    },
+    {
+      "id": "R11_pow2",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "\\(m & \\(m - 1\\)\\) == 0",
+      "replace": "(m & m) == 0",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a power-of-two old size prepends the old root"
+    },
+    {
+      "id": "R12_lsb",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "return \\(x & 1\\) == 1;",
+      "replace": "return (x & 1) == 0;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the sibling side follows the least bit"
+    },
+    {
+      "id": "R13_fn_eq_sn",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(_lsb\\(fn\\) \\|\\| fn == sn\\)",
+      "replace": "if (_lsb(fn))",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "fn == sn takes the same branch as the least bit"
+    },
+    {
+      "id": "R14_proof_too_long",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(sn == 0\\) return PROOF_TOO_LONG;",
+      "replace": "if (false) return PROOF_TOO_LONG;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a proof that runs past the new root is refused"
+    },
+    {
+      "id": "R15_proof_too_short",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(sn != 0\\) return PROOF_TOO_SHORT;",
+      "replace": "if (false) return PROOF_TOO_SHORT;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a proof that stops early is refused"
+    },
+    {
+      "id": "R16_old_root_result",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(fr != oldRoot\\) return ROOT_MISMATCH;",
+      "replace": "if (false) return ROOT_MISMATCH;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the folded old root must match"
+    },
+    {
+      "id": "R17_new_root_result",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(sr != newRoot\\) return ROOT_MISMATCH;",
+      "replace": "if (false) return ROOT_MISMATCH;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the folded new root must match"
+    },
+    {
+      "id": "R18_leading_shift",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "while \\(_lsb\\(fn\\)\\) \\{\\n            fn >>= 1;",
+      "replace": "while (_lsb(fn)) {\n            fn >>= 2;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "leading odd bits shift by one"
+    },
+    {
+      "id": "R19_inner_shift",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "while \\(!_lsb\\(fn\\) && fn != 0\\) \\{\\n                    fn >>= 1;",
+      "replace": "while (!_lsb(fn) && fn != 0) {\n                        fn >>= 2;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the inner skip shifts by one"
+    },
+    {
+      "id": "D1_stateRoot_not_stored",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "_head\\.stateRoot = stateRoot_;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D2_hour_not_stored",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "_head\\.hourStart = hourStart_;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D3_version_not_stored",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "checkpointVersion = version;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D4_finished_uint64_no_cast",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "uint256\\(hourStart_\\) \\+ 3600 > block\\.timestamp",
+      "replace": "uint256(hourStart_) + 3599 > block.timestamp",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D5_event_epoch_swapped",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "emit Anchored\\(epoch_, hourStart_, size_",
+      "replace": "emit Anchored(hourStart_, epoch_, size_",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D6_event_state_is_root",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "root_, stateRoot_, KIND_HOURLY",
+      "replace": "root_, root_, KIND_HOURLY",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D7_rotate_event_old_is_new",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "emit CheckpointKeyRotated\\(version, old, newAddr\\)",
+      "replace": "emit CheckpointKeyRotated(version, newAddr, newAddr)",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D8_domain_chainid_uint256",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "uint64\\(block\\.chainid\\)",
+      "replace": "block.chainid",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D9_too_long_guard_removed",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(sn == 0\\) return PROOF_TOO_LONG;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    },
+    {
+      "id": "D10_sn_final_check_removed",
+      "file": "contracts/chit-simple/Rfc9162.sol",
+      "find": "if \\(sn != 0\\) return PROOF_TOO_SHORT;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor"
+    }
+  ]
+}
