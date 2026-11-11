@@ -326,20 +326,47 @@ function patchedSigma(line: LineModule, bytes: Uint8Array): Uint8Array {
   return patched;
 }
 
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) if (left[i] !== right[i]) return false;
+  return true;
+}
+
+function payToKey(line: LineModule, view: LineView): Uint8Array | null {
+  const id = view.to.startsWith('0x') ? view.to.slice(2) : view.to;
+  const derived = line.slotKey({ kind: 1, chainId: view.chainId, id });
+  if (!derived.ok || derived.bytes.length !== 32) return null;
+  return derived.bytes;
+}
+
+function foldProof(
+  smt: SmtModule,
+  derived: Uint8Array,
+  slotValue: Uint8Array | null,
+  slotProof: Uint8Array,
+  root: Uint8Array,
+): boolean {
+  return smt.verifyProof(derived, slotValue, slotProof, root).ok;
+}
+
 function stateOk(
   smt: SmtModule,
-  slotKey: Uint8Array,
+  derived: Uint8Array | null,
+  callerKey: Uint8Array,
   slotValue: Uint8Array | null,
   slotProof: Uint8Array,
 ) {
   return (stateRoot: string): { ok: boolean; reason: string | null; exit?: 1 | 2 } => {
-    if (slotKey.length !== 32 || slotProof.length < 32) {
-      return { ok: false, reason: 'state_unproven', exit: 2 };
+    if (!derived || derived.length !== 32) return { ok: false, reason: 'state_unproven', exit: 2 };
+    if (callerKey.length === 32 && !bytesEqual(callerKey, derived)) {
+      return { ok: false, reason: 'not_in_state', exit: 1 };
     }
+    if (slotValue == null) return { ok: false, reason: 'not_in_state', exit: 1 };
+    if (slotValue.length === 0) return { ok: false, reason: 'not_in_state', exit: 1 };
+    if (slotProof.length < 32) return { ok: false, reason: 'state_unproven', exit: 2 };
     const root = hexToBytes(stateRoot);
     if (!root || root.length !== 32) return { ok: false, reason: 'state_unproven', exit: 2 };
-    const checked = smt.verifyProof(slotKey, slotValue, slotProof, root);
-    if (!checked.ok) return { ok: false, reason: 'not_in_state', exit: 1 };
+    if (!foldProof(smt, derived, slotValue, slotProof, root)) return { ok: false, reason: 'not_in_state', exit: 1 };
     return { ok: true, reason: null };
   };
 }
@@ -622,6 +649,8 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   let rotationExplains = false;
   let ownRetired: V13World['ownRetired'] = 'no';
   let rpcReason: string | null = null;
+  let getterReason: string | null = null;
+  let rotationUnreadable = false;
   let showingHour: number | null = null;
 
   try {
@@ -644,25 +673,29 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
         codeHash = `0x${bytesToHex(loaded.keccak(raw))}`;
       }
       const genesis = await callWord(urls, parsed.receipt.contract, '0x014af0c4');
-      if (genesis != null) chainGenesis = Number(genesis);
+      if (genesis.status === 'word') chainGenesis = Number(genesis.word);
+      else if (genesis.status !== 'revert') getterReason = genesis.status === 'rpc_disagreement' ? 'rpc_disagreement' : 'rpc_unreachable';
       const retired = await callWord(urls, parsed.receipt.contract, '0x2eb38ae0');
-      if (retired === 1n) {
+      if (retired.status === 'word' && retired.word === 1n) {
         const next = await callWord(urls, parsed.receipt.contract, '0x6ff968c3');
-        if (next == null) ownRetired = 'successor_unreadable';
+        if (next.status !== 'word') ownRetired = 'successor_unreadable';
+      } else if (retired.status !== 'revert' && retired.status !== 'word') {
+        getterReason = retired.status === 'rpc_disagreement' ? 'rpc_disagreement' : 'rpc_unreachable';
       }
       if (head.hourStart <= BigInt(Number.MAX_SAFE_INTEGER)) showingHour = Number(head.hourStart);
       const checkpoint = checkpointOf(payload, line.chainId, parsed.receipt.contract);
       if (checkpoint && anchorFrom && anchorFrom.toLowerCase() !== checkpoint) {
         const logs = await fetchRotation(urls, parsed.receipt.contract, finalizedNumber);
-        rotationExplains = rotationChain(logs, checkpoint, anchorFrom);
+        if (!logs) rotationUnreadable = true;
+        else rotationExplains = rotationChain(logs, checkpoint, anchorFrom);
       }
     }
     const pinPredecessor = predecessorOf(payload, line.chainId, parsed.receipt.contract);
     if (pinPredecessor && pinPredecessor !== ZERO_ADDRESS) {
       const word = await callWord(urls, pinPredecessor, '0x6ff968c3');
-      if (word == null) successor = 'unreadable';
+      if (word.status !== 'word') successor = 'unreadable';
       else {
-        const got = addressFromWord(word.toString(16).padStart(64, '0'));
+        const got = addressFromWord(word.word.toString(16).padStart(64, '0'));
         successor = got === parsed.receipt.contract ? 'match' : 'mismatch';
       }
     }
@@ -676,7 +709,7 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
         canonical = 'unreachable';
       } else {
         const byNumber = number == null ? null : asRecord(await rpc(urls, 'eth_getBlockByNumber', [hexQty(number), false]));
-        const canonicalHash = byNumber && typeof byNumber.hash === 'string' ? byNumber.hash : null;
+        const canonicalHash = byNumber && typeof byNumber.hash === 'string' && byNumber.hash.length > 0 ? byNumber.hash : null;
         const judged = classifyCanonical({
           rpcError: false,
           block: number == null ? null : { number, hash },
@@ -711,7 +744,13 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   const hooks = {
     leafHash: loaded.merkle.leafHash,
     verifyInclusion: loaded.merkle.verifyInclusion,
-    stateOk: stateOk(loaded.smt, parsed.receipt.slotKey, parsed.receipt.slotValue, parsed.receipt.slotProof),
+    stateOk: stateOk(
+      loaded.smt,
+      payToKey(loaded.line, line),
+      parsed.receipt.slotKey,
+      parsed.receipt.slotValue,
+      parsed.receipt.slotProof,
+    ),
   };
   return verdictOf(runV13(receipt, blankWorld(history, {
     ...base,
@@ -728,6 +767,8 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     rotationExplains,
     ownRetired,
     rpcReason,
+    getterReason,
+    rotationUnreadable,
     rpcConfigured: true,
   }), hooks), version);
 }
@@ -770,7 +811,7 @@ function receiptLogs(raw: unknown[]): PaymentView['logs'] {
   }));
 }
 
-async function fetchRotation(urls: string[], address: string, finalized: number): Promise<unknown[]> {
+async function fetchRotation(urls: string[], address: string, finalized: number): Promise<unknown[] | null> {
   const out: unknown[] = [];
   for (let from = 0; from <= finalized; from += LOG_SPAN + 1) {
     const to = Math.min(finalized, from + LOG_SPAN);
@@ -780,7 +821,8 @@ async function fetchRotation(urls: string[], address: string, finalized: number)
       toBlock: hexQty(to),
       topics: [ROTATION_TOPIC0],
     }]);
-    if (Array.isArray(result)) out.push(...result);
+    if (!Array.isArray(result)) return null;
+    out.push(...result);
   }
   return out;
 }
@@ -832,14 +874,35 @@ function predecessorOf(payload: Record<string, unknown> | null, chainId: number,
   return null;
 }
 
-async function callWord(urls: string[], to: string, data: string): Promise<bigint | null> {
-  try {
-    const result = await rpc(urls, 'eth_call', [{ to, data }, 'finalized']);
-    if (typeof result !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(result)) return null;
-    return BigInt(result);
-  } catch {
-    return null;
+type CallWord = { status: 'word'; word: bigint } | { status: 'revert' | 'empty' | 'rpc_disagreement' | 'rpc_unreachable' };
+
+function callKind(value: { ok: true; value: unknown } | { ok: false; err: unknown }): CallWord {
+  if (!value.ok) {
+    const message = value.err && typeof value.err === 'object' && 'message' in value.err ? String((value.err as { message?: string }).message) : '';
+    if (/execution reverted/i.test(message)) return { status: 'revert' };
+    return { status: 'rpc_unreachable' };
   }
+  if (typeof value.value !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(value.value)) return { status: 'empty' };
+  return { status: 'word', word: BigInt(value.value) };
+}
+
+async function callWord(urls: string[], to: string, data: string): Promise<CallWord> {
+  const unique = [...new Set(urls.map(canonRpc))];
+  if (unique.length <= 1) return { status: 'rpc_unreachable' };
+  const settled = await Promise.all(unique.map(async (url) => {
+    try {
+      return { ok: true as const, value: await jsonRpc(url, 'eth_call', [{ to, data }, 'finalized']) };
+    } catch (err) {
+      return { ok: false as const, err };
+    }
+  }));
+  const kinds = settled.map(callKind);
+  const kindKey = (kind: CallWord) => (kind.status === 'word' ? `word:${kind.word.toString()}` : kind.status);
+  const first = kindKey(kinds[0]);
+  for (const kind of kinds.slice(1)) {
+    if (kindKey(kind) !== first) return { status: 'rpc_disagreement' };
+  }
+  return kinds[0];
 }
 
 export { isExactV13Receipt };

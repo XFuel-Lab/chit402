@@ -31,6 +31,8 @@ import {
   HOUR_SECONDS,
   MAX_RECORDS,
   MAX_SMT_ENTRIES,
+  NEWER_VERIFIER,
+  RECORD_TYPES,
   PAD_ENTRIES,
   REC_BOOK,
   REC_JOIN,
@@ -53,6 +55,7 @@ import {
   encodeHistory,
   entryCount,
   extendsHistory,
+  factAt,
   faultLine,
   getLeaf,
   indexBytes,
@@ -1003,6 +1006,194 @@ test('smt fixtures verify under the committed root', () => {
   const readme = readFileSync(join(dir, 'README.md'), 'utf8');
   assert.equal(readme.includes('root.bin'), false);
   assert.equal(readme.includes('root.bytes'), true);
+});
+
+test('T1 an unknown record type round-trips, and the type table is published', () => {
+  const names = new Map(RECORD_TYPES.map((row) => [row.type, row.name]));
+  assert.equal(names.get(0), 'invalid');
+  assert.equal(names.get(1), 'payTo');
+  assert.equal(names.get(2), 'payTo');
+  assert.equal(names.get(3), 'wallet_join');
+  assert.equal(names.get(4), 'wallet_leave');
+  assert.equal(names.get(5), 'wallet_stop');
+  assert.equal(names.get(6), 'book_create');
+  for (let type = 7; type <= 15; type += 1) assert.equal(names.get(type), 'reserved_simple_book');
+  assert.equal(names.get(16), 'e6_cap_row');
+  assert.equal(names.get(255), 'invalid');
+  let bytes = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;
+  const decoded = decodeHistory(bytes);
+  const unknown = (type, block) => ({
+    seq: BigInt(decodeHistory(bytes).records.length),
+    block,
+    fromBlock: null,
+    id: freshId(),
+    type,
+    body: new Uint8Array(type === 16 ? 40 : 8).fill(type),
+    sig: new Uint8Array(65).fill(1),
+  });
+  const first = unknown(16, 40n);
+  bytes = encodeHistory({
+    kind: decoded.kind, chainId: decoded.chainId, id: decoded.id, records: [first],
+  }).bytes;
+  const second = unknown(200, 50n);
+  second.seq = 1n;
+  const both = encodeHistory({
+    kind: decoded.kind, chainId: decoded.chainId, id: decoded.id, records: [first, second],
+  });
+  assert.equal(both.ok, true, both.reason);
+  const again = encodeHistory(decodeHistory(both.bytes));
+  assert.equal(again.ok, true);
+  assert.equal(bytesToHex(again.bytes), bytesToHex(both.bytes));
+  assert.equal(decodeHistory(both.bytes).records[0].type, 16);
+  assert.equal(decodeHistory(both.bytes).records[1].type, 200);
+  assert.equal(decodeHistory(both.bytes).records[1].opaque, true);
+});
+
+test('T2 rule 5 compares raw bytes when a later history holds an unknown type', () => {
+  const commitment = sha256(ascii('unknown-prefix'));
+  let base = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;
+  base = seal(base, walletJoin(base, 7n, commitment)).bytes;
+  const opened = decodeHistory(base);
+  const cap = {
+    seq: 1n,
+    block: 30n,
+    fromBlock: null,
+    id: freshId(),
+    type: 16,
+    body: new Uint8Array(40).fill(9),
+    sig: new Uint8Array(65).fill(2),
+  };
+  const later = encodeHistory({
+    kind: opened.kind, chainId: opened.chainId, id: opened.id, records: [...opened.records, cap],
+  }).bytes;
+  const mutatedJoin = { ...opened.records[0], sig: new Uint8Array(65).fill(4) };
+  const rewritten = encodeHistory({
+    kind: opened.kind, chainId: opened.chainId, id: opened.id, records: [mutatedJoin, cap],
+  }).bytes;
+  assert.equal(extendsHistory(base, later).extends, true);
+  assert.equal(extendsHistory(later, rewritten).extends, false);
+  function anchor(historyBytes, seed) {
+    let tree = createTree();
+    const placed = placeHistory(tree, historyBytes);
+    tree = drawEpoch(placed.tree, { chainId: CHAIN, epoch: 0, hourStart: 0, randomness: fill(seed) }).tree;
+    return {
+      key: placed.slotKey.bytes,
+      value: historyBytes,
+      proof: prove(tree, placed.slotKey.bytes).proof,
+      root: rootBytes(tree),
+      epoch: BigInt(seed),
+    };
+  }
+  const clash = detectEquivocation(anchor(later, 1), anchor(rewritten, 2));
+  assert.equal(clash.ok, true, clash.reason);
+  assert.equal(clash.equivocation, true);
+  assert.equal(clash.reason, 'rule_5');
+});
+
+test('T3 and T4 facts before an unknown record stand, and that block onward needs a newer verifier', () => {
+  const book = new Uint8Array(32).fill(0x42);
+  let bookBytes = emptyHistory(KIND_BOOK, CHAIN, book).bytes;
+  bookBytes = seal(bookBytes, bookCreate(bookBytes, 10n, identityKey, identityScalar)).bytes;
+  const bookOpen = decodeHistory(bookBytes);
+  const bookLater = encodeHistory({
+    kind: bookOpen.kind,
+    chainId: bookOpen.chainId,
+    id: bookOpen.id,
+    records: [...bookOpen.records, {
+      seq: 1n, block: 80n, fromBlock: null, id: freshId(), type: 200,
+      body: new Uint8Array(8).fill(1), sig: new Uint8Array(65).fill(1),
+    }],
+  }).bytes;
+  const bookCtx = { epochs: [EPOCH] };
+  assert.equal(factAt(bookLater, 79n, bookCtx).exit, 0);
+  assert.equal(factAt(bookLater, 80n, bookCtx).exit, 2);
+  assert.equal(factAt(bookLater, 80n, bookCtx).reason, NEWER_VERIFIER);
+  assert.notEqual(factAt(bookLater, 81n, bookCtx).exit, 0);
+
+  const commitment = sha256(ascii('wallet-before-unknown'));
+  let walletBytes = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;
+  walletBytes = seal(walletBytes, walletJoin(walletBytes, 10n, commitment)).bytes;
+  const walletOpen = decodeHistory(walletBytes);
+  const walletLater = encodeHistory({
+    kind: walletOpen.kind,
+    chainId: walletOpen.chainId,
+    id: walletOpen.id,
+    records: [...walletOpen.records, {
+      seq: 1n, block: 80n, fromBlock: null, id: freshId(), type: 16,
+      body: new Uint8Array(40).fill(2), sig: new Uint8Array(65).fill(1),
+    }],
+  }).bytes;
+  assert.equal(factAt(walletLater, 79n, bookCtx).exit, 0);
+  assert.equal(factAt(walletLater, 80n, bookCtx).exit, 2);
+  assert.equal(factAt(walletLater, 80n, bookCtx).reason, NEWER_VERIFIER);
+});
+
+test('T5 the unknown-type fixture round-trips and is not in the frozen fixture sums', () => {
+  const file = hexToBytes(readFileSync(join(HERE, 'vectors/unknown-type.hex'), 'utf8').trim());
+  const decoded = decodeHistory(file);
+  assert.equal(decoded.ok, true, decoded.reason);
+  assert.equal(decoded.records[0].type, 16);
+  assert.equal(decoded.records[0].opaque, true);
+  const again = encodeHistory(decoded);
+  assert.equal(again.ok, true);
+  assert.equal(bytesToHex(again.bytes), bytesToHex(file));
+  assert.equal(factAt(file, 39n, { epochs: [EPOCH] }).exit, 0);
+  assert.equal(factAt(file, 40n, { epochs: [EPOCH] }).exit, 2);
+  const sums = readFileSync(join(HERE, '../smt-fixtures/SHA256SUMS'));
+  assert.equal(createHash('sha256').update(sums).digest('hex'), '189083cf310a6445f9cd65c973b01937405c72c395443ba15d12a548d5bada4e');
+});
+
+test('T6 admitting an unknown cap row is rejected and the earlier fact stays', () => {
+  const commitment = sha256(ascii('old-cap'));
+  let bytes = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;
+  bytes = seal(bytes, walletJoin(bytes, 10n, commitment)).bytes;
+  const opened = decodeHistory(bytes);
+  const loosen = {
+    seq: 1n, block: 40n, fromBlock: null, id: freshId(), type: 16,
+    body: new Uint8Array(40).fill(4), sig: new Uint8Array(65).fill(9),
+  };
+  assert.equal(seal(bytes, loosen).ok, false);
+  assert.equal(seal(bytes, loosen).reason, 'newer_rules');
+  const carried = encodeHistory({
+    kind: opened.kind, chainId: opened.chainId, id: opened.id, records: [...opened.records, loosen],
+  }).bytes;
+  const view = viewOf(carried);
+  assert.equal(view.ok, true);
+  assert.equal(bytesToHex(view.active), bytesToHex(commitment));
+  assert.equal(view.faults[0].line, NEWER_VERIFIER);
+  assert.equal(view.faults[0].line.includes('Chit fault'), false);
+});
+
+test('T7 a fact one block before an unknown admission stands, and one block after does not', () => {
+  const commitment = sha256(ascii('tighten'));
+  let bytes = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;
+  bytes = seal(bytes, walletJoin(bytes, 10n, commitment)).bytes;
+  const opened = decodeHistory(bytes);
+  const tighten = {
+    seq: 1n, block: 50n, fromBlock: null, id: freshId(), type: 16,
+    body: new Uint8Array(40).fill(5), sig: new Uint8Array(65).fill(1),
+  };
+  const later = encodeHistory({
+    kind: opened.kind, chainId: opened.chainId, id: opened.id, records: [...opened.records, tighten],
+  }).bytes;
+  const ctx = { epochs: [EPOCH] };
+  assert.equal(factAt(later, 49n, ctx).exit, 0);
+  assert.equal(factAt(later, 50n, ctx).exit, 2);
+  assert.equal(factAt(later, 50n, ctx).reason, NEWER_VERIFIER);
+  assert.equal(factAt(later, 51n, ctx).exit, 2);
+});
+
+test('T8 type 0 and type 255 are exit 1', () => {
+  const file = hexToBytes(readFileSync(join(HERE, 'vectors/unknown-type.hex'), 'utf8').trim());
+  const typeAt = file.indexOf(16);
+  assert.equal(typeAt > 0, true);
+  for (const type of [0, 255]) {
+    const copy = new Uint8Array(file);
+    copy[typeAt] = type;
+    const seen = factAt(copy, 1n, { epochs: [EPOCH] });
+    assert.equal(seen.exit, 1, String(type));
+    assert.equal(seen.reason, 'bad_type');
+  }
 });
 
 test('source scan rejects fabricated proofs, roots, and flags', () => {

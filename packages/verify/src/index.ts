@@ -1877,8 +1877,8 @@ function libraryFromV13(verdict: VerifyVerdict): ReceiptVerification {
   const exit = verdict.exit_code;
   return {
     receipt_id: null,
-    binding: { verified: exit === 0, expected: null, recomputed: null, matches: exit === 0, covers: [] },
-    issuer_signature: { checked: true, valid: exit === 0, reason: verdict.reason ?? undefined },
+    binding: { verified: false, expected: null, recomputed: null, matches: false, covers: [] },
+    issuer_signature: { checked: false, valid: false, reason: 'bind-v1 not implemented' },
     payer: { checked: exit === 0, valid: exit === 0, outcome: exit === 0 ? 'pass' : exit === 1 ? 'fail' : 'unchecked' },
     nullifier: { verified: false, nullifier: null, anchored: null },
     output_hash: null,

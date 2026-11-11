@@ -178,6 +178,10 @@ export interface V13World {
   /** v0 reverts retired(); that is not retired. */
   ownRetired?: 'no' | 'successor_unreadable';
   rpcReason?: string | null;
+  /** Set when genesisHourStart or retired() could not be read. A revert is not this. */
+  getterReason?: string | null;
+  /** The rotation log answer was not an array, so a sender change could not be checked. */
+  rotationUnreadable?: boolean;
   payment: PaymentView | null;
   canonical: 'ok' | 'unreachable' | 'unknown_block' | 'not_final' | 'reorged' | 'finality_unavailable';
 }
@@ -682,7 +686,8 @@ export function classifyCanonical(input: {
   if (!input.block) return 'unknown_block';
   if (input.finalizedNumber == null) return 'finality_unavailable';
   if (input.block.number > input.finalizedNumber) return 'not_final';
-  if (!input.canonicalHash || input.canonicalHash.toLowerCase() !== input.block.hash.toLowerCase()) return 'reorged';
+  if (!input.canonicalHash) return 'unreachable';
+  if (input.canonicalHash.toLowerCase() !== input.block.hash.toLowerCase()) return 'reorged';
   if (input.block.hash.toLowerCase() !== input.wantHash.toLowerCase()) return 'reorged';
   return 'ok';
 }
@@ -695,7 +700,7 @@ function padWord(value: bigint): string {
   return `0x${value.toString(16).padStart(64, '0')}`;
 }
 
-export function paymentStatus(line: LineView, payment: PaymentView): 'wrong_block_hash' | 'payment_mismatch' | 'ok' {
+export function paymentStatus(line: LineView, payment: PaymentView): 'wrong_block_hash' | 'payment_mismatch' | 'payment_unchecked' | 'ok' {
   if (payment.blockHash.toLowerCase() !== line.blockHash.toLowerCase()) return 'wrong_block_hash';
   if (!payment.txIndexMatch) return 'payment_mismatch';
   const usdc = usdcFor(line.chainId);
@@ -720,7 +725,8 @@ export function paymentStatus(line: LineView, payment: PaymentView): 'wrong_bloc
     return 'ok';
   }
   if (line.method === METHOD_PERMIT2) {
-    if (!payment.txTo || payment.txTo.toLowerCase() !== PERMIT2_ADDRESS) return 'payment_mismatch';
+    if (!payment.txTo) return 'payment_unchecked';
+    if (payment.txTo.toLowerCase() !== PERMIT2_ADDRESS) return 'payment_mismatch';
     const body = (payment.input.startsWith('0x') ? payment.input.slice(2) : payment.input).toLowerCase();
     if (!body.startsWith(PERMIT2_SELECTOR.slice(2))) return 'payment_mismatch';
     if (body.length < 8 + 64 * 7) return 'payment_mismatch';
@@ -781,6 +787,8 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (!pin) return fail(2, 'contract_not_pinned', world, { anchor: 'could_not_check' }, messageOf('contract_not_pinned'));
   if (!world.rpcConfigured) return fail(2, 'rpc_unconfigured', world, { anchor: 'could_not_check' }, messageOf('rpc_unconfigured'));
   if (world.rpcReason === 'rpc_disagreement') return fail(2, 'rpc_disagreement', world, { anchor: 'could_not_check' }, messageOf('rpc_disagreement'));
+  if (world.getterReason === 'rpc_disagreement') return fail(2, world.getterReason, world, { anchor: 'could_not_check' }, messageOf(world.getterReason));
+  if (world.getterReason) return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
   if (world.canonical === 'unreachable') return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
   if (world.finalizedNumber == null) return fail(2, 'finality_unavailable', world, { anchor: 'could_not_check' }, messageOf('finality_unavailable'));
   const mine = world.events.filter((event) => event.address.toLowerCase() === parsed.receipt.contract);
@@ -818,6 +826,9 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   const sender = trustedSender(pin, world.rotatedTo);
   if (!world.anchorFrom || !world.anchorTo || world.anchorFrom.toLowerCase() !== sender.toLowerCase() || world.anchorTo.toLowerCase() !== pin.address) {
     if (!world.anchorFrom || !world.anchorTo) {
+      return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
+    }
+    if (world.rotationUnreadable) {
       return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
     }
     if (world.anchorTo.toLowerCase() === pin.address && world.rotationExplains === true) {
@@ -860,6 +871,9 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
     : proved === false
       ? { ok: false, reason: 'state_unproven', exit: 2 as 0 | 1 | 2 }
       : { ok: proved.ok, reason: proved.reason, exit: proved.exit ?? (proved.ok ? 0 : 2) };
+  if (!proof.ok && !hourly && proof.exit === 1) {
+    return fail(2, 'pending_hourly_close', world, { log_inclusion: 'could_not_check' }, messageOf('pending_hourly_close'));
+  }
   if (!proof.ok && proof.exit === 1) {
     return fail(1, proof.reason || 'not_in_state', world, { log_inclusion: 'fail' }, messageOf(proof.reason || 'not_in_state'));
   }
@@ -873,6 +887,7 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (!world.payment) return fail(2, 'rpc_unreachable', world, { payment_binding: 'could_not_check' }, messageOf('rpc_unreachable'));
   const paid = paymentStatus(world.line, world.payment);
   if (paid === 'wrong_block_hash') return fail(1, 'wrong_block_hash', world, { payment_binding: 'fail' }, messageOf('wrong_block_hash'));
+  if (paid === 'payment_unchecked') return fail(2, 'rpc_unreachable', world, { payment_binding: 'could_not_check' }, messageOf('rpc_unreachable'));
   if (paid !== 'ok') return fail(1, 'payment_mismatch', world, { payment_binding: 'fail' }, messageOf('payment_mismatch'));
   return {
     exit: 0,
@@ -881,12 +896,21 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
     prints: [
       'payment: chain-proven',
       'committed by payer, not attested by seller',
+      'request binding: not checked (bind-v1 not implemented)',
+      'content: UNVERIFIED',
       'uniqueness: see statement',
       `hour: ${hour}`,
       `window: [${world.line.blockNumber}, ${head.blockNumber}]`,
     ],
     liveExtension: world.liveExtension,
-    checks: PASS,
+    checks: {
+      signature: 'could_not_check',
+      key_window: 'pass',
+      payment_binding: 'pass',
+      log_inclusion: 'pass',
+      anchor: 'pass',
+      shape: 'pass',
+    },
     history: world.history,
     hourStart: hour,
     anchorBlock: head.blockNumber,

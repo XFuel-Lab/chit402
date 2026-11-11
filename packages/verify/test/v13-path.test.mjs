@@ -632,11 +632,15 @@ test('a hourly receipt verifies and --json names the unaudited anchor', async ()
     return out;
   });
   assert.equal(verdict.verdict.exit_code, 0, JSON.stringify(verdict.verdict));
+  assert.equal(verdict.lines[0], 'PAYMENT PROVEN');
   assert.equal(verdict.verdict.message, 'PAYMENT PROVEN');
   assert.equal(verdict.verdict.message.includes('not attested'), false);
+  assert.equal(verdict.verdict.checks.signature, 'could_not_check');
   assert.equal(verdict.verdict.notes[0], UNAUDITED_NOTE);
   assert.ok(verdict.verdict.prints.includes('payment: chain-proven'));
   assert.ok(verdict.verdict.prints.includes('committed by payer, not attested by seller'));
+  assert.ok(verdict.verdict.prints.includes('request binding: not checked (bind-v1 not implemented)'));
+  assert.ok(verdict.verdict.prints.includes('content: UNVERIFIED'));
   assert.equal(verdict.verdict.result, 'verified');
 });
 
@@ -724,7 +728,7 @@ test('a receipt hour outside coverage is exit 1', async () => {
   assert.equal(out.verdict.reason, 'hour_outside_coverage');
 });
 
-test('fast carried root proves or stays pending, and a hourly root can be unproven', async () => {
+test('a fast root proves when the slot is present, and stays pending until the hourly close', async () => {
   const key = makeKey();
   const built = signedLine();
   const doc = bundleFor(key);
@@ -741,8 +745,8 @@ test('fast carried root proves or stays pending, and a hourly root can be unprov
     checkReceiptInput(JSON.stringify(v13Receipt(built)), optionsFor(key, doc, server.url))
   ));
   assert.equal(a.verdict.exit_code, 0, a.verdict.reason);
-  assert.equal(b.verdict.exit_code, 1);
-  assert.equal(b.verdict.reason, 'not_in_state');
+  assert.equal(b.verdict.exit_code, 2);
+  assert.equal(b.verdict.reason, 'pending_hourly_close');
   assert.equal(c.verdict.exit_code, 1);
   assert.equal(c.verdict.reason, 'not_in_state');
 });
@@ -963,7 +967,10 @@ function sceneHandler(s) {
     if (method === 'eth_getBlockByNumber' && params[0] === 'finalized') {
       return { number: `0x${FIN.toString(16)}`, hash: `0x${'ab'.repeat(32)}` };
     }
-    if (method === 'eth_getLogs') return logsFor(s, params[0]?.topics ?? []);
+    if (method === 'eth_getLogs') {
+      if (s.nullRotation && params[0]?.topics?.[0] === ROTATION_TOPIC0) return null;
+      return logsFor(s, params[0]?.topics ?? []);
+    }
     if (method === 'eth_getTransactionReceipt' && params[0] === anchorTx) {
       if (s.anchorReceiptNull) return null;
       return {
@@ -977,6 +984,7 @@ function sceneHandler(s) {
     }
     if (method === 'eth_getCode') return s.code ?? CODE;
     if (method === 'eth_call') {
+      if (s.genesisDisagree && second && params[0]?.data === '0x014af0c4') return `0x${word(1)}`;
       if (params[0]?.data === '0x2eb38ae0' && s.retired) return `0x${word(1)}`;
       return { error: 'execution reverted' };
     }
@@ -987,6 +995,7 @@ function sceneHandler(s) {
         transactions: s.txs ?? [txHash],
       };
     }
+    if (s.nullCanonical && method === 'eth_getBlockByNumber' && params[0] === (s.payBlockNumber ?? '0x64')) return null;
     if (method === 'eth_getBlockByNumber' && params[0] === (s.payBlockNumber ?? '0x64')) {
       const hash = s.sameWrong ? `0x${'12'.repeat(32)}` : (s.reorg ? `0x${'99'.repeat(32)}` : payHash);
       return { number: s.payBlockNumber ?? '0x64', hash };
@@ -1019,7 +1028,10 @@ function sceneHandler(s) {
         ],
       };
     }
-    if (method === 'eth_getTransactionByHash') return { to: s.txTo ?? USDC, input: s.input ?? '0x' };
+    if (method === 'eth_getTransactionByHash') {
+      if (s.nullTx) return null;
+      return { to: s.txTo ?? USDC, input: s.input ?? '0x' };
+    }
     return null;
   };
   return { h, calls };
@@ -1986,8 +1998,8 @@ test('D16 and D17 the hourly close is the finalized boundary', async () => {
   const fast = okLog(built, { kind: 1, stateRoot: '00'.repeat(32), block: FIN });
   const hourly = okLog(built, { epoch: 2, kind: 0, size: 2, block: FIN + 1 });
   const pending = await runScene({ payment: built.payment, logs: [fast, hourly] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(pending.v.exit_code, 1);
-  assert.equal(pending.v.reason, 'not_in_state');
+  assert.equal(pending.v.exit_code, 2);
+  assert.equal(pending.v.reason, 'pending_hourly_close');
   const landed = okLog(built, { epoch: 2, kind: 0, size: 2, block: FIN });
   const final = await runScene({ payment: built.payment, logs: [okLog(built, { kind: 1, stateRoot: '00'.repeat(32), block: FIN - 1 }), landed] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(final.v.exit_code, 0, final.v.reason);
@@ -2022,6 +2034,10 @@ test('D24 the library maps exit 0 and cannot add a pin', async () => {
     const good = await verifyReceipt(v13Receipt(built), optionsFor(key, doc, server.url));
     assert.equal(good.verdict.exit_code, 0);
     assert.equal(good.overall, 'verified');
+    assert.equal(good.verdict.checks.signature, 'could_not_check');
+    assert.equal(good.issuer_signature.checked, false);
+    assert.equal(good.issuer_signature.valid, false);
+    assert.equal(good.binding.verified, false);
     const shape = await verifyReceipt({ ...v13Receipt(built), size: 9 }, optionsFor(key, doc, server.url));
     assert.equal(shape.verdict.exit_code, 1);
     assert.equal(shape.overall, 'failed');
@@ -2101,7 +2117,7 @@ test('two key records in one leaf are ambiguous', async () => {
   assert.equal(seen.v.exit_code, 0, seen.v.reason);
 });
 
-test('an absent slot with a matching proof is payment proven', async () => {
+test('a missing slot value does not prove payment', async () => {
   const key = makeKey();
   const built = signedLine();
   const doc = bundleFor(key);
@@ -2112,8 +2128,8 @@ test('an absent slot with a matching proof is payment proven', async () => {
     v13Receipt(built, { fields: { slotValue: undefined, slotProof: '00'.repeat(32), keySlotProof: '00'.repeat(32) } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 0, seen.v.reason);
-  assert.equal(seen.v.message, 'PAYMENT PROVEN');
+  assert.notEqual(seen.v.exit_code, 0, seen.v.reason);
+  assert.equal(seen.v.reason, 'not_in_state');
 });
 
 test('an expired key is refused', async () => {
@@ -2249,6 +2265,7 @@ test('one answering RPC is not enough', async () => {
   const doc = bundleFor(key);
   const seen = await runScene({ payment: built.payment, logs: [okLog(built)], failSecond: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.equal(seen.v.reason, 'rpc_unreachable');
 });
 
 test('a signed domain with the wrong name is refused', async () => {
@@ -2357,24 +2374,150 @@ test('algorithm 0 is required and a nonzero sigma byte is not a core receipt', a
   assert.equal(byteSeen.v.reason, 'sigma_not_core');
 });
 
-test('a receipt with no seller key and no slot key cannot check state', async () => {
+test('the slot key is derived from payTo, and a caller key that differs does not verify', async () => {
   const key = makeKey();
   const built = signedLine();
   const doc = bundleFor(key);
   const noKey = await runScene(
     { payment: built.payment, logs: [okLog(built)] },
-    v13Receipt(built, { fields: { keySlotProof: undefined, keySlotValue: undefined, signedDomain: undefined } }),
+    v13Receipt(built, { fields: { slotKey: undefined, keySlotProof: undefined, keySlotValue: undefined, signedDomain: undefined } }),
     (u) => optionsFor(key, doc, u),
   );
   assert.equal(noKey.v.exit_code, 0, noKey.v.reason);
   assert.equal(noKey.v.message, 'PAYMENT PROVEN');
-  const noSlot = await runScene(
+  const flipped = `${built.slotKey.slice(0, -2)}${built.slotKey.endsWith('00') ? 'ff' : '00'}`;
+  const wrong = await runScene(
     { payment: built.payment, logs: [okLog(built)] },
-    v13Receipt(built, { fields: { slotKey: undefined } }),
+    v13Receipt(built, { fields: { slotKey: flipped } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(noSlot.v.exit_code, 2, noSlot.v.reason);
-  assert.equal(noSlot.v.reason, 'state_unproven');
+  assert.notEqual(wrong.v.exit_code, 0, wrong.v.reason);
+  assert.equal(wrong.v.reason, 'not_in_state');
+  const short = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { slotProof: '' } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(short.v.exit_code, 2, short.v.reason);
+  assert.equal(short.v.reason, 'state_unproven');
+});
+
+test('an empty slot value is not a membership', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const pay = slotKey({ kind: 1, chainId: 84532, id: built.payment.to });
+  const tree = treeOf([{ key: pay.bytes, value: Buffer.alloc(0) }]);
+  const next = {
+    ...built,
+    slotValue: '',
+    stateRoot: hexOf(tree.root),
+    slotProof: hexProof(tree.proof(pay.bytes)),
+  };
+  const seen = await runScene({ payment: built.payment, logs: [okLog(next)] }, v13Receipt(next), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'not_in_state');
+});
+
+test('the last sigma byte is part of the core zero check', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const line = Buffer.from(built.line);
+  line[LAYOUT.sigma + LAYOUT.sigmaBytes - 1] = 1;
+  const leaf = hexOf(leafHash(line).hash);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built, { root: leaf })] },
+    { ...v13Receipt(built), line: hexOf(line) },
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'sigma_not_core');
+});
+
+test('genesisHourStart disagreement is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], genesisDisagree: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.equal(seen.v.reason, 'rpc_disagreement');
+});
+
+test('a null canonical block is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], nullCanonical: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.notEqual(seen.v.reason, 'reorged');
+});
+
+test('a missing rotation answer is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    anchorFrom: OTHER,
+    nullRotation: true,
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2, seen.v.reason);
+  assert.notEqual(seen.v.reason, 'anchor_sender_mismatch');
+});
+
+function permitInput(payment, over = {}) {
+  const pad = (value) => value.replace(/^0x/, '').padStart(64, '0');
+  const amount = BigInt(over.amount ?? payment.value).toString(16).padStart(64, '0');
+  const token = USDC.slice(2).padStart(64, '0');
+  const nonce = pad(over.nonce ?? payment.nonce);
+  const owner = pad(over.owner ?? payment.from);
+  const zero = '0'.repeat(64);
+  return `0x30f28b7a${token}${amount}${nonce}${zero}${zero}${zero}${owner}`;
+}
+
+test('Permit2 owner, amount, and nonce are bound, and a missing transaction is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine({ method: 2 });
+  const doc = bundleFor(key);
+  const good = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    txTo: '0x000000000022d473030f116ddee9f6b43ac78ba3',
+    input: permitInput(built.payment),
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(good.v.exit_code, 0, good.v.reason);
+  const owner = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    txTo: '0x000000000022d473030f116ddee9f6b43ac78ba3',
+    input: permitInput(built.payment, { owner: 'ab'.repeat(20) }),
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(owner.v.exit_code, 1, owner.v.reason);
+  assert.equal(owner.v.reason, 'payment_mismatch');
+  const amount = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    txTo: '0x000000000022d473030f116ddee9f6b43ac78ba3',
+    input: permitInput(built.payment, { amount: 1n }),
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(amount.v.exit_code, 1);
+  const nonce = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    txTo: '0x000000000022d473030f116ddee9f6b43ac78ba3',
+    input: permitInput(built.payment, { nonce: '12'.repeat(32) }),
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(nonce.v.exit_code, 1);
+  const missing = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    nullTx: true,
+    input: permitInput(built.payment),
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(missing.v.exit_code, 2, missing.v.reason);
+  assert.notEqual(missing.v.reason, 'payment_mismatch');
 });
 
 test('one repeated RPC URL is not two endpoints', async () => {
