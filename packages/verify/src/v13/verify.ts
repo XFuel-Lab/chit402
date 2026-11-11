@@ -21,17 +21,6 @@ import { readTestSnapshot } from '../internal/test-seam.js';
 import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
-import { verifySlot, type VerifySlotInput } from './slot.js';
-import { blankHash, verifyStateProof } from './state-proof.js';
-import {
-  KEY_STATUS_SCHEMA,
-  cachedAdmission,
-  clearAdmissionCache,
-  keySlotKey,
-  keyStatus,
-  parseKeyHash,
-  parsePayToSlot,
-} from './key-record.js';
 import {
   ANCHORED_TOPIC0,
   UNAUDITED_NOTE,
@@ -83,7 +72,16 @@ type LineModule = {
   stateNode: (left: Uint8Array, right: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   emptyHash: (depth: number) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   isAllowedAlg: (alg: number) => boolean;
-  LAYOUT: { sigma: number };
+  LAYOUT: { sigma: number; sigmaBytes: number };
+};
+
+type SmtModule = {
+  verifyProof: (
+    key: Uint8Array,
+    value: Uint8Array | null,
+    proof: Uint8Array,
+    root: Uint8Array,
+  ) => { ok: boolean; reason?: string };
 };
 
 type EipModule = {
@@ -110,14 +108,16 @@ let cores: {
   keccak: (message: Uint8Array) => Uint8Array;
   sha256: (message: Uint8Array) => Uint8Array;
   eip: EipModule;
+  smt: SmtModule;
 } | null = null;
 
 async function loadCores() {
   if (cores) return cores;
   const root = pathToFileURL(join(dirname(__filename), '../../vendor/cs2-core/')).href;
-  const [merkle, line, curves, recover, bytes, keccakMod, shaMod, eip, address] = await Promise.all([
+  const [merkle, line, smt, curves, recover, bytes, keccakMod, shaMod, eip, address] = await Promise.all([
     import(new URL('merkle/index.js', root).href),
     import(new URL('line/index.mjs', root).href),
+    import(new URL('smt/tree.mjs', root).href),
     import(new URL('ecdsa/curves.js', root).href),
     import(new URL('ecdsa/recover.js', root).href),
     import(new URL('ecdsa/bytes.js', root).href),
@@ -141,6 +141,7 @@ async function loadCores() {
     keccak: (keccakMod as { keccak256: (message: Uint8Array) => Uint8Array }).keccak256,
     sha256: (shaMod as { sha256: (message: Uint8Array) => Uint8Array }).sha256,
     eip: eip as EipModule,
+    smt: smt as SmtModule,
   };
   return cores;
 }
@@ -300,14 +301,6 @@ function lineView(decoded: { payment: Record<string, unknown> }, bytes: Uint8Arr
   };
 }
 
-function foldProof(line: LineModule, leaf: Uint8Array, slotKeyBytes: Uint8Array, proof: Uint8Array, stateRoot: string): boolean {
-  return verifyStateProof(line, leaf, slotKeyBytes, proof, stateRoot);
-}
-
-function blankLeaf(line: LineModule): Uint8Array | null {
-  return blankHash(line, 0);
-}
-
 const LOW_SIGMA = (() => {
   const bytes = new Uint8Array(64);
   bytes[31] = 1;
@@ -315,235 +308,42 @@ const LOW_SIGMA = (() => {
   return bytes;
 })();
 
-function proveKey(
-  line: LineModule,
-  view: LineView,
-  slotValue: Uint8Array | null,
-  slotProof: Uint8Array,
-  keySlotProof: Uint8Array,
-  priorSlotProof: Uint8Array,
-  priorKeyProof: Uint8Array,
-  keySlotValue: Uint8Array | null,
-  slotInput: VerifySlotInput,
-  crypto: {
-    sha256: (message: Uint8Array) => Uint8Array;
-    eip: EipModule;
-    ecdsa: EcdsaModule;
-  },
-  hours: {
-    receiptHour: number | null;
-    admissionBlock: number | null;
-    priorAnchor: number;
-    anchor: number;
-    priorRoot: string | null;
-  },
-) {
-  clearAdmissionCache();
-  return (stateRoot: string): boolean | { ok: boolean; reason: string | null; exit?: 1 | 2 } => {
-    const judged = verifySlot({
-      chainId: slotInput.chainId,
-      admitting: slotInput.admitting,
-      signedDomain: slotInput.signedDomain,
-      admissionBlock: null,
-      previousAnchorBlock: null,
-      showingAnchorBlock: null,
-      paymentBlock: slotInput.paymentBlock,
-    });
-    if (judged.reason === 'domain_mismatch') return { ok: false, reason: 'domain_mismatch', exit: 1 };
-    if (judged.reason) return { ok: false, reason: judged.reason === 'domain_unsigned' ? 'domain_unsigned' : null, exit: judged.reason === 'domain_unsigned' ? 1 : 2 };
-    if (!slotValue) {
-      const emptySlot = line.slotKey({ kind: 1, chainId: view.chainId, id: view.to.slice(2) });
-      const emptyLeafBytes = blankLeaf(line);
-      const emptyShown = Boolean(emptySlot.ok && emptyLeafBytes && foldProof(line, emptyLeafBytes, emptySlot.bytes, slotProof, stateRoot));
-      if (!emptyShown) return { ok: false, reason: null, exit: 2 };
-      return { ok: false, reason: 'unregistered', exit: 1 };
-    }
-    if (!slotValue || slotValue.length <= 33) return { ok: false, reason: 'bare_key', exit: 1 };
-    const parsed = parsePayToSlot(slotValue);
-    if (!parsed.ok) return { ok: false, reason: null };
-    const sellerKey = parsed.key;
-    const expiry = parsed.expiry;
-    const point = crypto.eip.canonicalKey(0x01, sellerKey);
-    if (!point.ok) return { ok: false, reason: null };
-    const seller = createRequire(__filename)('../../../chit-seller/eip712.mjs') as {
-      hashChit: (primary: string, message: Record<string, unknown>, chainId: bigint, verifyingContract: string) => { ok: true; bytes: Uint8Array } | { ok: false };
-    };
-    const contract = (slotInput.admitting ?? '').replace(/^0x/, '');
-    const digest = seller.hashChit('PayToControl', {
-      payTo: view.to.replace(/^0x/, ''),
-      keyAlg: 1,
-      key: sellerKey,
-      expiry,
-    }, BigInt(view.chainId), contract);
-    if (!digest.ok) return { ok: false, reason: null };
-    const yParity = parsed.payToSignature[64];
-    const r = crypto.ecdsa.bytesToBig(parsed.payToSignature.subarray(0, 32));
-    const s = crypto.ecdsa.bytesToBig(parsed.payToSignature.subarray(32, 64));
-    const order = crypto.ecdsa.SECP256K1.order;
-    if (yParity !== 0 && yParity !== 1) return { ok: false, reason: null };
-    if (r <= 0n || r >= order || s <= 0n || s > (order >> 1n)) return { ok: false, reason: null };
-    const recovered = crypto.ecdsa.recoverPublicKey(
-      digest.bytes,
-      parsed.payToSignature.subarray(0, 32),
-      parsed.payToSignature.subarray(32, 64),
-      yParity,
-      crypto.ecdsa.SECP256K1,
-    );
-    if (!recovered) return { ok: false, reason: null };
-    const signer = crypto.ecdsa.ethereumAddress(recovered).toLowerCase();
-    if (signer !== view.to.toLowerCase()) return { ok: false, reason: null };
-    const popOk = crypto.eip.verifyPossession(digest.bytes, point.uncompressed, parsed.pop).ok;
-    if (!popOk || !point.ok) return { ok: false, reason: 'possession_invalid', exit: 1 };
-    const hashed = crypto.eip.keyHash(0x01, sellerKey);
-    const keyHash = hashed.ok ? parseKeyHash(`0x${hashed.hex}`) : null;
-    const derivedSlot = keyHash ? keySlotKey(view.chainId, keyHash, crypto.sha256) : null;
-    if (!keyHash || !derivedSlot) return { ok: false, reason: null };
-    const paySlot = line.slotKey({ kind: 1, chainId: view.chainId, id: view.to.slice(2) });
-    if (!paySlot.ok) return { ok: false, reason: null };
-    const keyValue = keySlotValue && keySlotValue.length > 0 ? keySlotValue : new Uint8Array(0);
-    const payLeaf = line.stateLeaf(paySlot.bytes, slotValue);
-    const absent = blankLeaf(line);
-    const keyLeaf = keyValue.length > 0
-      ? line.stateLeaf(derivedSlot, keyValue)
-      : (absent ? { ok: true as const, bytes: absent } : { ok: false as const, reason: 'bad_depth' });
-    if (!payLeaf.ok || !keyLeaf.ok) return { ok: false, reason: null };
-    if (!foldProof(line, payLeaf.bytes, paySlot.bytes, slotProof, stateRoot)) return { ok: false, reason: null, exit: 2 };
-    if (!foldProof(line, keyLeaf.bytes, derivedSlot, keySlotProof, stateRoot)) return { ok: false, reason: null, exit: 2 };
-    const memberAtEpoch = payLeaf.ok && keyLeaf.ok;
-    const priorRoot = hours.priorRoot;
-    const absentLeaf = blankLeaf(line);
-    const priorPay = absentLeaf ? { ok: true as const, bytes: absentLeaf } : { ok: false as const };
-    const priorKey = priorPay;
-    if (!priorPay.ok || !priorKey.ok || priorRoot == null) return { ok: false, reason: null, exit: 2 };
-    const absentPay = foldProof(line, priorPay.bytes, paySlot.bytes, priorSlotProof, priorRoot);
-    const absentKey = foldProof(line, priorKey.bytes, derivedSlot, priorKeyProof, priorRoot);
-    const absentAtPrior = absentPay && absentKey;
-    if (!absentAtPrior || hours.admissionBlock == null) return { ok: false, reason: null, exit: 2 };
-    let tombstone: { revokedAtBlock: number; outOfBounds: boolean; signatureOk: boolean } | null = null;
-    if (keyValue.length > 0) {
-      if (keyValue.length !== 8 + 8 + 8 + 64) return { ok: false, reason: null, exit: 2 };
-      const tomb = readTombstone(keyValue);
-      if (!tomb) return { ok: false, reason: null, exit: 2 };
-      const revoke = seller.hashChit('RevokeByKey', { keyHash: keyHash }, BigInt(view.chainId), contract);
-      let signatureOk = false;
-      if (revoke.ok && crypto.eip.checkSigma(tomb.signature).ok) {
-        try {
-          crypto.ecdsa.yParityByTrial(revoke.bytes, tomb.signature, point.uncompressed, crypto.ecdsa.P256);
-          signatureOk = tomb.prev < tomb.at && tomb.at <= tomb.show;
-        } catch {
-          signatureOk = false;
-        }
-      }
-      tombstone = {
-        revokedAtBlock: tomb.at,
-        outOfBounds: !(tomb.prev < tomb.at && tomb.at <= tomb.show),
-        signatureOk,
-      };
-    }
-    const admitted = cachedAdmission({
-      slotKey: bytesToHex(paySlot.bytes),
-      seq: 0,
-      absentAtPrior,
-      emptySlotAtPrior: absentAtPrior,
-      memberAtEpoch,
-      priorAnchor: hours.priorAnchor,
-      anchor: hours.anchor,
-      block: hours.admissionBlock,
-    });
-    if (!admitted.ok || hours.receiptHour == null) return { ok: false, reason: null, exit: 2 };
-    const recordedBlock = admitted.ok ? admitted.block : hours.anchor;
-    if (recordedBlock == null) return { ok: false, reason: null, exit: 2 };
-    const status = keyStatus({
-      schema: KEY_STATUS_SCHEMA,
-      block: view.blockNumber,
-      hourStart: hours.receiptHour,
-      stateRoot,
-      sigmaKey: sellerKey,
-      chainId: view.chainId,
-      sha256: crypto.sha256,
-      bundleKeySlot: derivedSlot,
-      payToProof: { siblings: ['present'], root: stateRoot },
-      keyProof: { siblings: ['present'], root: stateRoot },
-      keyLeaf: tombstone ? null : 'empty',
-      registration: {
-        admissionBlock: recordedBlock,
-        expiry,
-        payToSignature: parsed.payToSignature,
-        keySignature: parsed.pop,
-        popOk,
-      },
-      slotRevokeBlock: null,
-      tombstone,
-      registrationKeyHash: keyHash,
-      admission: {
-        absentAtPrior,
-        emptySlotAtPrior: absentAtPrior,
-        memberAtEpoch,
-        priorAnchor: hours.priorAnchor,
-        anchor: hours.anchor,
-        block: recordedBlock,
-      },
-    });
-    if (status.exit !== 0) {
-      const exit: 1 | 2 = status.exit === 1 ? 1 : 2;
-      return { ok: false, reason: exit === 1 ? status.reason : null, exit };
-    }
-    return { ok: true, reason: null };
-  };
-}
-
-function readTombstone(bytes: Uint8Array): { at: number; prev: number; show: number; signature: Uint8Array } | null {
-  if (bytes.length !== 8 + 8 + 8 + 64) return null;
-  const word = (off: number) => {
-    let value = 0n;
-    for (let i = 0; i < 8; i += 1) value = (value << 8n) | BigInt(bytes[off + i]);
-    if (value > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-    return Number(value);
-  };
-  const at = word(0);
-  const prev = word(8);
-  const show = word(16);
-  if (at == null || prev == null || show == null) return null;
-  return { at, prev, show, signature: bytes.subarray(24) };
+function coreSigma(line: LineModule, bytes: Uint8Array): boolean {
+  const at = line.LAYOUT.sigma;
+  const n = line.LAYOUT.sigmaBytes;
+  if (bytes.length < at + n) return false;
+  if (bytes[at] !== 0) return false;
+  for (let i = 1; i < n; i += 1) {
+    if (bytes[at + i] !== 0) return false;
+  }
+  return true;
 }
 
 function patchedSigma(line: LineModule, bytes: Uint8Array): Uint8Array {
   const patched = new Uint8Array(bytes);
+  patched[line.LAYOUT.sigma] = 1;
   patched.set(LOW_SIGMA, line.LAYOUT.sigma + 1);
   return patched;
 }
 
-function sigmaSlice(line: LineModule, bytes: Uint8Array): Uint8Array | null {
-  const start = line.LAYOUT.sigma + 1;
-  if (bytes.length < start + 64) return null;
-  return bytes.subarray(start, start + 64);
+function stateOk(
+  smt: SmtModule,
+  slotKey: Uint8Array,
+  slotValue: Uint8Array | null,
+  slotProof: Uint8Array,
+) {
+  return (stateRoot: string): { ok: boolean; reason: string | null; exit?: 1 | 2 } => {
+    if (slotKey.length !== 32 || slotProof.length < 32) {
+      return { ok: false, reason: 'state_unproven', exit: 2 };
+    }
+    const root = hexToBytes(stateRoot);
+    if (!root || root.length !== 32) return { ok: false, reason: 'state_unproven', exit: 2 };
+    const checked = smt.verifyProof(slotKey, slotValue, slotProof, root);
+    if (!checked.ok) return { ok: false, reason: 'not_in_state', exit: 1 };
+    return { ok: true, reason: null };
+  };
 }
 
-function commitmentsOf(line: LineModule, bytes: Uint8Array) {
-  const opened = line.commitments(bytes);
-  if (opened.ok || opened.reason !== 'bad_sigma') return opened;
-  const patched = new Uint8Array(bytes);
-  patched.set(LOW_SIGMA, line.LAYOUT.sigma + 1);
-  return line.commitments(patched);
-}
-
-function sigmaOk(line: LineModule, ecdsa: EcdsaModule, eip: EipModule, bytes: Uint8Array, slotValue: Uint8Array | null): boolean {
-  if (!slotValue || slotValue.length < 33) return false;
-  const sigma = sigmaSlice(line, bytes);
-  if (!sigma) return false;
-  const decoded = { sigma: { sigma } };
-  if (!eip.checkSigma(decoded.sigma.sigma).ok) return false;
-  const opened = commitmentsOf(line, bytes);
-  if (!opened.ok) return false;
-  const point = eip.canonicalKey(0x01, slotValue.subarray(0, 33));
-  if (!point.ok) return false;
-  try {
-    ecdsa.yParityByTrial(opened.sigmaDigest, decoded.sigma.sigma, point.uncompressed, ecdsa.P256);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function readExtension(
   bundle: IssuerHistoryDocument,
@@ -779,14 +579,15 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   let lineReason: string | null = null;
   if (parsed.ok && loaded) {
     const bytes = hexToBytes(parsed.receipt.lineHex);
-    const decoded = bytes ? loaded.line.decodeLine(bytes) : { ok: false as const, reason: 'bad_line' };
-    const opened = !bytes || decoded.ok || decoded.reason !== 'bad_sigma'
-      ? decoded
-      : loaded.line.decodeLine(patchedSigma(loaded.line, bytes));
-    if (!bytes || !opened.ok) lineReason = 'bad_line';
+    if (!bytes) lineReason = 'bad_line';
+    else if (!coreSigma(loaded.line, bytes)) lineReason = 'sigma_not_core';
     else {
-      line = lineView(opened, bytes);
-      if (!line) lineReason = 'bad_line';
+      const decoded = loaded.line.decodeLine(patchedSigma(loaded.line, bytes));
+      if (!decoded.ok) lineReason = 'bad_line';
+      else {
+        line = lineView(decoded, bytes);
+        if (!line) lineReason = 'bad_line';
+      }
     }
   }
 
@@ -907,51 +708,10 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     canonical = 'unreachable';
   }
 
-  const slotValue = parsed.receipt.slotValue;
-  const slotProof = parsed.receipt.slotProof;
-  const keySlotProof = parsed.receipt.keySlotProof;
-  const receiptEvent = events.find((event) => event.epoch === BigInt(parsed.receipt.epoch));
-  const priorEvent = parsed.receipt.epoch > 0
-    ? events.find((event) => event.epoch === BigInt(parsed.receipt.epoch - 1))
-    : undefined;
-  const receiptHour = receiptEvent && receiptEvent.hourStart <= BigInt(Number.MAX_SAFE_INTEGER)
-    ? Number(receiptEvent.hourStart)
-    : null;
   const hooks = {
     leafHash: loaded.merkle.leafHash,
     verifyInclusion: loaded.merkle.verifyInclusion,
-    proveKey: proveKey(
-      loaded.line,
-      line,
-      slotValue,
-      slotProof,
-      keySlotProof,
-      parsed.receipt.priorSlotProof,
-      parsed.receipt.priorKeyProof,
-      parsed.receipt.keySlotValue,
-      {
-        chainId: line.chainId,
-        admitting: parsed.receipt.contract,
-        signedDomain: parsed.receipt.signedDomain,
-        admissionBlock: parsed.receipt.admissionBlock,
-        previousAnchorBlock: priorEvent ? priorEvent.blockNumber : 0,
-        showingAnchorBlock: receiptEvent ? receiptEvent.blockNumber : null,
-        paymentBlock: line.blockNumber,
-      },
-      {
-        sha256: loaded.sha256,
-        eip: loaded.eip,
-        ecdsa: loaded.ecdsa,
-      },
-      {
-        receiptHour,
-        admissionBlock: parsed.receipt.admissionBlock,
-        priorAnchor: priorEvent ? priorEvent.blockNumber : 0,
-        anchor: receiptEvent ? receiptEvent.blockNumber : 0,
-        priorRoot: priorEvent ? priorEvent.stateRoot : null,
-      },
-    ),
-    sigmaOk: () => sigmaOk(loaded.line, loaded.ecdsa, loaded.eip, line.bytes, slotValue),
+    stateOk: stateOk(loaded.smt, parsed.receipt.slotKey, parsed.receipt.slotValue, parsed.receipt.slotProof),
   };
   return verdictOf(runV13(receipt, blankWorld(history, {
     ...base,
@@ -976,8 +736,7 @@ function idleHooks() {
   return {
     leafHash: () => ({ ok: false as const, reason: 'bad_leaf' }),
     verifyInclusion: () => ({ ok: false }),
-    proveKey: () => false,
-    sigmaOk: () => false,
+    stateOk: () => ({ ok: false, reason: 'state_unproven', exit: 2 as const }),
   };
 }
 

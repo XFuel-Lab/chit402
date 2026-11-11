@@ -3,37 +3,39 @@
     "argv": ["npx", "tsc", "--pretty", "false", "--incremental", "false"]
   },
   "test": ["node", "--test", "--test-concurrency=1", "--test-skip-pattern=frozen|snapshot|digest|pin", "test/v13-path.test.mjs"],
+  "equivalents": [
+    {
+      "id": "M01",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "if (unique.length < 2)",
+      "note": "rpc() re-canonizes a list that rpcUrls already canonized and deduped. verify returns rpc_unconfigured before rpc() when fewer than two urls remain, and answers.length < 2 refuses a single success. unique.length is never 1 on a path the tests can reach, so < 2 and < 1 decide the same."
+    },
+    {
+      "id": "M10",
+      "file": "packages/verify/vendor/cs2-core/smt/tree.mjs",
+      "find": "const sibling = proof.subarray(start, start + 32);",
+      "note": "A sibling.length !== 32 check after this slice cannot fail. rest % 32 === 0 and listed === popcount(bitmap) already force each slice to be 32 bytes. The subarray is never null."
+    }
+  ],
   "mutants": [
-    {"id": "M01", "file": "packages/verify/src/v13/verify.ts", "find": "if (unique.length < 2)", "replace": "if (unique.length < 1)"},
     {"id": "M02", "file": "packages/verify/src/v13/verify.ts", "find": "if (answers.length < 2) {", "replace": "if (answers.length < 1) {"},
     {"id": "M03", "file": "packages/verify/src/v13/verify.ts", "find": "if (JSON.stringify(answer) !== first)", "replace": "if (false)"},
-    {"id": "M06", "file": "packages/verify/src/v13/state-proof.ts", "find": "const bit = (byte >> (7 - (i % 8))) & 1;", "replace": "const bit = (byte >> (i % 8)) & 1;"},
-    {"id": "M07", "file": "packages/verify/src/v13/verify.ts", "find": "if (!eip.checkSigma(decoded.sigma.sigma).ok)", "replace": "if (false)"},
-    {"id": "M10", "file": "packages/verify/src/v13/state-proof.ts", "find": "if (!sibling || sibling.length !== 32)", "replace": "if (!sibling)"},
     {"id": "M11", "file": "packages/verify/src/v13/verify.ts", "find": "rpcConfigured: urls.length >= 2,", "replace": "rpcConfigured: urls.length >= 1,"},
-    {"id": "M12", "file": "packages/verify/src/v13/verify.ts", "find": "if (code === 'rpc_disagreement')", "replace": "if (false)"},
+    {"id": "M12", "file": "packages/verify/src/v13/verify.ts", "find": "if (code === 'rpc_disagreement') rpcReason = 'rpc_disagreement';", "replace": "if (false) rpcReason = 'rpc_disagreement';"},
     {"id": "M15", "file": "packages/verify/src/v13/core/decide.ts", "find": "const stateRoot = hourly ? hourly.stateRoot : head.stateRoot;", "replace": "const stateRoot = head.stateRoot;"},
-    {"id": "M16", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!hooks.sigmaOk())", "replace": "if (false)"},
     {"id": "M17", "file": "packages/verify/src/v13/core/decide.ts", "find": "return fail(2, 'rpc_disagreement'", "replace": "return fail(1, 'rpc_disagreement'"},
-    {"id": "M18", "file": "packages/verify/src/v13/core/decide.ts", "find": "return fail(2, 'pending_hourly_close'", "replace": "return fail(1, 'pending_hourly_close'"},
-    {"id": "M09", "file": "packages/verify/src/v13/state-proof.ts", "find": "return bytesToHex(acc) === stateRoot.toLowerCase();", "replace": "return true;"},
-    {"id": "M05r", "file": "packages/verify/src/v13/verify.ts", "find": "if (judged.reason === 'domain_mismatch')", "replace": "if (false)"},
-    {"id": "M08r", "file": "packages/verify/src/v13/verify.ts", "find": "if (!popOk || !point.ok)", "replace": "if (false)"},
-    {"id": "M13r", "file": "packages/verify/src/v13/slot.ts", "find": "hourStart >= pin.retireHourStart", "replace": "hourStart > pin.retireHourStart"},
-    {"id": "M14r", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!proof.ok && !hourly) {", "replace": "if (!proof.ok && hourly) {"},
     {"id": "M19r", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (pin.retireHourStart != null && hourStart >= pin.retireHourStart)", "replace": "if (pin.retireHourStart != null && hourStart > pin.retireHourStart)"},
-    {"id": "N01", "file": "packages/verify/src/v13/verify.ts", "find": "if (!foldProof(line, payLeaf.bytes, paySlot.bytes, slotProof, stateRoot))", "replace": "if (false)"},
-    {"id": "N02", "file": "packages/verify/src/v13/verify.ts", "find": "if (!foldProof(line, keyLeaf.bytes, derivedSlot, keySlotProof, stateRoot))", "replace": "if (false)"},
-    {"id": "N03", "file": "packages/verify/src/v13/verify.ts", "find": "crypto.eip.verifyPossession(digest.bytes, point.uncompressed, parsed.pop).ok", "replace": "true"},
-    {"id": "N04", "file": "packages/verify/src/v13/verify.ts", "find": "if (!slotValue || slotValue.length <= 33)", "replace": "if (!slotValue)"},
+    {"id": "M13r", "file": "packages/verify/src/v13/slot.ts", "find": "hourStart >= pin.retireHourStart", "replace": "hourStart > pin.retireHourStart"},
     {"id": "N05", "file": "packages/verify/src/v13/verify.ts", "find": "return [...new Set(raw.map(canonRpc))];", "replace": "return [...new Set(raw)];"},
-    {"id": "N06", "file": "packages/verify/src/v13/verify.ts", "find": "if (!admitted.ok || hours.receiptHour == null)", "replace": "if (hours.receiptHour == null)"},
-    {"id": "N07", "file": "packages/verify/src/v13/verify.ts", "find": "if (status.exit !== 0)", "replace": "if (false)"},
-    {"id": "N08", "file": "packages/verify/src/v13/verify.ts", "find": "if (judged.reason)", "replace": "if (false)"},
-    {"id": "N09", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (proof.reason === 'domain_mismatch' || proof.reason === 'bare_key') {", "replace": "if (false) {"},
-    {"id": "N10", "file": "packages/verify/src/v13/slot.ts", "find": "|| input.signedDomain.name !== domain.name", "replace": "|| false"},
-    {"id": "N11", "file": "packages/verify/src/v13/key-record.ts", "find": "if (!reg || !reg.payToSignature || reg.payToSignature.length === 0)", "replace": "if (!reg)"},
-    {"id": "N12", "file": "packages/verify/src/v13/key-record.ts", "find": "if (!reg.keySignature || reg.keySignature.length !== 64 || !reg.popOk)", "replace": "if (!reg.keySignature)"},
-    {"id": "N13", "file": "packages/verify/src/v13/key-record.ts", "find": "if (!admittedProof.ok || admittedProof.block !== BigInt(reg.admissionBlock))", "replace": "if (!admittedProof.ok)"}
+    {"id": "C01", "file": "packages/verify/src/v13/verify.ts", "find": "if (bytes[at] !== 0) return false;", "replace": "if (false) return false;"},
+    {"id": "C02", "file": "packages/verify/src/v13/verify.ts", "find": "if (bytes[at + i] !== 0) return false;", "replace": "if (false) return false;"},
+    {"id": "C03", "file": "packages/verify/src/v13/verify.ts", "find": "if (!checked.ok) return { ok: false, reason: 'not_in_state', exit: 1 };", "replace": "if (false) return { ok: false, reason: 'not_in_state', exit: 1 };"},
+    {"id": "C04", "file": "packages/verify/src/v13/verify.ts", "find": "if (slotKey.length !== 32 || slotProof.length < 32)", "replace": "if (slotKey.length > 32 || slotProof.length < 32)"},
+    {"id": "C05", "file": "packages/verify/src/v13/core/decide.ts", "find": "message: 'PAYMENT PROVEN',", "replace": "message: 'Every check passed.',"},
+    {"id": "C06", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (paid !== 'ok') return fail(1, 'payment_mismatch'", "replace": "if (false) return fail(1, 'payment_mismatch'"},
+    {"id": "C07", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (world.lineReason === 'sigma_not_core')", "replace": "if (false)"},
+    {"id": "C08", "file": "packages/verify/src/v13/core/decide.ts", "find": "'committed by payer, not attested by seller',", "replace": "'payment: chain-proven',"},
+    {"id": "T01", "file": "packages/verify/vendor/cs2-core/smt/tree.mjs", "find": "return Math.floor(key[byteIndex] / mask) % 2;", "replace": "return 0;"},
+    {"id": "T02", "file": "packages/verify/vendor/cs2-core/smt/tree.mjs", "find": "if (!equalBytes(hash, root)) return { ok: false, reason: 'bad_proof' };", "replace": "if (false) return { ok: false, reason: 'bad_proof' };"}
   ]
 }

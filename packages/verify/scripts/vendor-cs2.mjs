@@ -15,6 +15,7 @@ const OUT = join(VERIFY, 'vendor', 'cs2-core');
 mkdirSync(join(OUT, 'merkle'), { recursive: true });
 mkdirSync(join(OUT, 'line'), { recursive: true });
 mkdirSync(join(OUT, 'ecdsa'), { recursive: true });
+mkdirSync(join(OUT, 'smt'), { recursive: true });
 
 function lf(text) {
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -82,6 +83,10 @@ line = mustReplace(
   'line sha256',
 );
 writeFileSync(join(OUT, 'line', 'index.mjs'), line);
+
+for (const name of ['tree.mjs', 'size.mjs']) {
+  writeFileSync(join(OUT, 'smt', name), lf(readFileSync(join(CORE, 'smt', name), 'utf8')));
+}
 
 for (const name of ['curves.js', 'recover.js', 'bytes.js', 'keccak.js', 'sign.js', 'address.js']) {
   cpSync(join(CORE, 'ecdsa', name), join(OUT, 'ecdsa', name));

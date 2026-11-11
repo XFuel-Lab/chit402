@@ -1,10 +1,9 @@
 /**
- * Adapter over the copied cs2-core EIP-712 module.
+ * Parked seller-key add-on. The core v13 path does not call this module.
+ * A missing payTo key is not a core failure and is not an unproven state.
  *
  * The registry, keyHash, admission, tombstone, range check, and key status
- * live in that module. This file maps the verifier's inputs onto those
- * functions and maps their results back onto the existing exit codes.
- * Drop the copy, and these imports, after #687 is on main.
+ * live in the copied module. This file maps inputs onto those functions.
  */
 
 import { createRequire } from 'node:module';

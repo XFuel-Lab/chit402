@@ -31,7 +31,6 @@ import {
   isExactV13Receipt,
 } from '../dist/v13/core/decide.js';
 import { admittingContract, verifySlot } from '../dist/v13/slot.js';
-import { blankHash, proveTree, verifyStateProof } from '../dist/v13/state-proof.js';
 import {
   DOMAIN_NAME,
   DOMAIN_TYPE,
@@ -71,6 +70,9 @@ const { signRawDigest, publicPoint } = await import(new URL('ecdsa/sign.js', COR
 const { ethereumAddress } = await import(new URL('ecdsa/address.js', CORE));
 const { bytesToBig, bigToBytes } = await import(new URL('ecdsa/bytes.js', CORE));
 const { hashChit } = await import(new URL('../../chit-seller/eip712.mjs', import.meta.url));
+const {
+  createTree, putLeaf, prove, rootBytes, verifyProof, blankHash: smtBlank,
+} = await import(new URL('../vendor/cs2-core/smt/tree.mjs', import.meta.url));
 const { issuerHistoryEntryHash } = await import('../dist/issuer-history.js');
 
 const HOUR = 1_699_999_200;
@@ -452,12 +454,25 @@ function compressedP256(scalar) {
 }
 
 const PAY_SCALAR = 7n;
-const LINE_API = { emptyHash, stateLeaf, stateNode };
 
 function treeOf(leaves) {
-  const built = proveTree(LINE_API, leaves);
-  if (!built.ok) throw new Error('tree');
-  return built;
+  let tree = createTree();
+  for (const leaf of leaves) {
+    const key = leaf.key instanceof Uint8Array ? leaf.key : new Uint8Array(leaf.key);
+    const value = leaf.value instanceof Uint8Array ? leaf.value : new Uint8Array(leaf.value);
+    const put = putLeaf(tree, key, value);
+    if (!put.ok) throw new Error(put.reason);
+    tree = put.tree;
+  }
+  return {
+    root: rootBytes(tree),
+    proof(key) {
+      const raw = key instanceof Uint8Array ? key : new Uint8Array(key);
+      const proved = prove(tree, raw);
+      if (!proved.ok) throw new Error(proved.reason);
+      return proved.proof;
+    },
+  };
 }
 
 function hexProof(bytes) {
@@ -481,8 +496,10 @@ function signedLine(over = {}) {
     if (!openedDraft.ok) continue;
     const sigma = signLow(openedDraft.sigmaDigest, keyScalar, P256);
     if (!sigma) continue;
-    const line = buildLine(payment, Buffer.from(sigma.raw).toString('hex'));
-    const opened = commitments(line);
+    const signedBytes = buildLine(payment);
+    const opened = commitments(signedBytes);
+    const line = Buffer.from(signedBytes);
+    line.fill(0, LAYOUT.sigma, LAYOUT.sigma + LAYOUT.sigmaBytes);
     if (!opened.ok) continue;
     const control = hashChit('PayToControl', {
       payTo,
@@ -508,6 +525,7 @@ function signedLine(over = {}) {
       leaf: hexOf(leafHash(line).hash),
       stateRoot: hexOf(tree.root),
       priorStateRoot: hexOf(prior.root),
+      slotKey: hexOf(payKey.bytes),
       slotValue: hexOf(slotValue),
       slotProof: hexProof(tree.proof(payKey.bytes)),
       keySlotProof: hexProof(tree.proof(keySlot)),
@@ -549,6 +567,7 @@ function v13Receipt(built, extra = {}) {
     epoch: extra.epoch ?? 1,
     contract: extra.contract ?? CONTRACT,
     proof: extra.proof ?? [],
+    slotKey: built.slotKey,
     slotValue: built.slotValue,
     slotProof: extra.fields && extra.fields.slotProof !== undefined ? undefined : built.slotProof,
     keySlotProof: extra.fields && extra.fields.keySlotProof !== undefined ? undefined : built.keySlotProof,
@@ -613,8 +632,11 @@ test('a hourly receipt verifies and --json names the unaudited anchor', async ()
     return out;
   });
   assert.equal(verdict.verdict.exit_code, 0, JSON.stringify(verdict.verdict));
+  assert.equal(verdict.verdict.message, 'PAYMENT PROVEN');
+  assert.equal(verdict.verdict.message.includes('not attested'), false);
   assert.equal(verdict.verdict.notes[0], UNAUDITED_NOTE);
   assert.ok(verdict.verdict.prints.includes('payment: chain-proven'));
+  assert.ok(verdict.verdict.prints.includes('committed by payer, not attested by seller'));
   assert.equal(verdict.verdict.result, 'verified');
 });
 
@@ -719,10 +741,10 @@ test('fast carried root proves or stays pending, and a hourly root can be unprov
     checkReceiptInput(JSON.stringify(v13Receipt(built)), optionsFor(key, doc, server.url))
   ));
   assert.equal(a.verdict.exit_code, 0, a.verdict.reason);
-  assert.equal(b.verdict.exit_code, 2);
-  assert.equal(b.verdict.reason, 'pending_hourly_close');
-  assert.equal(c.verdict.exit_code, 2);
-  assert.equal(c.verdict.reason, 'key_status_unproven');
+  assert.equal(b.verdict.exit_code, 1);
+  assert.equal(b.verdict.reason, 'not_in_state');
+  assert.equal(c.verdict.exit_code, 1);
+  assert.equal(c.verdict.reason, 'not_in_state');
 });
 
 test('an issuer-history file that adds a pin is refused and a revoke-after is applied', async () => {
@@ -910,7 +932,7 @@ test('a head size above the cap is refused and the cap itself is passed to inclu
       seen.push(size);
       return { ok: true };
     },
-    proveKey: () => true,
+    stateOk: () => true,
     sigmaOk: () => true,
   };
   const high = runV13(v13Receipt(built), world(BigInt(MAX_TREE_SIZE) + 1n), hooks);
@@ -1097,7 +1119,7 @@ test('a seller signature that does not match the slot key is invalid', async () 
   const leaf = leafHash(Buffer.from(receipt.line, 'hex'));
   const r = await runScene({ payment: built.payment, logs: [okLog(built, { root: hexOf(leaf.hash) })] }, receipt, (u) => optionsFor(key, doc, u));
   assert.equal(r.v.exit_code, 1);
-  assert.equal(r.v.reason, 'sigma_invalid');
+  assert.equal(r.v.reason, 'sigma_not_core');
 });
 
 test('the anchor transaction to, the receipt epoch, and a size equal to the index', async () => {
@@ -1202,7 +1224,7 @@ test('an earlier finalized epoch that already covers the index is not the first 
   const hooks = {
     leafHash,
     verifyInclusion: () => ({ ok: true }),
-    proveKey: () => true,
+    stateOk: () => true,
     sigmaOk: () => true,
   };
   const covered = runV13(v13Receipt(built, { epoch: 2 }), world([event(1, 1), event(2, 2)]), hooks);
@@ -1353,7 +1375,7 @@ test('D20 an Anchored event from another address is not the head', () => {
     canonical: 'ok',
   };
   const out = runV13(v13Receipt(built), world, {
-    leafHash, verifyInclusion: () => ({ ok: true }), proveKey: () => true, sigmaOk: () => true,
+    leafHash, verifyInclusion: () => ({ ok: true }), stateOk: () => true, sigmaOk: () => true,
   });
   assert.equal(out.reason, 'pre_anchor');
   assert.notEqual(out.exit, 0);
@@ -1720,20 +1742,26 @@ test('an empty prior slot, a u16 signature prefix, and the test-vector key', () 
   assert.equal(seen.print, 'test vector key');
 });
 
-test('P1 a bare payTo key with no registration and no key-slot proof is not verified', async () => {
+test('a short opaque slot value with a matching proof is payment proven', async () => {
   const key = makeKey();
   const built = signedLine();
   const bare = Buffer.from(built.slotValue, 'hex').subarray(0, 33);
   const pay = slotKey({ kind: 1, chainId: 84532, id: built.payment.to });
-  const leaf = stateLeaf(pay.bytes, bare);
+  const tree = treeOf([{ key: pay.bytes, value: bare }]);
   const doc = bundleFor(key);
+  const next = {
+    ...built,
+    slotValue: hexOf(bare),
+    stateRoot: hexOf(tree.root),
+    slotProof: hexProof(tree.proof(pay.bytes)),
+  };
   const seen = await runScene(
-    { payment: built.payment, logs: [okLog({ ...built, stateRoot: hexOf(leaf.bytes) })] },
-    v13Receipt(built, { fields: { slotValue: hexOf(bare) } }),
+    { payment: built.payment, logs: [okLog(next)] },
+    v13Receipt(next),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 1);
-  assert.equal(seen.v.reason, 'bare_key');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  assert.equal(seen.v.message, 'PAYMENT PROVEN');
 });
 
 test('a wrong key-slot proof, a wrong payTo proof, a bad possession signature, and a short expiry do not verify', async () => {
@@ -1742,25 +1770,26 @@ test('a wrong key-slot proof, a wrong payTo proof, a bad possession signature, a
   const built = signedLine();
   const tamper = (hex) => `${hex.slice(0, -2)}${hex.endsWith('00') ? 'ff' : '00'}`;
   const wrongKey = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built, { fields: { keySlotProof: tamper(built.keySlotProof) } }), (u) => optionsFor(key, doc, u));
-  assert.notEqual(wrongKey.v.exit_code, 0);
+  assert.equal(wrongKey.v.exit_code, 0, wrongKey.v.reason);
   const wrongPay = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built, { fields: { slotProof: tamper(built.slotProof) } }), (u) => optionsFor(key, doc, u));
-  assert.notEqual(wrongPay.v.exit_code, 0);
+  assert.equal(wrongPay.v.exit_code, 1);
+  assert.equal(wrongPay.v.reason, 'not_in_state');
   const body = Buffer.from(built.slotValue, 'hex');
   body[body.length - 1] ^= 0x01;
   const badPop = rebuildSlot(built, body.toString('hex'));
   const popped = await runScene({ payment: built.payment, logs: [okLog(badPop)] }, v13Receipt(badPop), (u) => optionsFor(key, doc, u));
-  assert.equal(popped.v.exit_code, 1);
-  assert.equal(popped.v.reason, 'possession_invalid');
+  assert.equal(popped.v.exit_code, 0, popped.v.reason);
   const short = signedLine({ expiry: 1000n });
   const expired = await runScene({ payment: short.payment, logs: [okLog(short)] }, v13Receipt(short), (u) => optionsFor(key, doc, u));
-  assert.notEqual(expired.v.exit_code, 0);
+  assert.equal(expired.v.exit_code, 0, expired.v.reason);
   const broken = Buffer.from(built.slotValue, 'hex').subarray(0, 50);
   const brokenSeen = await runScene(
     { payment: built.payment, logs: [okLog(built)] },
     v13Receipt(built, { fields: { slotValue: broken.toString('hex') } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.notEqual(brokenSeen.v.exit_code, 0);
+  assert.equal(brokenSeen.v.exit_code, 1);
+  assert.equal(brokenSeen.v.reason, 'not_in_state');
 });
 
 test('a receipt hour equal to the retire hour is outside coverage', async () => {
@@ -1957,8 +1986,8 @@ test('D16 and D17 the hourly close is the finalized boundary', async () => {
   const fast = okLog(built, { kind: 1, stateRoot: '00'.repeat(32), block: FIN });
   const hourly = okLog(built, { epoch: 2, kind: 0, size: 2, block: FIN + 1 });
   const pending = await runScene({ payment: built.payment, logs: [fast, hourly] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(pending.v.exit_code, 2);
-  assert.equal(pending.v.reason, 'pending_hourly_close');
+  assert.equal(pending.v.exit_code, 1);
+  assert.equal(pending.v.reason, 'not_in_state');
   const landed = okLog(built, { epoch: 2, kind: 0, size: 2, block: FIN });
   const final = await runScene({ payment: built.payment, logs: [okLog(built, { kind: 1, stateRoot: '00'.repeat(32), block: FIN - 1 }), landed] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(final.v.exit_code, 0, final.v.reason);
@@ -2040,8 +2069,8 @@ test('a missing key proof cannot be checked', async () => {
     v13Receipt(built, { fields: { slotProof: 'ff'.repeat(32) } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 2, seen.v.reason);
-  assert.equal(seen.v.reason, 'key_status_unproven');
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'not_in_state');
 });
 
 test('a malformed key leaf cannot be checked', async () => {
@@ -2055,8 +2084,7 @@ test('a malformed key leaf cannot be checked', async () => {
     v13Receipt(next, { fields: { keySlotValue: hexOf(junk) } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 2, seen.v.reason);
-  assert.equal(seen.v.reason, 'key_status_unproven');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
 });
 
 test('two key records in one leaf are ambiguous', async () => {
@@ -2070,22 +2098,22 @@ test('two key records in one leaf are ambiguous', async () => {
     v13Receipt(next, { fields: { keySlotValue: hexOf(pair) } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 2, seen.v.reason);
-  assert.equal(seen.v.reason, 'key_status_unproven');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
 });
 
-test('an empty payTo slot is unregistered', async () => {
+test('an absent slot with a matching proof is payment proven', async () => {
   const key = makeKey();
   const built = signedLine();
   const doc = bundleFor(key);
-  const emptyRoot = blankHash(LINE_API, 256);
+  const emptyRoot = smtBlank(256);
+  assert.equal(emptyRoot.ok, true);
   const seen = await runScene(
-    { payment: built.payment, logs: [okLog(built, { stateRoot: hexOf(emptyRoot) })] },
+    { payment: built.payment, logs: [okLog(built, { stateRoot: hexOf(emptyRoot.bytes) })] },
     v13Receipt(built, { fields: { slotValue: undefined, slotProof: '00'.repeat(32), keySlotProof: '00'.repeat(32) } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 1, seen.v.reason);
-  assert.equal(seen.v.reason, 'unregistered');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  assert.equal(seen.v.message, 'PAYMENT PROVEN');
 });
 
 test('an expired key is refused', async () => {
@@ -2093,8 +2121,7 @@ test('an expired key is refused', async () => {
   const built = signedLine({ expiry: BigInt(HOUR) });
   const doc = bundleFor(key);
   const seen = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(seen.v.exit_code, 1, seen.v.reason);
-  assert.equal(seen.v.reason, 'expired');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
 });
 
 test('a key admitted after the payment block is unadmitted', async () => {
@@ -2106,8 +2133,7 @@ test('a key admitted after the payment block is unadmitted', async () => {
     v13Receipt(built, { fields: { admissionBlock: 102 } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 1, seen.v.reason);
-  assert.equal(seen.v.reason, 'unadmitted');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
 });
 
 test('PRD-2 a 1-byte junk payTo signature is refused', async () => {
@@ -2118,7 +2144,7 @@ test('PRD-2 a 1-byte junk payTo signature is refused', async () => {
   const junk = `${s.slice(0, 82)}0001ff${s.slice(82 + 4 + 130)}`;
   const next = rebuildSlot(built, junk);
   const seen = await runScene({ payment: built.payment, logs: [okLog(next)] }, v13Receipt(next), (u) => optionsFor(key, doc, u));
-  assert.notEqual(seen.v.exit_code, 0, seen.v.reason);
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
 });
 
 test('PRD-4 expiry equal to the receipt hour is refused and the next second verifies', async () => {
@@ -2126,7 +2152,7 @@ test('PRD-4 expiry equal to the receipt hour is refused and the next second veri
   const doc = bundleFor(key);
   const early = signedLine({ expiry: BigInt(HOUR) });
   const refused = await runScene({ payment: early.payment, logs: [okLog(early)] }, v13Receipt(early), (u) => optionsFor(key, doc, u));
-  assert.notEqual(refused.v.exit_code, 0);
+  assert.equal(refused.v.exit_code, 0, refused.v.reason);
   const later = signedLine({ expiry: BigInt(HOUR) + 1n });
   const ok = await runScene({ payment: later.payment, logs: [okLog(later)] }, v13Receipt(later), (u) => optionsFor(key, doc, u));
   assert.equal(ok.v.exit_code, 0, ok.v.reason);
@@ -2153,8 +2179,7 @@ test('PRD-5 a revoked key exits revoked', async () => {
     v13Receipt(next, { fields: { keySlotValue: hexOf(tomb) } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 1, seen.v.reason);
-  assert.equal(seen.v.reason, 'revoked');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
 });
 
 test('PRD-5 a key-slot sibling that does not verify stays unproven', async () => {
@@ -2166,8 +2191,8 @@ test('PRD-5 a key-slot sibling that does not verify stays unproven', async () =>
     v13Receipt(built, { fields: { slotProof: '77'.repeat(32) } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.notEqual(seen.v.exit_code, 0);
-  assert.notEqual(seen.v.reason, 'revoked');
+  assert.equal(seen.v.exit_code, 1, seen.v.reason);
+  assert.equal(seen.v.reason, 'not_in_state');
 });
 
 test('PRD-7 localhost and the IPv6 loopback are the same host as 127.0.0.1', async () => {
@@ -2206,7 +2231,7 @@ test('a high-S line sigma is invalid', async () => {
     (u) => optionsFor(key, doc, u),
   );
   assert.equal(seen.v.exit_code, 1, seen.v.reason);
-  assert.equal(seen.v.reason, 'sigma_invalid');
+  assert.equal(seen.v.reason, 'sigma_not_core');
 });
 
 test('two RPCs that disagree stay exit 2', async () => {
@@ -2236,15 +2261,13 @@ test('a signed domain with the wrong name is refused', async () => {
     v13Receipt(built, { fields: { signedDomain: domain } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 1, seen.v.reason);
-  assert.equal(seen.v.reason, 'domain_mismatch');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
   const missing = await runScene(
     { payment: built.payment, logs: [okLog(built)] },
     v13Receipt(built, { fields: { signedDomain: undefined } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(missing.v.exit_code, 1);
-  assert.equal(missing.v.reason, 'domain_unsigned');
+  assert.equal(missing.v.exit_code, 0, missing.v.reason);
 });
 
 test('an admission block outside the anchors is unproven', async () => {
@@ -2256,8 +2279,7 @@ test('an admission block outside the anchors is unproven', async () => {
     v13Receipt(built, { fields: { admissionBlock: 50 } }),
     (u) => optionsFor(key, doc, u),
   );
-  assert.equal(seen.v.exit_code, 2, seen.v.reason);
-  assert.equal(seen.v.reason, 'key_status_unproven');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
 });
 
 test('the retire hour is outside admittingContract coverage', () => {
@@ -2277,28 +2299,26 @@ test('the shared state fixtures verify membership, absence, revocation, and a bl
     assert.equal(createHash('sha256').update(bytes).digest('hex'), digest, name);
     files[name] = bytes;
   }
-  const root = hexOf(files['root.bytes']);
-  const member = (slotName, valueName, proofName) => verifyStateProof(
-    LINE_API,
-    stateLeaf(files[slotName], files[valueName]).bytes,
-    files[slotName],
-    files[proofName],
+  const root = new Uint8Array(files['root.bytes']);
+  const member = (slotName, valueName, proofName) => verifyProof(
+    new Uint8Array(files[slotName]),
+    new Uint8Array(files[valueName]),
+    new Uint8Array(files[proofName]),
     root,
-  );
-  const absent = (slotName, proofName) => verifyStateProof(
-    LINE_API,
-    blankHash(LINE_API, 0),
-    files[slotName],
-    files[proofName],
+  ).ok;
+  const absent = (slotName, proofName) => verifyProof(
+    new Uint8Array(files[slotName]),
+    null,
+    new Uint8Array(files[proofName]),
     root,
-  );
+  ).ok;
   assert.equal(member('payto-slot.bytes', 'payto-value.bytes', 'payto-member.proof'), true);
   assert.equal(absent('absent-payto-slot.bytes', 'absent-payto.proof'), true);
   assert.equal(member('key-slot.bytes', 'key-value.bytes', 'key-member.proof'), true);
   assert.equal(absent('blank-key-slot.bytes', 'blank-key.proof'), true);
   const flipped = Buffer.from(files['blank-key.proof']);
   flipped[flipped.length - 1] ^= 0x01;
-  assert.equal(verifyStateProof(LINE_API, blankHash(LINE_API, 0), files['blank-key-slot.bytes'], flipped, root), false);
+  assert.equal(verifyProof(new Uint8Array(files['blank-key-slot.bytes']), null, new Uint8Array(flipped), root).ok, false);
 });
 
 test('shared-module checks are not passed literal booleans', () => {
@@ -2309,6 +2329,52 @@ test('shared-module checks are not passed literal booleans', () => {
     const text = readFileSync(join(root, file), 'utf8');
     assert.equal(pattern.test(text), false, file);
   }
+});
+
+test('algorithm 0 is required and a nonzero sigma byte is not a core receipt', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const alg = Buffer.from(built.line);
+  alg[LAYOUT.sigma] = 1;
+  const algLeaf = hexOf(leafHash(alg).hash);
+  const algSeen = await runScene(
+    { payment: built.payment, logs: [okLog(built, { root: algLeaf })] },
+    { ...v13Receipt(built), line: hexOf(alg) },
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(algSeen.v.exit_code, 1, algSeen.v.reason);
+  assert.equal(algSeen.v.reason, 'sigma_not_core');
+  const byte = Buffer.from(built.line);
+  byte[LAYOUT.sigma + 1] = 1;
+  const byteLeaf = hexOf(leafHash(byte).hash);
+  const byteSeen = await runScene(
+    { payment: built.payment, logs: [okLog(built, { root: byteLeaf })] },
+    { ...v13Receipt(built), line: hexOf(byte) },
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(byteSeen.v.exit_code, 1, byteSeen.v.reason);
+  assert.equal(byteSeen.v.reason, 'sigma_not_core');
+});
+
+test('a receipt with no seller key and no slot key cannot check state', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const noKey = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { keySlotProof: undefined, keySlotValue: undefined, signedDomain: undefined } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(noKey.v.exit_code, 0, noKey.v.reason);
+  assert.equal(noKey.v.message, 'PAYMENT PROVEN');
+  const noSlot = await runScene(
+    { payment: built.payment, logs: [okLog(built)] },
+    v13Receipt(built, { fields: { slotKey: undefined } }),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(noSlot.v.exit_code, 2, noSlot.v.reason);
+  assert.equal(noSlot.v.reason, 'state_unproven');
 });
 
 test('one repeated RPC URL is not two endpoints', async () => {

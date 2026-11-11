@@ -38,7 +38,7 @@ export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  */
 export const CORPUS_FLIP_LIST: readonly string[] = Object.freeze([]);
 
-const RECEIPT_KEYS = new Set(['v', 'schema', 'line', 'index', 'epoch', 'contract', 'proof', 'slotValue', 'slotProof', 'keySlotProof', 'keySlotValue', 'admissionBlock', 'priorSlotProof', 'priorKeyProof', 'signedDomain']);
+const RECEIPT_KEYS = new Set(['v', 'schema', 'line', 'index', 'epoch', 'contract', 'proof', 'slotKey', 'slotValue', 'slotProof', 'keySlotProof', 'keySlotValue', 'admissionBlock', 'priorSlotProof', 'priorKeyProof', 'signedDomain']);
 const LEAF_KEYS = new Set(['leaf', 'leafHash', 'leaf_hash']);
 const SIZE_KEYS = new Set(['treeSize', 'tree_size', 'size']);
 const PIN_KEYS = ['chainId', 'address', 'codeHash', 'predecessor', 'checkpoint', 'genesisHourStart', 'retireHourStart'];
@@ -113,6 +113,7 @@ export interface ParsedReceipt {
   epoch: number;
   contract: string;
   proof: string[];
+  slotKey: Uint8Array;
   slotValue: Uint8Array | null;
   slotProof: Uint8Array;
   keySlotProof: Uint8Array;
@@ -190,8 +191,7 @@ export interface V13Hooks {
     root: string,
     proof: string[],
   ) => { ok: boolean; reason?: string };
-  proveKey: (stateRoot: string) => boolean | { ok: boolean; reason: string | null; exit?: 1 | 2 };
-  sigmaOk: () => boolean;
+  stateOk: (stateRoot: string) => boolean | { ok: boolean; reason: string | null; exit?: 1 | 2 };
 }
 
 export interface V13Result {
@@ -340,6 +340,9 @@ const MESSAGES: Record<string, string> = {
   rpc_disagreement: 'The RPCs did not agree. The receipt could not be checked.',
   verifier_runtime_missing: 'The verifier could not load its line codec.',
   above_safe_integer: 'The receipt index or epoch is above the verifier cap.',
+  sigma_not_core: 'The core line has no seller signature. The sigma slot must be algorithm 0 and zeros.',
+  not_in_state: 'The slot is not in the anchored state tree.',
+  state_unproven: 'The state inclusion could not be checked.',
 };
 
 function messageOf(reason: string): string {
@@ -382,6 +385,16 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
     const hash = normHash(item);
     if (!hash) return { ok: false, exit: 1, reason: 'bad_receipt' };
     proof.push(hash);
+  }
+  let slotKey: Uint8Array = new Uint8Array();
+  if (hasOwn(value, 'slotKey')) {
+    if (typeof value.slotKey !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
+    const body = value.slotKey.startsWith('0x') ? value.slotKey.slice(2) : value.slotKey;
+    const raw = hexToBytes(body);
+    if (!raw || body.length !== 64 || body !== body.toLowerCase() || !/^[0-9a-f]{64}$/.test(body)) {
+      return { ok: false, exit: 1, reason: 'bad_receipt' };
+    }
+    slotKey = new Uint8Array(raw);
   }
   let slotValue: Uint8Array | null = null;
   if (hasOwn(value, 'slotValue')) {
@@ -438,6 +451,7 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
       epoch: value.epoch,
       contract: normHex(value.contract, 20) as string,
       proof,
+      slotKey,
       slotValue,
       slotProof: slotRead.proof,
       keySlotProof: keyRead.proof,
@@ -758,6 +772,9 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
     if (world.lineReason === 'verifier_runtime_missing') {
       return fail(2, 'verifier_runtime_missing', world, { anchor: 'could_not_check' }, messageOf('verifier_runtime_missing'));
     }
+    if (world.lineReason === 'sigma_not_core') {
+      return fail(1, 'sigma_not_core', world, { shape: 'fail' }, messageOf('sigma_not_core'));
+    }
     return fail(1, 'bad_line', world, { shape: 'fail' }, world.lineReason || messageOf('bad_line'));
   }
   const pin = applied.pins.find((item) => item.chainId === world.line?.chainId && item.address === parsed.receipt.contract) ?? null;
@@ -837,30 +854,18 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (!included.ok) return fail(1, 'not_in_log', world, { log_inclusion: 'fail' }, messageOf('not_in_log'));
   const hourly = firstHourly(mine, parsed.receipt.index, world.finalizedNumber);
   const stateRoot = hourly ? hourly.stateRoot : head.stateRoot;
-  const proved = hooks.proveKey(stateRoot);
-  const proof = proved === true ? { ok: true, reason: null, exit: 0 as 0 | 1 | 2 } : proved === false ? { ok: false, reason: null, exit: 2 as 0 | 1 | 2 } : { ok: proved.ok, reason: proved.reason, exit: proved.exit ?? (proved.ok ? 0 : 2) };
-  if (proof.reason === 'domain_mismatch' || proof.reason === 'bare_key') {
-    const reason = proof.reason === 'domain_mismatch' ? 'domain_mismatch' : 'bare_key';
-    return fail(1, reason, world, { signature: 'fail' }, messageOf(reason));
+  const proved = hooks.stateOk(stateRoot);
+  const proof = proved === true
+    ? { ok: true, reason: null, exit: 0 as 0 | 1 | 2 }
+    : proved === false
+      ? { ok: false, reason: 'state_unproven', exit: 2 as 0 | 1 | 2 }
+      : { ok: proved.ok, reason: proved.reason, exit: proved.exit ?? (proved.ok ? 0 : 2) };
+  if (!proof.ok && proof.exit === 1) {
+    return fail(1, proof.reason || 'not_in_state', world, { log_inclusion: 'fail' }, messageOf(proof.reason || 'not_in_state'));
   }
-  if (
-    proof.exit === 1
-    && (
-      proof.reason === 'domain_unsigned'
-      || proof.reason === 'revoked'
-      || proof.reason === 'possession_invalid'
-      || proof.reason === 'expired'
-      || proof.reason === 'unregistered'
-      || proof.reason === 'unadmitted'
-    )
-  ) {
-    return fail(1, proof.reason, world, { signature: 'fail' }, messageOf(proof.reason));
+  if (!proof.ok) {
+    return fail(2, proof.reason || 'state_unproven', world, { log_inclusion: 'could_not_check' }, messageOf(proof.reason || 'state_unproven'));
   }
-  if (!proof.ok && !hourly) {
-    return fail(2, 'pending_hourly_close', world, { signature: 'could_not_check' }, messageOf('pending_hourly_close'));
-  }
-  if (!proof.ok) return fail(2, 'key_status_unproven', world, { signature: 'could_not_check' }, messageOf('key_status_unproven'));
-  if (!hooks.sigmaOk()) return fail(1, 'sigma_invalid', world, { signature: 'fail' }, messageOf('sigma_invalid'));
   if (world.canonical === 'unknown_block') return fail(2, 'unknown_block', world, { payment_binding: 'could_not_check' }, messageOf('unknown_block'));
   if (world.canonical === 'not_final') return fail(2, 'block_not_final', world, { payment_binding: 'could_not_check' }, messageOf('block_not_final'));
   if (world.canonical === 'finality_unavailable') return fail(2, 'finality_unavailable', world, { payment_binding: 'could_not_check' }, messageOf('finality_unavailable'));
@@ -872,10 +877,10 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   return {
     exit: 0,
     reason: null,
-    message: 'Every check passed.',
+    message: 'PAYMENT PROVEN',
     prints: [
       'payment: chain-proven',
-      'content: seller-attested; seller may be the agent',
+      'committed by payer, not attested by seller',
       'uniqueness: see statement',
       `hour: ${hour}`,
       `window: [${world.line.blockNumber}, ${head.blockNumber}]`,
