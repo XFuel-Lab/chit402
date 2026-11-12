@@ -28,7 +28,7 @@ function sha256Text(text) {
 function atomicWrite(io, dir, file, text) {
   io.mkdirSync(dir, { recursive: true });
   const tmp = `${file}.tmp`;
-  const fd = io.openSync(tmp, 'w');
+  const fd = io.openSync(tmp, 'w', 0o600);
   try {
     const buf = Buffer.from(text);
     let offset = 0;

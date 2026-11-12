@@ -3,10 +3,12 @@
  *
  * A core line is algorithm 0x00 and 64 zero signature bytes, with a
  * seller key id of 32 zero bytes. A missing seller signature is accepted.
- * Any other sigma block or a non-zero seller key id is the line codec's
- * bad_sigma. The rest of a core line is checked by decoding a patched
- * copy (algorithm 0x01 and a low-S stand-in) so the codec's structural
- * rules apply. The bytes that are sealed are the original line.
+ * Any other sigma block, including an alg-1 seller signature, is
+ * bad_sigma. That refusal is a Phase 0 limit: this sealer does not
+ * verify or seal a seller attestation. The rest of a core line is
+ * checked by decoding a patched copy (algorithm 0x01 and a low-S
+ * stand-in) so the codec's structural rules apply. The bytes that
+ * are sealed are the original line.
  *
  * Payments above P_MAX are refused with one body and one status.
  * P_MAX itself is allowed. bind-v1 is not checked. Cap rows are not read.

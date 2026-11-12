@@ -2,8 +2,10 @@
  * Durable sealer journal.
  *
  * The committed epoch (epoch, hourStart, size, root, stateRoot, calldata)
- * is fsynced before any broadcast. A crash after that write reloads the
- * same record. Ciphertext is not written here.
+ * and each receipt row, including sealed ciphertext, are fsynced before
+ * any broadcast. The file is private (mode 0o600). Recovery reloads this
+ * record and can re-commit the store from it. A crash after this write
+ * reloads the same record.
  */
 
 import fs from 'node:fs';
@@ -15,7 +17,7 @@ import { createTree, treeFromLeaves } from '../../packages/cs2-core/smt/index.mj
 function atomicWrite(io, dir, file, text) {
   io.mkdirSync(dir, { recursive: true });
   const tmp = `${file}.tmp`;
-  const fd = io.openSync(tmp, 'w');
+  const fd = io.openSync(tmp, 'w', 0o600);
   try {
     const buf = Buffer.from(text);
     let offset = 0;

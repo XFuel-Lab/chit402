@@ -6,10 +6,12 @@
  * log to k·N, and a covered hour is not closed again.
  *
  * The epoch slot is drawn here from the sealer CSPRNG. A value on the
- * close input is ignored. (epoch, hourStart, size, root, stateRoot) is
- * committed to the journal and the store before the first broadcast.
- * Fee bumps reuse that calldata at the same nonce. A rebuilt epoch is
- * not broadcast at a nonce already used.
+ * close input is ignored. The finished-hour clock is the sealer clock,
+ * in unix seconds. (epoch, hourStart, size, root, stateRoot) and the
+ * receipt rows, including sealed ciphertext, are committed to the
+ * private journal before the store write and the first broadcast.
+ * Recovery re-commits that journaled record. It does not rebuild an
+ * epoch. Fee bumps reuse that calldata at the same nonce.
  */
 
 import { createHash } from 'node:crypto';
@@ -45,6 +47,7 @@ import { TIER_N, padLeaves } from './pad.js';
 import { addLogSize, leafIndex } from './size.js';
 
 const HOUR = 3600;
+const MAX_BACKLOG = 168;
 
 export function csprng(n) {
   const cryptoObj = globalThis.crypto;
@@ -89,6 +92,7 @@ function planHours(state, now, requested) {
   if (hourStart <= state.lastHourStart) return fail('hour_already_covered');
   const gap = (hourStart - state.lastHourStart) / HOUR;
   if (!Number.isSafeInteger(gap) || gap < 1) return fail('hour_not_finished');
+  if (gap > MAX_BACKLOG) return fail('backlog_too_large');
   const hours = [];
   for (let step = 1; step <= gap; step += 1) {
     const hour = state.lastHourStart + (step * HOUR);
@@ -319,6 +323,7 @@ function summaryOf(record) {
       line: item.line,
       proof: item.proof,
       epochProof: item.epochProof,
+      sealed: item.sealed,
     })),
   };
 }
@@ -438,7 +443,7 @@ function addressOk(value) {
 }
 
 /**
- * @param {{ dir: string, store: object, signer: object, chainId: bigint | number, contract: string, randomBytes?: (n: number) => Uint8Array | null }} config
+ * @param {{ dir: string, store: object, signer: object, chainId: bigint | number, contract: string, clock?: () => number, randomBytes?: (n: number) => Uint8Array | null }} config
  */
 export function openSealer(config) {
   if (!config || !config.store || !config.signer) {
@@ -456,6 +461,9 @@ export function openSealer(config) {
   if (chainId < 0n || chainId > 0xffffffffffffffffn) {
     throw Object.assign(new Error('chain id does not fit'), { code: 'bad_sealer' });
   }
+  if (config.clock != null && typeof config.clock !== 'function') {
+    throw Object.assign(new Error('clock must return unix seconds'), { code: 'bad_sealer' });
+  }
   const contract = config.contract.toLowerCase();
   const journal = openJournal(config.dir, { chainId, contract });
   const intentLog = openAnchorIntentLog(config.dir);
@@ -466,6 +474,7 @@ export function openSealer(config) {
     chainId,
     contract,
     randomBytes: config.randomBytes || csprng,
+    clock: config.clock || (() => Math.floor(Date.now() / 1000)),
     journal,
     intentLog,
     get state() {
@@ -477,6 +486,7 @@ export function openSealer(config) {
 
 /**
  * Close one finished hour, or a catch-up through the last complete hour.
+ * The clock is sealer.clock(), in unix seconds. input.now is not read.
  * Commits before broadcast. Does not read input.epochSlot.
  * @param {object} sealer
  * @param {object} input
@@ -484,7 +494,7 @@ export function openSealer(config) {
 export async function closeHour(sealer, input) {
   const body = input || {};
   sealer._input = body;
-  const planned = planHours(sealer.state, body.now, body.hourStart);
+  const planned = planHours(sealer.state, readClock(sealer), body.hourStart);
   if (!planned.ok) return planned;
   const blocked = refuseRebuilt(sealer.state);
   if (blocked) return blocked;
@@ -521,7 +531,13 @@ export async function recover(sealer, input) {
   for (let i = 0; i < pending.length; i += 1) {
     const record = pending[i];
     if (!sealer.store.hasCommitted(record)) {
-      return { ok: false, reason: 'store_not_committed', broadcast: false };
+      const stored = sealer.store.commitEpoch(publicRecord(record));
+      if (stored.reason === 'store_conflict') {
+        return { ok: false, reason: 'store_conflict', broadcast: false };
+      }
+      if (!stored.ok || !sealer.store.hasCommitted(record)) {
+        return { ok: false, reason: 'store_not_committed', broadcast: false };
+      }
     }
     const result = await broadcastRecord(sealer, record, input.send);
     sent.push(result);
@@ -581,7 +597,20 @@ export async function feeBump(sealer, input) {
     }
     return { ok: true, raw: row.raw, calldata };
   } catch (err) {
-    return { ok: false, reason: err.code || 'calldata_mismatch' };
+    return {
+      ok: false,
+      reason: err.code || 'broadcast_failed',
+      kind: classifyAnchorSendError(err),
+    };
+  }
+}
+
+function readClock(sealer) {
+  if (!sealer || typeof sealer.clock !== 'function') return Number.NaN;
+  try {
+    return sealer.clock();
+  } catch {
+    return Number.NaN;
   }
 }
 

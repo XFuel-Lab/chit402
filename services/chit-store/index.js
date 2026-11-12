@@ -7,5 +7,4 @@ export {
   knowsBook,
   noteAnchored,
   openStore,
-  sealedHeld,
 } from './store.js';
