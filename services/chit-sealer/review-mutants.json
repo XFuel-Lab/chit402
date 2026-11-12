@@ -1,0 +1,108 @@
+{
+  "title": "P0-8 reviewer must-kill set",
+  "score_excludes": [],
+  "suite": {
+    "argv": ["node", "--test", "--test-concurrency=1", "services/chit-sealer/test/p0-8.test.mjs"],
+    "cwd": "."
+  },
+  "mutants": [
+    {
+      "id": "R1",
+      "file": "services/chit-sealer/close.js",
+      "find": "  return hourStart + 3600 <= now;\n",
+      "replace": "  return true;\n",
+      "note": "Deleting or skipping the finished-hour guard (hourStart + 3600 <= now) must fail the current-hour test."
+    },
+    {
+      "id": "R2",
+      "file": "services/chit-sealer/lines.js",
+      "find": "  if (value > BigInt(P_MAX)) return paymentRefused();\n",
+      "replace": "  if (false) return paymentRefused();\n",
+      "note": "Deleting the P_max guard must let P_MAX+1 seal."
+    },
+    {
+      "id": "R3",
+      "file": "services/chit-sealer/close.js",
+      "find": "  const committed = commitBeforeBroadcast(sealer, record);\n",
+      "replace": "  const committed = { ok: true };\n",
+      "note": "Deleting the production commit-before-broadcast write. Killed by the crash-recovery test and the store-outage test through closeHour."
+    },
+    {
+      "id": "R4",
+      "file": "services/chit-sealer/close.js",
+      "find": "  const calldata = committed.calldata;\n",
+      "replace": "  const calldata = committed.calldata.slice(0, -1) + (committed.calldata.endsWith('0') ? '1' : '0');\n",
+      "note": "A fee bump that does not keep the committed calldata byte-for-byte must fail the identical-calldata test."
+    },
+    {
+      "id": "R5",
+      "file": "services/chit-store/store.js",
+      "find": "  if (!owns || epoch.released !== true) return storeError();\n",
+      "replace": "  if (receipt && callerBook !== receipt.bookId) return { ok: false, status: 403, body: { error: 'forbidden' } };\n  if (!owns || epoch.released !== true) return storeError();\n",
+      "note": "A distinct error for another book's receipt must fail the uniform-error and cross-book tests."
+    },
+    {
+      "id": "R6",
+      "file": "services/chit-sealer/size.js",
+      "find": "  if (!Number.isSafeInteger(next) || next > MAX_LOG_SIZE) return bad();\n",
+      "replace": "  if (false) return bad();\n",
+      "note": "Wrapping or accepting a log size past 2^53-1 must fail the tree-size cap test."
+    },
+    {
+      "id": "R7",
+      "file": "services/chit-sealer/close.js",
+      "find": "  const sized = addLogSize(sealer.state.logSize, counted.count);\n",
+      "replace": "  const sized = addLogSize(sealer.state.logSize, lines.length);\n",
+      "note": "Publishing the real leaf count instead of k·N must fail the padding-size leak test."
+    },
+    {
+      "id": "R8",
+      "file": "services/chit-store/store.js",
+      "find": "epoch.released !== true",
+      "replace": "false",
+      "note": "Serving proofs before a matching finalized Anchored must fail the proof-gate test."
+    },
+    {
+      "id": "R9",
+      "file": "services/chit-sealer/close.js",
+      "find": "  if (!committed.ok || !sealer.store.hasCommitted(record)) {\n    return { ok: false, reason: 'store_not_committed', broadcast: false };\n  }\n",
+      "replace": "  if (false) {\n    return { ok: false, reason: 'store_not_committed', broadcast: false };\n  }\n",
+      "note": "Broadcasting an epoch the store has not committed must fail the store-outage test."
+    },
+    {
+      "id": "R10",
+      "file": "services/chit-sealer/close.js",
+      "find": "  const draw = sealer.randomBytes(32);\n",
+      "replace": "  const draw = input && input.epochSlot instanceof Uint8Array ? input.epochSlot : sealer.randomBytes(32);\n",
+      "note": "Accepting a caller-supplied epoch slot must fail the epoch-slot test."
+    },
+    {
+      "id": "R11",
+      "file": "services/chit-sealer/lines.js",
+      "find": "  if (!corePattern(line)) return { ok: false, reason: 'bad_sigma' };\n",
+      "replace": "  if (true) return { ok: false, reason: 'bad_sigma' };\n",
+      "note": "Refusing a core alg-0 line must fail the no-seller-sigma test."
+    },
+    {
+      "id": "R12",
+      "file": "services/chit-sealer/close.js",
+      "find": "  if (state.commits.some((row) => row.broadcast === false)) {\n    return fail('nonce_reused');\n  }\n",
+      "replace": "  if (false) {\n    return fail('nonce_reused');\n  }\n",
+      "note": "A rebuilt epoch at a nonce already used must fail the crash-recovery test."
+    },
+    {
+      "id": "R13",
+      "file": "services/chit-store/store.js",
+      "find": "  const id = typeof input?.receiptId === 'string' ? input.receiptId : '';\n",
+      "replace": "  const id = typeof input?.payTo === 'string' ? input.payTo : (typeof input?.receiptId === 'string' ? input.receiptId : '');\n",
+      "note": "Looking up a receipt by a caller-supplied payTo must fail the proof-gate test."
+    },
+    {
+      "id": "C1",
+      "file": "services/chit-store/store.js",
+      "find": "    proof: receipt.proof,\n    epochProof: receipt.epochProof,\n",
+      "replace": "    proof: receipt.proof,\n    epochProof: receipt.epochProof,\n    sealed: receipt.sealed,\n",
+      "note": "Publishing the sealed ciphertext on the receipt must fail the DS-08 check."
+    }
+  ]
+}
