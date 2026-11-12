@@ -38,6 +38,34 @@ export const REC_JOIN = 3;
 export const REC_LEAVE = 4;
 export const REC_STOP = 5;
 export const REC_BOOK = 6;
+export const NEWER_VERIFIER = 'needs a newer verifier';
+
+/**
+ * Record types. 1 and 2 are payTo records on the seller-key add-on.
+ * 3–6 are the wallet and book records this module folds. 7–15 are reserved
+ * for SIMPLE book records. 16 is the E6 cap row. 0 and 255 are invalid.
+ * Any other type is opaque: it round-trips, and folding stops at its block.
+ */
+export const RECORD_TYPES = Object.freeze([
+  Object.freeze({ type: 0, name: 'invalid' }),
+  Object.freeze({ type: 1, name: 'payTo' }),
+  Object.freeze({ type: 2, name: 'payTo' }),
+  Object.freeze({ type: 3, name: 'wallet_join' }),
+  Object.freeze({ type: 4, name: 'wallet_leave' }),
+  Object.freeze({ type: 5, name: 'wallet_stop' }),
+  Object.freeze({ type: 6, name: 'book_create' }),
+  Object.freeze({ type: 7, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 8, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 9, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 10, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 11, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 12, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 13, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 14, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 15, name: 'reserved_simple_book' }),
+  Object.freeze({ type: 16, name: 'e6_cap_row' }),
+  Object.freeze({ type: 255, name: 'invalid' }),
+]);
 
 /** Implementation limit on records in one history. Not a wire field. */
 export const MAX_RECORDS = 1_048_576;
@@ -82,6 +110,14 @@ function take(bytes, cursor, length) {
   return out;
 }
 
+function knownType(type) {
+  return type === REC_JOIN || type === REC_LEAVE || type === REC_STOP || type === REC_BOOK;
+}
+
+function invalidType(type) {
+  return type === 0 || type === 255;
+}
+
 function encodeBody(record) {
   if (record.type === REC_JOIN || record.type === REC_STOP) {
     const body = new Uint8Array(32);
@@ -93,6 +129,10 @@ function encodeBody(record) {
     const body = new Uint8Array(33);
     body.set(record.identityKey, 0);
     return body;
+  }
+  if (!knownType(record.type) && !invalidType(record.type) && record.body instanceof Uint8Array) {
+    if (record.body.length > 0xffff) return null;
+    return new Uint8Array(record.body);
   }
   return null;
 }
@@ -110,7 +150,8 @@ function decodeBody(type, body) {
     if (body.length !== 33) return null;
     return { identityKey: new Uint8Array(body) };
   }
-  return null;
+  if (invalidType(type)) return null;
+  return { body: new Uint8Array(body), opaque: true };
 }
 
 export function encodeRecord(record) {
@@ -134,6 +175,7 @@ export function encodeRecord(record) {
 }
 
 function decodeRecord(bytes, cursor) {
+  const start = cursor.at;
   const seq = readU64(bytes, cursor.at);
   if (seq === null) return null;
   cursor.at += 8;
@@ -154,6 +196,7 @@ function decodeRecord(bytes, cursor) {
   const sigLen = sigLenBytes[0] * 256 + sigLenBytes[1];
   const sig = take(bytes, cursor, sigLen);
   if (!sig) return null;
+  if (invalidType(typeByte[0])) return { invalidType: true };
   const parsed = decodeBody(typeByte[0], body);
   if (!parsed) return null;
   return {
@@ -163,6 +206,7 @@ function decodeRecord(bytes, cursor) {
     id: new Uint8Array(id),
     type: typeByte[0],
     sig: new Uint8Array(sig),
+    raw: bytes.slice(start, cursor.at),
     ...parsed,
   };
 }
@@ -236,6 +280,7 @@ export function decodeHistory(bytes) {
   const records = [];
   for (let i = 0; i < count; i += 1) {
     const record = decodeRecord(bytes, cursor);
+    if (record && record.invalidType) return fail('bad_type');
     if (!record) return fail('bad_history');
     if (record.seq !== BigInt(i)) return fail('rule_1');
     records.push(record);
@@ -288,6 +333,7 @@ function epochFor(ctx, block) {
 }
 
 function judge(decoded, record, state, ctx) {
+  if (record.opaque) return 'newer_rules';
   if (record.type === REC_JOIN) {
     if (record.sig.length !== 65) return 'rule_4';
     const placed = epochFor(ctx, record.block);
@@ -371,12 +417,23 @@ function fold(decoded, ctx) {
   const faults = [];
   const seen = new Set();
   let previousBlock = null;
+  let newerFrom = null;
   for (const record of decoded.records) {
+    if (newerFrom !== null) break;
     let reason = null;
     if (blockDecreased(record, previousBlock)) reason = 'rule_1';
     const idHex = bytesToHex(record.id);
     if (!reason && seen.has(idHex)) reason = 'rule_1';
     if (!reason) reason = judge(decoded, record, state, ctx);
+    if (reason === 'newer_rules') {
+      newerFrom = record.block;
+      faults.push({
+        seq: record.seq.toString(),
+        rule: reason,
+        line: NEWER_VERIFIER,
+      });
+      break;
+    }
     if (reason) {
       faults.push({
         seq: record.seq.toString(),
@@ -389,7 +446,7 @@ function fold(decoded, ctx) {
       previousBlock = record.block;
     }
   }
-  return { ...state, faults };
+  return { ...state, faults, newerFrom };
 }
 
 export function assess(bytes, ctx) {
@@ -419,11 +476,29 @@ export function assess(bytes, ctx) {
     chainId: decoded.chainId,
     id: decoded.id,
     faults: folded.faults,
+    newerFrom: folded.newerFrom,
     active: folded.active,
     stopped: folded.stopped,
     book: folded.book,
     count: decoded.records.length,
   };
+}
+
+/**
+ * A fact at a block before an opaque record still stands. From that record's
+ * block onward the result is exit 2, never exit 0.
+ */
+export function factAt(bytes, block, ctx) {
+  const blockNum = typeof block === 'bigint'
+    ? block
+    : (typeof block === 'number' && Number.isSafeInteger(block) && block >= 0 ? BigInt(block) : null);
+  if (blockNum === null) return { exit: 1, reason: 'bad_history' };
+  const view = assess(bytes, ctx);
+  if (!view.ok) return { exit: view.reason === 'bad_type' ? 1 : 2, reason: view.reason };
+  if (view.newerFrom !== null && view.newerFrom !== undefined && blockNum >= view.newerFrom) {
+    return { exit: 2, reason: NEWER_VERIFIER };
+  }
+  return { exit: 0, reason: null };
 }
 
 export function admit(bytes, record, ctx) {
@@ -440,6 +515,7 @@ export function admit(bytes, record, ctx) {
   if (!encoded.ok) return encoded;
   const view = assess(encoded.bytes, ctx);
   if (!view.ok) return { ok: false, reason: view.reason };
+  if (view.newerFrom != null) return { ok: false, reason: 'newer_rules' };
   const fault = view.faults.find((item) => item.seq === seq.toString());
   if (fault) return { ok: false, reason: fault.rule };
   return { ok: true, bytes: encoded.bytes };
@@ -487,8 +563,8 @@ export function extendsHistory(prevBytes, nextBytes) {
   }
   if (next.records.length < prev.records.length) return { ok: true, extends: false };
   for (let i = 0; i < prev.records.length; i += 1) {
-    const left = encodeRecord(prev.records[i]);
-    const right = encodeRecord(next.records[i]);
+    const left = prev.records[i].raw instanceof Uint8Array ? prev.records[i].raw : encodeRecord(prev.records[i]);
+    const right = next.records[i].raw instanceof Uint8Array ? next.records[i].raw : encodeRecord(next.records[i]);
     if (!left || !right || !equalBytes(left, right)) return { ok: true, extends: false };
   }
   return { ok: true, extends: true };

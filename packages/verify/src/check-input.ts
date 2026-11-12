@@ -53,6 +53,7 @@ import { verifyTreeHeadTrust } from './anchor-trust.js';
 import { activeVersionWindows } from './version-windows.js';
 import { logTimeReason } from './log-time.js';
 import { carryTestSnapshot, readTestSnapshot } from './internal/test-seam.js';
+import { isExactV13Receipt, verifyV13Document } from './v13/verify.js';
 import {
   parsePublicAttestation,
   sameReceiptId,
@@ -849,7 +850,11 @@ export interface CheckReceiptOptions {
   /** Default true. Exit 0 requires this check to have passed. */
   checkPayer?: boolean;
   rpcUrl?: string;
+  /** Two or more agreeing endpoints. One URL is not enough for a v13 anchor read. */
+  rpcUrls?: readonly string[];
   solanaRpcUrl?: string;
+  /** Test seam. Not a CLI flag. */
+  fetchImpl?: typeof fetch;
 }
 
 export interface CheckReceiptOutcome {
@@ -959,6 +964,16 @@ export async function checkReceiptInput(raw: string, options: CheckReceiptOption
   }
 
   const trustedKids = options.trustedKids ? [...options.trustedKids] : [...DEFAULT_TRUSTED_ISSUER_KIDS];
+  if (isExactV13Receipt(receipt)) {
+    const verdict = await verifyV13Document(receipt, carryTestSnapshot(options, {
+      issuerHistoryBytes: options.issuerHistoryBytes ?? null,
+      trustedKids,
+      fetchImpl: options.fetchImpl,
+      rpcUrl: options.rpcUrl,
+      rpcUrls: options.rpcUrls,
+    }));
+    return linesOutcome(verdict);
+  }
   const checkPayer = options.checkPayer !== false;
   let resolved: ResolvedIssuerHistory;
   try {
