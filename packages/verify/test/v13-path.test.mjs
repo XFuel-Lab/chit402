@@ -984,8 +984,13 @@ function sceneHandler(s) {
     }
     if (method === 'eth_getCode') return s.code ?? CODE;
     if (method === 'eth_call') {
-      if (s.genesisDisagree && second && params[0]?.data === '0x014af0c4') return `0x${word(1)}`;
-      if (params[0]?.data === '0x2eb38ae0' && s.retired) return `0x${word(1)}`;
+      const data = params[0]?.data;
+      if (s.genesisDisagree && second && data === '0x014af0c4') return `0x${word(1)}`;
+      if (s.genesisEmpty && data === '0x014af0c4') return null;
+      if (s.genesisDown && data === '0x014af0c4') return { error: 'down' };
+      if (s.retiredDisagree && second && data === '0x2eb38ae0') return `0x${word(1)}`;
+      if (s.retiredDown && data === '0x2eb38ae0') return { error: 'down' };
+      if (data === '0x2eb38ae0' && s.retired) return `0x${word(1)}`;
       return { error: 'execution reverted' };
     }
     if (method === 'eth_getBlockByHash' && params[0].toLowerCase() === payHash) {
@@ -2442,6 +2447,30 @@ test('genesisHourStart disagreement is exit 2', async () => {
   const seen = await runScene({ payment: built.payment, logs: [okLog(built)], genesisDisagree: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(seen.v.exit_code, 2, seen.v.reason);
   assert.equal(seen.v.reason, 'rpc_disagreement');
+});
+
+test('an empty or unreachable genesisHourStart answer is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const empty = await runScene({ payment: built.payment, logs: [okLog(built)], genesisEmpty: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(empty.v.exit_code, 2, empty.v.reason);
+  assert.equal(empty.v.reason, 'rpc_unreachable');
+  const down = await runScene({ payment: built.payment, logs: [okLog(built)], genesisDown: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(down.v.exit_code, 2, down.v.reason);
+  assert.equal(down.v.reason, 'rpc_unreachable');
+});
+
+test('retired disagreement or an unreachable retired answer is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const disagreed = await runScene({ payment: built.payment, logs: [okLog(built)], retiredDisagree: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(disagreed.v.exit_code, 2, disagreed.v.reason);
+  assert.equal(disagreed.v.reason, 'rpc_disagreement');
+  const down = await runScene({ payment: built.payment, logs: [okLog(built)], retiredDown: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(down.v.exit_code, 2, down.v.reason);
+  assert.equal(down.v.reason, 'rpc_unreachable');
 });
 
 test('a null canonical block is exit 2', async () => {

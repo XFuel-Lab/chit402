@@ -2,7 +2,7 @@
   "suite": {
     "argv": ["npx", "tsc", "--pretty", "false", "--incremental", "false"]
   },
-  "test": ["node", "--test", "--test-concurrency=1", "--test-skip-pattern=frozen|snapshot|digest|pin", "test/v13-path.test.mjs"],
+  "test": ["node", "--test", "--test-concurrency=1", "--test-skip-pattern=frozen|snapshot|digest|pin", "test/v13-path.test.mjs", "../cs2-core/smt/smt.test.mjs"],
   "equivalents": [
     {
       "id": "M01",
@@ -51,6 +51,7 @@
     {"id": "S8", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (!input.canonicalHash) return 'unreachable';", "replace": "if (!input.canonicalHash) return 'reorged';"},
     {"id": "S9", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (owner !== line.from.toLowerCase()) return 'payment_mismatch';", "replace": "if (false) return 'payment_mismatch';"},
     {"id": "S9b", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (amount !== line.value) return 'payment_mismatch';", "replace": "if (false) return 'payment_mismatch';"},
-    {"id": "S9c", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (nonce !== line.nonce.toLowerCase()) return 'payment_mismatch';", "replace": "if (false) return 'payment_mismatch';"}
+    {"id": "S9c", "file": "packages/verify/src/v13/core/decide.ts", "find": "if (nonce !== line.nonce.toLowerCase()) return 'payment_mismatch';", "replace": "if (false) return 'payment_mismatch';"},
+    {"id": "R1", "file": "packages/cs2-core/smt/history.mjs", "find": "if (view.newerFrom != null) return { ok: false, reason: 'newer_rules' };", "replace": "if (false) return { ok: false, reason: 'newer_rules' };"}
   ]
 }

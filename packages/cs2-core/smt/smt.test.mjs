@@ -1164,6 +1164,33 @@ test('T6 admitting an unknown cap row is rejected and the earlier fact stays', (
   assert.equal(view.faults[0].line.includes('Chit fault'), false);
 });
 
+test('R1 admit refuses a later record once an unknown type is already in the history', () => {
+  const commitment = sha256(ascii('r1-join'));
+  const empty = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;
+  const opened = decodeHistory(empty);
+  const opaque = {
+    seq: 0n, block: 40n, fromBlock: null, id: freshId(), type: 16,
+    body: new Uint8Array(40).fill(7), sig: new Uint8Array(65).fill(1),
+  };
+  const held = encodeHistory({
+    kind: opened.kind, chainId: opened.chainId, id: opened.id, records: [opaque],
+  });
+  assert.equal(held.ok, true, held.reason);
+  const joined = seal(held.bytes, walletJoin(held.bytes, 50n, commitment));
+  assert.equal(joined.ok, false);
+  assert.equal(joined.reason, 'newer_rules');
+  const junk = walletJoin(held.bytes, 50n, commitment);
+  junk.sig = new Uint8Array(0);
+  const refused = seal(held.bytes, junk);
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'newer_rules');
+  const bare = walletJoin(empty, 50n, commitment);
+  bare.sig = new Uint8Array(0);
+  const onEmpty = seal(empty, bare);
+  assert.equal(onEmpty.ok, false);
+  assert.equal(onEmpty.reason, 'rule_4');
+});
+
 test('T7 a fact one block before an unknown admission stands, and one block after does not', () => {
   const commitment = sha256(ascii('tighten'));
   let bytes = emptyHistory(KIND_WALLET, CHAIN, wallet).bytes;

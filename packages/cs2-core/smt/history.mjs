@@ -515,6 +515,7 @@ export function admit(bytes, record, ctx) {
   if (!encoded.ok) return encoded;
   const view = assess(encoded.bytes, ctx);
   if (!view.ok) return { ok: false, reason: view.reason };
+  if (view.newerFrom != null) return { ok: false, reason: 'newer_rules' };
   const fault = view.faults.find((item) => item.seq === seq.toString());
   if (fault) return { ok: false, reason: fault.rule };
   return { ok: true, bytes: encoded.bytes };
