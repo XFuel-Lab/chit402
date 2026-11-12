@@ -103,6 +103,41 @@
       "find": "    proof: receipt.proof,\n    epochProof: receipt.epochProof,\n",
       "replace": "    proof: receipt.proof,\n    epochProof: receipt.epochProof,\n    sealed: receipt.sealed,\n",
       "note": "Publishing the sealed ciphertext on the receipt must fail the DS-08 check."
+    },
+    {
+      "id": "R3b",
+      "file": "services/chit-sealer/close.js",
+      "find": "      const stored = sealer.store.commitEpoch(publicRecord(record));\n      if (stored.reason === 'store_conflict') {\n        return { ok: false, reason: 'store_conflict', broadcast: false };\n      }\n      if (!stored.ok || !sealer.store.hasCommitted(record)) {\n        return { ok: false, reason: 'store_not_committed', broadcast: false };\n      }\n",
+      "replace": "      return { ok: false, reason: 'store_not_committed', broadcast: false };\n",
+      "note": "Deleting the store re-commit inside recover must fail the extended store-outage test."
+    },
+    {
+      "id": "R8b",
+      "file": "services/chit-store/store.js",
+      "find": "event.finalized !== true",
+      "replace": "false",
+      "note": "Dropping the finalized check must release proofs for an unfinalized matching event."
+    },
+    {
+      "id": "R8c",
+      "file": "services/chit-store/store.js",
+      "find": "  if (event.stateRoot !== row.stateRoot) return false;\n",
+      "replace": "  if (false) return false;\n",
+      "note": "Dropping the stateRoot compare must release proofs for a mismatched stateRoot."
+    },
+    {
+      "id": "R10b",
+      "file": "services/chit-sealer/close.js",
+      "find": "  const draw = sealer.randomBytes(32);\n",
+      "replace": "  const draw = new Uint8Array(32).fill(7);\n",
+      "note": "A constant epoch-slot draw must fail two consecutive closes on one sealer."
+    },
+    {
+      "id": "S1",
+      "file": "services/chit-sealer/close.js",
+      "find": "  if (gap > MAX_BACKLOG) return fail('backlog_too_large');\n",
+      "replace": "  if (false) return fail('backlog_too_large');\n",
+      "note": "Deleting the 168-hour backlog cap must let a larger gap proceed."
     }
   ]
 }

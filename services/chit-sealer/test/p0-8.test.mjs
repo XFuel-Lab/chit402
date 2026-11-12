@@ -4,7 +4,7 @@
  * The signer scalar below is a dummy test value, not a key.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
@@ -113,15 +113,17 @@ function fresh(extra = {}) {
   mkdirSync(sealerDir, { recursive: true });
   mkdirSync(storeDir, { recursive: true });
   const store = openStore(storeDir, { books: [BOOK_A, BOOK_B], io: extra.io });
+  const clock = { now: extra.now ?? HOUR };
   const sealer = openSealer({
     dir: sealerDir,
     store,
     signer: mockSigner(),
     chainId: CHAIN_ID,
     contract: CONTRACT,
+    clock: extra.clock || (() => clock.now),
     randomBytes: extra.randomBytes,
   });
-  return { root, sealerDir, storeDir, store, sealer };
+  return { root, sealerDir, storeDir, store, sealer, clock };
 }
 
 function lineItem(n, value, book = BOOK_A) {
@@ -141,7 +143,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
       },
     };
     const first = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(1)],
       fees: FEES,
@@ -161,10 +162,10 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
       signer: mockSigner(),
       chainId: CHAIN_ID,
       contract: CONTRACT,
+      clock: () => HOUR * 2,
     });
     const againSend = recorder();
     const again = await closeHour(sealer2, {
-      now: HOUR * 2,
       hourStart: HOUR,
       lines: [lineItem(2)],
       fees: FEES,
@@ -181,13 +182,14 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(resent.wires.length, 1);
     assert.equal(dataOf(resent.wires[0]), committedCalldata);
     assert.equal(pendingCommits(sealer2).length, 0);
+    assert.equal(statSync(join(sealerDir, 'sealer-state.json')).mode & 0o777, 0o600);
+    assert.equal(statSync(join(storeDir, 'store-state.json')).mode & 0o777, 0o600);
   });
 
   test('fee bump at the same nonce uses identical calldata', async () => {
     const { sealer } = fresh();
     const sent = recorder();
     const closed = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -201,13 +203,21 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(dataOf(bumpSent.wires[0]), dataOf(sent.wires[0]));
     assert.equal(dataOf(bumpSent.wires[0]), closed.calldata);
     assert.equal(bumped.calldata, closed.calldata);
+    const underpriced = await feeBump(sealer, {
+      nonce: closed.record.nonce,
+      async send() {
+        throw new Error('replacement transaction underpriced');
+      },
+    });
+    assert.equal(underpriced.ok, false);
+    assert.equal(underpriced.reason, 'broadcast_failed');
+    assert.equal(underpriced.kind, 'permanent');
   });
 
   test('empty hour uses the same close path and pads to N', async () => {
-    const { sealer } = fresh();
+    const { sealer, clock } = fresh();
     const sent = recorder();
     const empty = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -216,8 +226,8 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(empty.ok, true, empty.reason);
     assert.equal(empty.record.size, TIER_N);
     assert.equal(empty.record.leafCount, TIER_N);
+    clock.now = HOUR * 2;
     const filled = await closeHour(sealer, {
-      now: HOUR * 2,
       hourStart: HOUR,
       lines: [lineItem(1)],
       fees: FEES,
@@ -233,7 +243,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const { sealer, store } = fresh();
     const sent = recorder();
     const closed = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(1)],
       fees: FEES,
@@ -274,14 +283,12 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const over = fresh();
     const overSend = recorder();
     const refused = await closeHour(over.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(1, String(P_MAX + 1))],
       fees: FEES,
       send: overSend.send,
     });
     const huge = await closeHour(over.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(2, '100000000000')],
       fees: FEES,
@@ -297,7 +304,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const ok = fresh();
     const okSend = recorder();
     const accepted = await closeHour(ok.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(3, String(P_MAX))],
       fees: FEES,
@@ -308,10 +314,9 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
   });
 
   test('the current hour is never closed', async () => {
-    const early = fresh();
+    const early = fresh({ now: HOUR + 1 });
     const earlySend = recorder();
     const current = await closeHour(early.sealer, {
-      now: HOUR + 1,
       hourStart: HOUR,
       lines: [],
       fees: FEES,
@@ -324,7 +329,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const done = fresh();
     const doneSend = recorder();
     const finished = await closeHour(done.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -337,7 +341,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
   test('book B cannot read book A receipt', async () => {
     const { sealer, store } = fresh();
     const closed = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(1)],
       fees: FEES,
@@ -358,7 +361,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
   test('empty and N-1 hours publish the same leaf count', async () => {
     const empty = fresh();
     const emptyClosed = await closeHour(empty.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -368,7 +370,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const lines = [];
     for (let n = 1; n < TIER_N; n += 1) lines.push(lineItem(n));
     const fullClosed = await closeHour(full.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines,
       fees: FEES,
@@ -424,10 +425,10 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
       signer: mockSigner(),
       chainId: CHAIN_ID,
       contract: CONTRACT,
+      clock: () => HOUR,
     });
     const sent = recorder();
     const closed = await closeHour(reopened, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -444,7 +445,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const line = coreLine({ n: 4 });
     assert.equal(line[LAYOUT.sigma], 0);
     const closed = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [{ line, bookId: BOOK_A.id, bookPk: BOOK_PK }],
       fees: FEES,
@@ -471,14 +471,12 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const refused = fresh();
     const refusedSend = recorder();
     const sigmaResult = await closeHour(refused.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [{ line: badSigma, bookId: BOOK_A.id, bookPk: BOOK_PK }],
       fees: FEES,
       send: refusedSend.send,
     });
     const keyResult = await closeHour(refused.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [{ line: badKey, bookId: BOOK_A.id, bookPk: BOOK_PK }],
       fees: FEES,
@@ -491,10 +489,25 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(refusedSend.wires.length, 0);
   });
 
+  test('an alg-1 seller signature stays unsealed in Phase 0', async () => {
+    const { sealer } = fresh();
+    const sent = recorder();
+    const line = coreLine({ n: 12, zeroSigma: false, sellerKey: '88'.repeat(32) });
+    assert.equal(line[LAYOUT.sigma], 1);
+    const closed = await closeHour(sealer, {
+      hourStart: 0,
+      lines: [{ line, bookId: BOOK_A.id, bookPk: BOOK_PK }],
+      fees: FEES,
+      send: sent.send,
+    });
+    assert.equal(closed.ok, false);
+    assert.equal(closed.reason, 'bad_sigma');
+    assert.equal(sent.wires.length, 0);
+  });
+
   test('proofs stay hidden until a matching finalized Anchored', async () => {
     const { sealer, store } = fresh();
     const closed = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(8)],
       fees: FEES,
@@ -516,6 +529,39 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(mismatch.released, false);
     const still = fetchReceipt(store, { receiptId: id, bookId: BOOK_A.id, token: BOOK_A.token });
     assert.deepEqual(still, before);
+    const unfinalized = noteAnchored(store, {
+      finalized: false,
+      epoch: closed.record.epoch,
+      hourStart: closed.record.hourStart,
+      size: closed.record.size,
+      root: closed.record.root,
+      stateRoot: closed.record.stateRoot,
+    });
+    assert.equal(unfinalized.released, false);
+    const hidden = fetchReceipt(store, { receiptId: id, bookId: BOOK_A.id, token: BOOK_A.token });
+    assert.equal(hidden.status, STORE_STATUS);
+    assert.deepEqual(hidden.body, STORE_BODY);
+    const fields = [
+      { epoch: closed.record.epoch + 1 },
+      { hourStart: closed.record.hourStart + HOUR },
+      { size: closed.record.size + 1 },
+      { stateRoot: '11'.repeat(32) },
+    ];
+    for (const patch of fields) {
+      const noted = noteAnchored(store, {
+        finalized: true,
+        epoch: closed.record.epoch,
+        hourStart: closed.record.hourStart,
+        size: closed.record.size,
+        root: closed.record.root,
+        stateRoot: closed.record.stateRoot,
+        ...patch,
+      });
+      assert.equal(noted.released, false, JSON.stringify(patch));
+      const fetched = fetchReceipt(store, { receiptId: id, bookId: BOOK_A.id, token: BOOK_A.token });
+      assert.equal(fetched.status, STORE_STATUS);
+      assert.deepEqual(fetched.body, STORE_BODY);
+    }
     const matched = noteAnchored(store, {
       finalized: true,
       epoch: closed.record.epoch,
@@ -547,10 +593,9 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
       }
       return fs.openSync(file, flag, mode);
     };
-    const { sealer } = fresh({ io });
+    const { sealer, sealerDir, storeDir } = fresh({ io });
     const sent = recorder();
     const closed = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(9)],
       fees: FEES,
@@ -564,6 +609,76 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(pending.length, 1);
     assert.equal(pending[0].hourStart, 0);
     assert.equal(pending[0].size, TIER_N);
+
+    const clock = { now: HOUR };
+    const healthy = openStore(storeDir, { books: [BOOK_A, BOOK_B] });
+    const revived = openSealer({
+      dir: sealerDir,
+      store: healthy,
+      signer: mockSigner(),
+      chainId: CHAIN_ID,
+      contract: CONTRACT,
+      clock: () => clock.now,
+    });
+    const journaled = pendingCommits(revived);
+    assert.equal(journaled.length, 1);
+    const resent = recorder();
+    const recovered = await recover(revived, { send: resent.send });
+    assert.equal(recovered.ok, true, recovered.reason);
+    assert.equal(resent.wires.length, 1);
+    assert.equal(dataOf(resent.wires[0]), journaled[0].calldata);
+    release(healthy, journaled[0]);
+    const id = closedBodyId(healthy, BOOK_A);
+    const fetched = fetchReceipt(healthy, { receiptId: id, bookId: BOOK_A.id, token: BOOK_A.token });
+    assert.equal(fetched.ok, true);
+    assert.equal(typeof fetched.body.line, 'string');
+    clock.now = HOUR * 2;
+    const nextSend = recorder();
+    const next = await closeHour(revived, {
+      hourStart: HOUR,
+      lines: [],
+      fees: FEES,
+      send: nextSend.send,
+    });
+    assert.equal(next.ok, true, next.reason);
+    assert.equal(nextSend.wires.length, 1);
+
+    const blocked = fresh({ io });
+    const blockedSend = recorder();
+    const blockedClose = await closeHour(blocked.sealer, {
+      hourStart: 0,
+      lines: [lineItem(11)],
+      fees: FEES,
+      send: blockedSend.send,
+    });
+    assert.equal(blockedClose.reason, 'store_not_committed');
+    assert.equal(blockedSend.wires.length, 0);
+    const planted = openStore(blocked.storeDir, { books: [BOOK_A, BOOK_B] });
+    const plantedRoot = '11'.repeat(32);
+    const plantedOk = planted.commitEpoch({
+      epoch: pendingCommits(blocked.sealer)[0].epoch,
+      hourStart: 0,
+      size: TIER_N,
+      root: plantedRoot,
+      stateRoot: '22'.repeat(32),
+      receipts: [],
+    });
+    assert.equal(plantedOk.ok, true);
+    const conflicted = openSealer({
+      dir: blocked.sealerDir,
+      store: planted,
+      signer: mockSigner(),
+      chainId: CHAIN_ID,
+      contract: CONTRACT,
+      clock: () => HOUR,
+    });
+    const conflictSend = recorder();
+    const refused = await recover(conflicted, { send: conflictSend.send });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.reason, 'store_conflict');
+    assert.equal(refused.broadcast, false);
+    assert.equal(conflictSend.wires.length, 0);
+    assert.equal(planted.epochs.get(String(pendingCommits(conflicted)[0].epoch)).root, plantedRoot);
   });
 
   test('the epoch slot is redrawn and a caller-supplied slot is ignored', async () => {
@@ -582,14 +697,12 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const left = fresh({ randomBytes: scripted(1) });
     const right = fresh({ randomBytes: scripted(2) });
     const a = await closeHour(left.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
       send: recorder().send,
     });
     const b = await closeHour(right.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -599,11 +712,31 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(b.ok, true, b.reason);
     assert.notEqual(a.record.stateRoot, b.record.stateRoot);
 
+    const one = fresh({ randomBytes: scripted(3) });
+    const firstClose = await closeHour(one.sealer, {
+      hourStart: 0,
+      lines: [],
+      fees: FEES,
+      send: recorder().send,
+    });
+    assert.equal(firstClose.ok, true, firstClose.reason);
+    const firstSlot = Buffer.from(one.sealer.state.tree.epoch.value).toString('hex');
+    one.clock.now = HOUR * 2;
+    const secondClose = await closeHour(one.sealer, {
+      hourStart: HOUR,
+      lines: [],
+      fees: FEES,
+      send: recorder().send,
+    });
+    assert.equal(secondClose.ok, true, secondClose.reason);
+    const secondSlot = Buffer.from(one.sealer.state.tree.epoch.value).toString('hex');
+    assert.notEqual(firstClose.record.stateRoot, secondClose.record.stateRoot);
+    assert.notEqual(firstSlot, secondSlot);
+
     const supplied = new Uint8Array(32).fill(0xab);
     const withSlot = fresh({ randomBytes: scripted(1) });
     const without = fresh({ randomBytes: scripted(1) });
     const held = await closeHour(withSlot.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -611,7 +744,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
       epochSlot: supplied,
     });
     const plain = await closeHour(without.sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -625,7 +757,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
   test('a different caller with the same receipt id gets the uniform error', async () => {
     const { sealer, store } = fresh();
     const closed = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [lineItem(10)],
       fees: FEES,
@@ -680,21 +811,22 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
       const fromLocal = functionBody(local, name);
       assert.equal(fromLocal, fromGateway, `${name} drifted from receipt-merkle.js`);
     }
+    const storeIndex = readFileSync(join(root, 'services/chit-store/index.js'), 'utf8');
+    assert.equal(storeIndex.includes('sealedHeld'), false);
   });
 
   test('catch-up closes the last complete hour once, padded to k·N', async () => {
-    const { sealer } = fresh();
+    const { sealer, clock } = fresh();
     const sent = recorder();
     const first = await closeHour(sealer, {
-      now: HOUR,
       hourStart: 0,
       lines: [],
       fees: FEES,
       send: sent.send,
     });
     assert.equal(first.ok, true, first.reason);
+    clock.now = HOUR * 3;
     const caught = await closeHour(sealer, {
-      now: HOUR * 3,
       lines: [],
       fees: FEES,
       send: sent.send,
@@ -703,7 +835,6 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(caught.record.hourStart, HOUR * 2);
     assert.equal(caught.record.size - first.record.size, TIER_N * 2);
     const twice = await closeHour(sealer, {
-      now: HOUR * 3,
       hourStart: 0,
       lines: [],
       fees: FEES,
@@ -712,6 +843,47 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     assert.equal(twice.ok, false);
     assert.equal(twice.reason, 'hour_already_covered');
     assert.equal(sent.wires.length, 2);
+  });
+
+  test('a millisecond now cannot close a far-future hour', async () => {
+    const { sealer } = fresh({ now: HOUR });
+    const sent = recorder();
+    const ms = Date.now();
+    const far = Math.floor(ms / HOUR) * HOUR;
+    const closed = await closeHour(sealer, {
+      now: ms,
+      hourStart: far,
+      lines: [],
+      fees: FEES,
+      send: sent.send,
+    });
+    assert.equal(closed.ok, false);
+    assert.equal(closed.reason, 'hour_not_finished');
+    assert.equal(sent.wires.length, 0);
+    assert.equal(sealer.state.commits.length, 0);
+    assert.equal(sealer.state.lastHourStart, null);
+  });
+
+  test('a catch-up longer than 168 hours is refused', async () => {
+    const { sealer, clock } = fresh();
+    const sent = recorder();
+    const first = await closeHour(sealer, {
+      hourStart: 0,
+      lines: [],
+      fees: FEES,
+      send: sent.send,
+    });
+    assert.equal(first.ok, true, first.reason);
+    clock.now = HOUR * 170;
+    const closed = await closeHour(sealer, {
+      lines: [],
+      fees: FEES,
+      send: sent.send,
+    });
+    assert.equal(closed.ok, false);
+    assert.equal(closed.reason, 'backlog_too_large');
+    assert.equal(sent.wires.length, 1);
+    assert.equal(sealer.state.lastHourStart, 0);
   });
 });
 
