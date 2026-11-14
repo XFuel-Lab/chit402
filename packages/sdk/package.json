@@ -84,7 +84,7 @@
     }
   },
   "devDependencies": {
-    "@jest/globals": "^30.4.1",
+    "@jest/globals": "^30.5.2",
     "@types/jest": "^30.0.0",
     "ethers": "^6.16.0",
     "jest": "^30.4.2",
