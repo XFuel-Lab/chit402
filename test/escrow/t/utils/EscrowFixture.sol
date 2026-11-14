@@ -56,7 +56,7 @@ abstract contract EscrowFixture is TestBase {
 
     function deploy(address token) internal returns (E) {
         E.TreeHead memory h = liveHead();
-        return new E(owner, token, kid, pubX, pubY, LOG_SALT, h, signHead(h));
+        return new E(owner, token, kid, pubX, pubY, LOG_SALT, h, signHead(h), 1000 * ONE);
     }
 
     function pinDefaultList(E e) internal {

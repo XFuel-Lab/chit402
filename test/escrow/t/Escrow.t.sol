@@ -518,7 +518,7 @@ contract EscrowTest is EscrowFixture {
         E.TreeHead memory h = liveHead();
         E.Sig memory s = signHead(h);
         vm.expectRevert(E.LivenessFailed.selector);
-        new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, s);
+        new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, s, 1000 * ONE);
 
         vm.clearMockedCalls();
         revealA(alice, alice, p, salt);
@@ -559,38 +559,38 @@ contract EscrowTest is EscrowFixture {
         E.Sig memory s = signHead(h);
 
         vm.expectRevert(E.KidMismatch.selector);
-        new E(owner, address(usdc), kid, pubY, pubX, LOG_SALT, h, s);
+        new E(owner, address(usdc), kid, pubY, pubX, LOG_SALT, h, s, 1000 * ONE);
 
         vm.expectRevert(E.KidMismatch.selector);
-        new E(owner, address(usdc), keccak256("x"), pubX, pubY, LOG_SALT, h, s);
+        new E(owner, address(usdc), keccak256("x"), pubX, pubY, LOG_SALT, h, s, 1000 * ONE);
 
         E.TreeHead memory other = h;
         other.root = keccak256("not signed");
         vm.expectRevert(E.LivenessFailed.selector);
-        new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, other, s);
+        new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, other, s, 1000 * ONE);
 
         other = h;
         other.kid = keccak256("other kid");
         E.Sig memory os = signHead(other);
         vm.expectRevert(E.LivenessFailed.selector);
-        new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, other, os);
+        new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, other, os, 1000 * ONE);
 
         vm.expectRevert(E.LivenessFailed.selector);
-        new E(owner, address(usdc), kid, pubX, pubY, keccak256("other salt"), h, s);
+        new E(owner, address(usdc), kid, pubX, pubY, keccak256("other salt"), h, s, 1000 * ONE);
 
         vm.expectRevert(E.ZeroAddress.selector);
-        new E(address(0), address(usdc), kid, pubX, pubY, LOG_SALT, h, s);
+        new E(address(0), address(usdc), kid, pubX, pubY, LOG_SALT, h, s, 1000 * ONE);
 
         vm.expectRevert(E.NoTokenCode.selector);
-        new E(owner, address(0xDEAD), kid, pubX, pubY, LOG_SALT, h, s);
+        new E(owner, address(0xDEAD), kid, pubX, pubY, LOG_SALT, h, s, 1000 * ONE);
 
         Mock18 t18 = new Mock18();
         vm.expectRevert(E.WrongDecimals.selector);
-        new E(owner, address(t18), kid, pubX, pubY, LOG_SALT, h, s);
+        new E(owner, address(t18), kid, pubX, pubY, LOG_SALT, h, s, 1000 * ONE);
 
         vm.chainId(8453);
         vm.expectRevert(E.WrongChain.selector);
-        new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, s);
+        new E(owner, address(usdc), kid, pubX, pubY, LOG_SALT, h, s, 1000 * ONE);
     }
 
     // ---------------- C21 / C22 ----------------

@@ -9,6 +9,19 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {EscrowMerkle} from "./EscrowMerkle.sol";
 import {Jwk7638} from "./Jwk7638.sol";
 
+/// @dev The bond floor everywhere (1,000 USDC, 6 decimals).
+uint256 constant MIN_BOND_FLOOR = 1_000_000_000;
+/// @dev The lower floor allowed only on Base Sepolia (10 USDC, 6 decimals).
+uint256 constant MIN_BOND_FLOOR_BASE_SEPOLIA = 10_000_000;
+uint256 constant BASE_SEPOLIA_CHAIN_ID = 84532;
+
+/// @notice Constructor rule for `minBond`: at least 1,000 USDC on every chain, or at
+///         least 10 USDC on Base Sepolia (84532) only. A value below 1,000 USDC can
+///         never be set on Base mainnet (8453) or any other chain.
+function minBondAllowed(uint256 chainId, uint256 minBond) pure returns (bool) {
+    return minBond >= MIN_BOND_FLOOR || (chainId == BASE_SEPOLIA_CHAIN_ID && minBond >= MIN_BOND_FLOOR_BASE_SEPOLIA);
+}
+
 /// @title EquivocationEscrowV0
 /// @notice Base Sepolia (chainId 84532) test bond for the Chit402 receipt log.
 ///         The log issuer posts a bond in test USDC. Anyone who holds two
@@ -148,7 +161,6 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     /// @dev Cumulative withdrawal freeze over the bond's whole life.
     uint256 public constant FREEZE_CAP = 28 days;
 
-    uint256 public constant MIN_BOND = 1_000_000_000; // 1,000 USDC (6 decimals)
     uint256 public constant BOUNTY = 50_000_000; // 50 USDC per epoch
     uint256 public constant BOUNTY_CAP = 100_000_000; // 100 USDC total
     uint256 public constant REFUND_CAP = 5_000_000; // 5 USDC per receipt
@@ -158,6 +170,8 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     // ------------------------------------------------------------------
 
     address public immutable OWNER;
+    /// @dev Bond needed to activate, set once in the constructor (see `minBondAllowed`).
+    uint256 public immutable MIN_BOND;
     IERC20 public immutable TOKEN;
     bytes32 public immutable KID;
     bytes32 public immutable PUB_X;
@@ -302,6 +316,9 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
     /// @param logSalt_   EIP-712 domain salt (log id).
     /// @param liveHead   A genuine head signed by the issuer key, proving 0x100 and the key work here.
     /// @param liveSig    Its signature.
+    /// @param minBond_   Bond needed to activate, 6 decimals. At least 1,000 USDC
+    ///                   (1_000_000_000), or at least 10 USDC (10_000_000) on Base
+    ///                   Sepolia only. Anything else reverts BondTooSmall.
     constructor(
         address owner_,
         address token_,
@@ -310,8 +327,10 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         bytes32 pubY_,
         bytes32 logSalt_,
         TreeHead memory liveHead,
-        Sig memory liveSig
+        Sig memory liveSig,
+        uint256 minBond_
     ) {
+        if (!minBondAllowed(block.chainid, minBond_)) revert BondTooSmall();
         if (block.chainid != CHAIN_ID) revert WrongChain();
         if (owner_ == address(0) || token_ == address(0)) revert ZeroAddress();
         if (token_.code.length == 0) revert NoTokenCode();
@@ -319,6 +338,7 @@ contract EquivocationEscrowV0 is ReentrancyGuard {
         if (Jwk7638.thumbprintP256(pubX_, pubY_) != kid_) revert KidMismatch();
 
         OWNER = owner_;
+        MIN_BOND = minBond_;
         TOKEN = IERC20(token_);
         KID = kid_;
         PUB_X = pubX_;
