@@ -51,18 +51,21 @@ jobs:
       - name: Install root deps (no scripts)
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Pin tests on the locked dotenv
-        run: node --test scripts/lib/dotenv-load.test.mjs scripts/lib/no-key-print.test.mjs
+        run: node --test scripts/lib/dotenv-load.test.mjs scripts/lib/no-key-print.test.mjs scripts/lib/ci-dotenv-pin.test.mjs
       - name: Pin tests on dotenv 18
         # The tarball is checked against the sha512 the registry published for
         # 18.0.9 (the same integrity Dependabot #655 locks) before install.
+        # Any failing command (curl, openssl, base64) stops the step.
+        shell: bash
         run: |
+          set -euo pipefail
           curl -fsSL https://registry.npmjs.org/dotenv/-/dotenv-18.0.9.tgz -o "$RUNNER_TEMP/dotenv-18.0.9.tgz"
           want="3fVOW4cB02R066PUSwn8O4TJyz9NckQl7F81blIbaq9jKBm2tSmOKky7ZHIXzGvkVPXCSn6jkpziBPZdGFs8Tw=="
           got="$(openssl dgst -sha512 -binary "$RUNNER_TEMP/dotenv-18.0.9.tgz" | base64 -w0)"
           if [ "$got" != "$want" ]; then echo "::error::dotenv-18.0.9.tgz sha512 mismatch: $got"; exit 1; fi
           npm install --no-save --ignore-scripts --no-audit --no-fund "$RUNNER_TEMP/dotenv-18.0.9.tgz"
           node -e "const v=require('dotenv/package.json').version; if (v !== '18.0.9') { console.error('dotenv is ' + v); process.exit(1) }"
-          node --test scripts/lib/dotenv-load.test.mjs scripts/lib/no-key-print.test.mjs
+          node --test scripts/lib/dotenv-load.test.mjs scripts/lib/no-key-print.test.mjs scripts/lib/ci-dotenv-pin.test.mjs
 
   # ── Path-change detection ──────────────────────────────────
   changes:
