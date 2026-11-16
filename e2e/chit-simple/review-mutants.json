@@ -94,21 +94,21 @@
     },
     {
       "id": "Q10b",
-      "file": "e2e/chit-simple/loop.mjs",
+      "file": "e2e/chit-simple/anchored.mjs",
       "find": "  if (String(address).toLowerCase() !== String(contract).toLowerCase()) return false;",
       "replace": "  if (false) return false;",
       "note": "listener skips the contract filter"
     },
     {
       "id": "Q10c",
-      "file": "e2e/chit-simple/loop.mjs",
+      "file": "e2e/chit-simple/anchored.mjs",
       "find": "  if (String(txFrom).toLowerCase() !== String(checkpoint).toLowerCase()) return false;",
       "replace": "  if (false) return false;",
       "note": "listener skips the sender check"
     },
     {
       "id": "Q10d",
-      "file": "e2e/chit-simple/loop.mjs",
+      "file": "e2e/chit-simple/anchored.mjs",
       "find": "  if (finalizedNumber == null || BigInt(blockNumber) > BigInt(finalizedNumber)) return false;",
       "replace": "  if (false) return false;",
       "note": "listener skips the finality check"

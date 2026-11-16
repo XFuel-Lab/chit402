@@ -7,6 +7,7 @@
  */
 import { createRequire } from 'node:module';
 import http, { createServer, request as httpRequest } from 'node:http';
+import { LISTENER_CHAIN_ID } from './anchored.mjs';
 
 // ethers attaches its request error listener after request.end(). A reset in
 // that gap is an uncaught exception and skips the chain's teardown.
@@ -31,7 +32,8 @@ const solc = require('solc');
 const { ContractFactory, JsonRpcProvider, Wallet, keccak256 } = require('ethers');
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '../..');
-export const CHAIN_ID = 84532;
+
+export const CHAIN_ID = LISTENER_CHAIN_ID;
 export const USDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
 /** Well-known Hardhat account 0. A public development key, not a secret. */
 export const DEV_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';

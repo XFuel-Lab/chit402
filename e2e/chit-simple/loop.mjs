@@ -16,6 +16,7 @@ import { closeHour, openSealer } from '../../services/chit-sealer/close.js';
 import { buildAnchorCalldata } from '../../services/chit-sealer/calldata.js';
 import { fetchReceipt, noteAnchored, openStore } from '../../services/chit-store/store.js';
 import { checkReceiptInput } from '../../packages/verify/dist/check-input.js';
+import { acceptAnchoredLog } from './anchored.mjs';
 import { CHAIN_ID, USDC, deployAnchor, installUsdc, rpc, startChain } from './chain.mjs';
 import { makeSnapshot } from './snapshot.mjs';
 
@@ -87,18 +88,7 @@ function addressWord(word) {
   return `0x${word.slice(24)}`.toLowerCase();
 }
 
-/**
- * One Anchored log is admissible when it is on the pinned chain, from the
- * pinned contract, sent by the checkpoint current at that log, and in a
- * block the chain already calls finalized.
- */
-export function acceptAnchoredLog({ address, txFrom, checkpoint, chainId, blockNumber, finalizedNumber, contract }) {
-  if (Number(chainId) !== CHAIN_ID) return false;
-  if (String(address).toLowerCase() !== String(contract).toLowerCase()) return false;
-  if (String(txFrom).toLowerCase() !== String(checkpoint).toLowerCase()) return false;
-  if (finalizedNumber == null || BigInt(blockNumber) > BigInt(finalizedNumber)) return false;
-  return true;
-}
+export { acceptAnchoredLog } from './anchored.mjs';
 
 function decodeAnchored(log) {
   return {

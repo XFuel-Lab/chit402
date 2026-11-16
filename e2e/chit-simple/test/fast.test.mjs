@@ -24,7 +24,7 @@ import { closeHour, openSealer } from '../../../services/chit-sealer/close.js';
 import { commitAnchorIntent } from '../../../services/chit-sealer/kms-secp256k1.js';
 import { openAnchorIntentLog } from '../../../services/chit-sealer/kms-secp256k1.js';
 import { fetchReceipt, noteAnchored, openStore, sealedHeld } from '../../../services/chit-store/store.js';
-import { acceptAnchoredLog } from '../loop.mjs';
+import { acceptAnchoredLog } from '../anchored.mjs';
 import {
   AUTHORIZATION_USED_TOPIC0,
   MAX_TREE_SIZE,
