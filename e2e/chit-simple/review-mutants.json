@@ -1,0 +1,173 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": [
+      "sh",
+      "-c",
+      "cd packages/verify && npx tsc --pretty false && cd ../.. && node --test --test-concurrency=1 e2e/chit-simple/test/fast.test.mjs"
+    ]
+  },
+  "mutants": [
+    {
+      "id": "Q1",
+      "file": "services/chit-sealer/calldata.js",
+      "find": "    selectorBytes,\n",
+      "replace": "",
+      "note": "drop the anchor selector"
+    },
+    {
+      "id": "Q2",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "  if (bytesToHex(bytes.subarray(0, 4)) !== ANCHOR_SELECTOR) {",
+      "replace": "  if (false) {",
+      "note": "accept a non-anchor selector"
+    },
+    {
+      "id": "Q3",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "    if (line.blockNumber !== payment.chainNumber) return 'payment_mismatch';",
+      "replace": "    if (false) return 'payment_mismatch';",
+      "note": "skip the block-number check"
+    },
+    {
+      "id": "Q4",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "    if (line.blockTime !== payment.chainTime) return 'payment_mismatch';",
+      "replace": "    if (false) return 'payment_mismatch';",
+      "note": "skip the block-time check"
+    },
+    {
+      "id": "Q5",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "    if (payment.chainNumber == null || payment.chainTime == null) return 'header_unchecked';",
+      "replace": "    if (false) return 'header_unchecked';",
+      "note": "skip the missing-header check"
+    },
+    {
+      "id": "Q6",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "  if (world.line.blockNumber > head.blockNumber) {",
+      "replace": "  if (false) {",
+      "note": "skip payment-after-anchor"
+    },
+    {
+      "id": "Q7",
+      "file": "services/chit-sealer/close.js",
+      "find": "    if (hasLeaf(tree, key.bytes)) return fail('duplicate_payment');",
+      "replace": "    if (false) return fail('duplicate_payment');",
+      "note": "book the same payment twice"
+    },
+    {
+      "id": "Q8",
+      "file": "services/chit-sealer/close.js",
+      "find": "    row.bookPk = record.bookPk;",
+      "replace": "    row.bookPk = row.callerPk;",
+      "note": "seal to the caller key"
+    },
+    {
+      "id": "Q9",
+      "file": "services/chit-sealer/close.js",
+      "find": "    if (!walletInBook(record, row.payment.from)) return fail('unknown_wallet');",
+      "replace": "    if (false) return fail('unknown_wallet');",
+      "note": "accept a wallet outside the book"
+    },
+    {
+      "id": "Q10-contract",
+      "file": "services/chit-store/store.js",
+      "find": "  if (normAddr(event.contract) !== normAddr(row.contract)) return false;",
+      "replace": "  if (false) return false;",
+      "note": "release an Anchored tuple from another contract"
+    },
+    {
+      "id": "Q10-chain",
+      "file": "services/chit-store/store.js",
+      "find": "  if (!sameU64(event.chainId, row.chainId)) return false;",
+      "replace": "  if (false) return false;",
+      "note": "release an Anchored tuple from another chain"
+    },
+    {
+      "id": "Q10-from",
+      "file": "services/chit-store/store.js",
+      "find": "  if (normAddr(event.from) !== normAddr(row.checkpoint)) return false;",
+      "replace": "  if (false) return false;",
+      "note": "release an Anchored tuple from another sender"
+    },
+    {
+      "id": "Q10b",
+      "file": "e2e/chit-simple/anchored.mjs",
+      "find": "  if (String(address).toLowerCase() !== String(contract).toLowerCase()) return false;",
+      "replace": "  if (false) return false;",
+      "note": "listener skips the contract filter"
+    },
+    {
+      "id": "Q10c",
+      "file": "e2e/chit-simple/anchored.mjs",
+      "find": "  if (String(txFrom).toLowerCase() !== String(checkpoint).toLowerCase()) return false;",
+      "replace": "  if (false) return false;",
+      "note": "listener skips the sender check"
+    },
+    {
+      "id": "Q10d",
+      "file": "e2e/chit-simple/anchored.mjs",
+      "find": "  if (finalizedNumber == null || BigInt(blockNumber) > BigInt(finalizedNumber)) return false;",
+      "replace": "  if (false) return false;",
+      "note": "listener skips the finality check"
+    },
+    {
+      "id": "Q11",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "    if (LEAF_KEYS.has(key)) return { ok: false, exit: 1, reason: 'caller_supplied_leaf' };",
+      "replace": "    if (false) return { ok: false, exit: 1, reason: 'caller_supplied_leaf' };",
+      "note": "accept a caller leaf hash"
+    },
+    {
+      "id": "Q12",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "    if (SIZE_KEYS.has(key)) return { ok: false, exit: 1, reason: 'caller_supplied_tree_size' };",
+      "replace": "    if (false) return { ok: false, exit: 1, reason: 'caller_supplied_tree_size' };",
+      "note": "accept a caller tree size"
+    },
+    {
+      "id": "Q13",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "  if (size < 0n || size > BigInt(MAX_TREE_SIZE)) return { ok: false, reason: 'tree_size_above_cap' };",
+      "replace": "  if (false) return { ok: false, reason: 'tree_size_above_cap' };",
+      "note": "accept a head above the safe integer cap"
+    },
+    {
+      "id": "Q14",
+      "file": "services/chit-store/store.js",
+      "find": "  pendingBody = owns && epoch.released === false",
+      "replace": "  pendingBody = epoch && epoch.released === false",
+      "note": "tell a stranger the receipt is pending"
+    },
+    {
+      "id": "Q15",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "hooks.paymentOk(leaf.hash, parsed.receipt.saltedBook, parsed.receipt.paymentProof, stateRoot)",
+      "replace": "({ ok: true, exit: 0 as 0 | 1 | 2, reason: null })",
+      "note": "skip the payment-slot proof"
+    },
+    {
+      "id": "Q15b",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "  const requirePaymentSlot = true;",
+      "replace": "  const requirePaymentSlot = parsed.receipt.saltedBook != null || parsed.receipt.paymentProof.length >= 32;",
+      "note": "restore the optional payment-slot gate"
+    },
+    {
+      "id": "Q16",
+      "file": "services/chit-sealer/close.js",
+      "find": "    const payToPlaced = placePayTo(next, row);",
+      "replace": "    const payToPlaced = { ok: true, tree: next, key: new Uint8Array(32), value: new Uint8Array(32) };",
+      "note": "leave the payTo slot out of the state root"
+    },
+    {
+      "id": "Q17",
+      "file": "services/chit-sealer/close.js",
+      "find": "  return sha256Bytes(bookIdBytes(bookId), bookSalt);",
+      "replace": "  return sha256Bytes(bookIdBytes(bookId));",
+      "note": "drop the book salt from the payment slot"
+    }
+  ]
+}

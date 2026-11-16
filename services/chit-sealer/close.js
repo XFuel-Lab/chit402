@@ -17,20 +17,24 @@
 import { createHash } from 'node:crypto';
 import { anchorBackoffMs, classifyAnchorSendError } from './anchor-class.js';
 import { bytesToHex } from '../../packages/cs2-core/ecdsa/bytes.js';
-import { eip1559Decode } from '../../packages/cs2-core/ecdsa/eip1559.js';
+import { eip1559Decode, eip1559TxHash } from '../../packages/cs2-core/ecdsa/eip1559.js';
 import {
   consistencyProof,
   inclusionProof,
   leafHash,
   mth,
 } from '../../packages/cs2-core/merkle/index.js';
-import { KIND_EPOCH, canonicalPaymentId, slotKey } from '../../packages/cs2-core/line/index.mjs';
+import { KIND_EPOCH, KIND_PAYMENT, KIND_PAYTO, KIND_WALLET, canonicalPaymentId, slotKey } from '../../packages/cs2-core/line/index.mjs';
 import {
   createTree,
   drawEpoch,
+  emptyHistory,
   entryCount,
+  hasLeaf,
   padTo1024,
+  placeHistory,
   prove,
+  putLeaf,
   rootBytes,
 } from '../../packages/cs2-core/smt/index.mjs';
 import { sealLine } from '../../packages/cs2-core/seal/index.js';
@@ -130,7 +134,7 @@ function acceptLines(items) {
   const seen = new Set();
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i];
-    if (!item || typeof item.bookId !== 'string' || !(item.bookPk instanceof Uint8Array)) {
+    if (!item || typeof item.bookId !== 'string') {
       return fail('bad_line');
     }
     const accepted = acceptCoreLine(item.line);
@@ -142,13 +146,105 @@ function acceptLines(items) {
     lines.push({
       line: accepted.line,
       bookId: item.bookId,
-      bookPk: item.bookPk,
+      callerPk: item.bookPk instanceof Uint8Array ? item.bookPk : null,
+      payment: accepted.payment,
+      paymentId: id.bytes,
     });
   }
   return { ok: true, lines };
 }
 
-function advanceTree(sealer, tree, hours) {
+function sha256Bytes(...parts) {
+  const hash = createHash('sha256');
+  for (let i = 0; i < parts.length; i += 1) hash.update(parts[i]);
+  return new Uint8Array(hash.digest());
+}
+
+function bookIdBytes(bookId) {
+  if (/^[0-9a-fA-F]{64}$/.test(bookId)) return Uint8Array.from(Buffer.from(bookId, 'hex'));
+  return new TextEncoder().encode(bookId);
+}
+
+function hashSaltedBook(bookId, bookSalt) {
+  return sha256Bytes(bookIdBytes(bookId), bookSalt);
+}
+
+function paymentSlotValue(salted, leaf) {
+  return sha256Bytes(new TextEncoder().encode('cs2-pay-slot'), salted, leaf);
+}
+
+function walletHex(from) {
+  if (from instanceof Uint8Array) return `0x${Buffer.from(from).toString('hex')}`;
+  return '';
+}
+
+function walletInBook(record, from) {
+  return record.wallets.has(walletHex(from));
+}
+
+function bindBooks(sealer, lines) {
+  const tree = sealer.state.tree || createTree();
+  for (let i = 0; i < lines.length; i += 1) {
+    const row = lines[i];
+    const record = sealer.store.bookRecord(row.bookId);
+    if (!record) return fail('unknown_book');
+    if (!walletInBook(record, row.payment.from)) return fail('unknown_wallet');
+    const key = slotKey({ kind: KIND_PAYMENT, chainId: row.payment.chainId, id: row.paymentId });
+    if (!key.ok) return fail(key.reason);
+    if (hasLeaf(tree, key.bytes)) return fail('duplicate_payment');
+    row.bookPk = record.bookPk;
+    row.bookSalt = record.bookSalt;
+    row.paymentKey = key.bytes;
+  }
+  return { ok: true };
+}
+
+/**
+ * Kind 0x01 is a slot, not a history record, so the payTo leaf is written
+ * with putLeaf. An empty wallet history is written only when that slot is empty.
+ */
+function placePayTo(tree, row) {
+  const key = slotKey({ kind: KIND_PAYTO, chainId: row.payment.chainId, id: row.payment.to });
+  if (!key.ok) return fail(key.reason);
+  const value = sha256Bytes(new TextEncoder().encode('cs2-payto-slot'), row.payment.to);
+  const placed = putLeaf(tree, key.bytes, value, { dummy: false });
+  if (!placed.ok) return fail(placed.reason);
+  return { ok: true, tree: placed.tree, key: key.bytes, value };
+}
+
+function placeBookedSlots(tree, lines) {
+  let next = tree;
+  for (let i = 0; i < lines.length; i += 1) {
+    const row = lines[i];
+    const leaf = leafHash(row.line);
+    if (!leaf.ok) return fail(leaf.reason);
+    const salted = hashSaltedBook(row.bookId, row.bookSalt);
+    const value = paymentSlotValue(salted, leaf.hash);
+    const placed = putLeaf(next, row.paymentKey, value, { dummy: false });
+    if (!placed.ok) return fail(placed.reason);
+    next = placed.tree;
+    row.saltedBook = bytesToHex(salted);
+    row.paymentValue = bytesToHex(value);
+    const payToPlaced = placePayTo(next, row);
+    if (!payToPlaced.ok) return payToPlaced;
+    next = payToPlaced.tree;
+    row.payToKey = payToPlaced.key;
+    row.slotValue = bytesToHex(payToPlaced.value);
+    row.slotKey = bytesToHex(payToPlaced.key);
+    const history = emptyHistory(KIND_WALLET, row.payment.chainId, row.payment.from);
+    if (!history.ok) return fail(history.reason);
+    const walletKey = slotKey({ kind: KIND_WALLET, chainId: row.payment.chainId, id: row.payment.from });
+    if (!walletKey.ok) return fail(walletKey.reason);
+    if (!hasLeaf(next, walletKey.bytes)) {
+      const booked = placeHistory(next, history.bytes);
+      if (!booked.ok) return fail(booked.reason);
+      next = booked.tree;
+    }
+  }
+  return { ok: true, tree: next };
+}
+
+function advanceTree(sealer, tree, hours, lines) {
   let next = tree;
   for (let i = 0; i < hours.length; i += 1) {
     const epoch = next.epoch ? next.epoch.epoch + 1 : 0;
@@ -163,6 +259,9 @@ function advanceTree(sealer, tree, hours) {
     if (!drawn.ok) return fail(drawn.reason);
     next = drawn.tree;
   }
+  const booked = placeBookedSlots(next, lines || []);
+  if (!booked.ok) return booked;
+  next = booked.tree;
   if (entryCount(next) < 1024) {
     const seed = sealer.randomBytes(32);
     if (!(seed instanceof Uint8Array) || seed.length !== 32) return fail('bad_random');
@@ -193,7 +292,7 @@ function buildEpoch(sealer, planned, lines) {
   const sized = addLogSize(sealer.state.logSize, counted.count);
   if (!sized.ok) return sized;
   if (sized.size <= sealer.state.logSize) return fail('size_cap');
-  const advanced = advanceTree(sealer, sealer.state.tree || createTree(), planned.hours);
+  const advanced = advanceTree(sealer, sealer.state.tree || createTree(), planned.hours, lines);
   if (!advanced.ok) return advanced;
   const stateRoot = bytesToHex(rootBytes(advanced.tree));
   const epochKey = epochSlotKey(sealer);
@@ -244,6 +343,10 @@ function buildEpoch(sealer, planned, lines) {
     if (index < 0) return fail('bad_line');
     const inclusion = inclusionProof(all, index);
     if (!inclusion.ok) return fail(inclusion.reason);
+    const payProof = prove(advanced.tree, lines[i].paymentKey);
+    if (!payProof.ok || !payProof.present) return fail('bad_epoch');
+    const toProof = prove(advanced.tree, lines[i].payToKey);
+    if (!toProof.ok || !toProof.present) return fail('bad_epoch');
     const idBytes = sealer.randomBytes(16);
     if (!(idBytes instanceof Uint8Array) || idBytes.length !== 16) return fail('bad_random');
     receipts.push({
@@ -254,6 +357,11 @@ function buildEpoch(sealer, planned, lines) {
       line: bytesToHex(lines[i].line),
       proof: inclusion.proof,
       epochProof: epochProofHex,
+      paymentProof: bytesToHex(payProof.proof),
+      saltedBook: lines[i].saltedBook,
+      slotKey: lines[i].slotKey,
+      slotValue: lines[i].slotValue,
+      slotProof: bytesToHex(toProof.proof),
       sealed: bytesToHex(sealed.sealed),
     });
   }
@@ -272,6 +380,9 @@ function buildEpoch(sealer, planned, lines) {
     leaves: all,
     tree: advanced.tree,
     proof: proof.proof,
+    chainId: sealer.chainId.toString(),
+    contract: sealer.contract,
+    checkpoint: String(sealer.signer.address || '').toLowerCase(),
   };
   record.fingerprint = fingerprintOf(record);
   return { ok: true, record };
@@ -298,6 +409,9 @@ function publicRecord(record) {
     size: record.size,
     root: record.root,
     stateRoot: record.stateRoot,
+    chainId: record.chainId,
+    contract: record.contract,
+    checkpoint: record.checkpoint,
     receipts: record.receipts,
   };
 }
@@ -323,8 +437,16 @@ function summaryOf(record) {
       line: item.line,
       proof: item.proof,
       epochProof: item.epochProof,
+      paymentProof: item.paymentProof,
+      saltedBook: item.saltedBook,
+      slotKey: item.slotKey,
+      slotValue: item.slotValue,
+      slotProof: item.slotProof,
       sealed: item.sealed,
     })),
+    chainId: record.chainId,
+    contract: record.contract,
+    checkpoint: record.checkpoint,
   };
 }
 
@@ -370,7 +492,7 @@ async function broadcastRecord(sealer, record, send) {
       return await send(wire);
     } catch (err) {
       const kind = classifyAnchorSendError(err);
-      if (kind === 'known') return '0xknown';
+      if (kind === 'known') return `0x${bytesToHex(eip1559TxHash(wire))}`;
       const wrapped = new Error('broadcast_failed');
       wrapped.code = 'broadcast_failed';
       wrapped.kind = kind;
@@ -503,9 +625,8 @@ export async function closeHour(sealer, input) {
   if (typeof body.send !== 'function') return fail('bad_broadcast');
   const accepted = acceptLines(body.lines);
   if (!accepted.ok) return accepted;
-  for (let i = 0; i < accepted.lines.length; i += 1) {
-    if (!sealer.store.knowsBook(accepted.lines[i].bookId)) return fail('unknown_book');
-  }
+  const booked = bindBooks(sealer, accepted.lines);
+  if (!booked.ok) return booked;
   sealer.fees = fees;
   const built = buildEpoch(sealer, planned, accepted.lines);
   if (!built.ok) return built;
