@@ -347,6 +347,7 @@ function chainHandler(scene) {
       if (scene.unknownBlock) return null;
       return {
         number: '0x64',
+        timestamp: '0x6553f100',
         hash: scene.reorg ? `0x${'12'.repeat(32)}` : payHash,
         transactions: [txHash],
       };
@@ -996,6 +997,7 @@ function sceneHandler(s) {
     if (method === 'eth_getBlockByHash' && params[0].toLowerCase() === payHash) {
       return {
         number: s.payBlockNumber ?? '0x64',
+        timestamp: s.omitTimestamp ? undefined : (s.payTimestamp ?? '0x6553f100'),
         hash: s.sameWrong ? `0x${'12'.repeat(32)}` : (s.byHashHash ?? payHash),
         transactions: s.txs ?? [txHash],
       };
@@ -1983,7 +1985,9 @@ test('D12 a payment block past finalized is exit 2', async () => {
   const above = await runScene({ payment: built.payment, logs: [okLog(built)], payBlockNumber: `0x${(FIN + 1).toString(16)}` }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(above.v.exit_code, 2);
   assert.equal(above.v.reason, 'block_not_final');
-  const at = await runScene({ payment: built.payment, logs: [okLog(built)], payBlockNumber: `0x${FIN.toString(16)}` }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  // The finalized control uses the line's own block number. P-1 compares it
+  // with the chain header, and 0x64 is inside the finalized range.
+  const at = await runScene({ payment: built.payment, logs: [okLog(built)], payBlockNumber: '0x64' }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(at.v.exit_code, 0, at.v.reason);
 });
 

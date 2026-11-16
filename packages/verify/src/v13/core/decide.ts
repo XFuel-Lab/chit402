@@ -38,7 +38,7 @@ export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  */
 export const CORPUS_FLIP_LIST: readonly string[] = Object.freeze([]);
 
-const RECEIPT_KEYS = new Set(['v', 'schema', 'line', 'index', 'epoch', 'contract', 'proof', 'slotKey', 'slotValue', 'slotProof', 'keySlotProof', 'keySlotValue', 'admissionBlock', 'priorSlotProof', 'priorKeyProof', 'signedDomain']);
+const RECEIPT_KEYS = new Set(['v', 'schema', 'line', 'index', 'epoch', 'contract', 'proof', 'slotKey', 'slotValue', 'slotProof', 'keySlotProof', 'keySlotValue', 'admissionBlock', 'priorSlotProof', 'priorKeyProof', 'signedDomain', 'paymentProof', 'saltedBook']);
 const LEAF_KEYS = new Set(['leaf', 'leafHash', 'leaf_hash']);
 const SIZE_KEYS = new Set(['treeSize', 'tree_size', 'size']);
 const PIN_KEYS = ['chainId', 'address', 'codeHash', 'predecessor', 'checkpoint', 'genesisHourStart', 'retireHourStart'];
@@ -95,6 +95,7 @@ export interface LineView {
   chainId: number;
   blockHash: string;
   blockNumber: number;
+  blockTime?: number;
   txIndex: number;
   localLogIndex: number;
   txHash: string;
@@ -123,6 +124,9 @@ export interface ParsedReceipt {
   priorKeyProof: Uint8Array;
   signedDomain: { name: string; version: string; chainId: number; verifyingContract: string } | null;
   lineHex: string;
+  paymentProof: Uint8Array;
+  saltedBook: Uint8Array | null;
+  paymentBound: boolean;
 }
 
 export interface ChainLog {
@@ -138,6 +142,9 @@ export interface PaymentView {
   logs: ChainLog[];
   txTo: string | null;
   input: string;
+  /** Chain-checked header. Undefined skips the check. Null means the header could not be read. */
+  chainNumber?: number | null;
+  chainTime?: number | null;
 }
 
 export interface V13History {
@@ -196,6 +203,12 @@ export interface V13Hooks {
     proof: string[],
   ) => { ok: boolean; reason?: string };
   stateOk: (stateRoot: string) => boolean | { ok: boolean; reason: string | null; exit?: 1 | 2 };
+  paymentOk?: (
+    leaf: Uint8Array,
+    saltedBook: Uint8Array | null,
+    proof: Uint8Array,
+    stateRoot: string,
+  ) => { ok: boolean; reason: string | null; exit: 0 | 1 | 2 };
 }
 
 export interface V13Result {
@@ -347,6 +360,8 @@ const MESSAGES: Record<string, string> = {
   sigma_not_core: 'The core line has no seller signature. The sigma slot must be algorithm 0 and zeros.',
   not_in_state: 'The slot is not in the anchored state tree.',
   state_unproven: 'The state inclusion could not be checked.',
+  payment_after_anchor: 'The payment block is after the anchor that covers the line.',
+  payment_unchecked: 'The payment header could not be checked.',
 };
 
 function messageOf(reason: string): string {
@@ -435,6 +450,16 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
     }
     admissionBlock = value.admissionBlock;
   }
+  const paymentRead = readProof(value, 'paymentProof');
+  if (!paymentRead.ok) return paymentRead;
+  let saltedBook: Uint8Array | null = null;
+  if (hasOwn(value, 'saltedBook')) {
+    if (typeof value.saltedBook !== 'string') return { ok: false, exit: 1, reason: 'bad_receipt' };
+    const body = value.saltedBook.startsWith('0x') ? value.saltedBook.slice(2) : value.saltedBook;
+    if (!/^[0-9a-f]{64}$/.test(body)) return { ok: false, exit: 1, reason: 'bad_receipt' };
+    saltedBook = hexToBytes(body);
+  }
+  const paymentBound = hasOwn(value, 'paymentProof') || hasOwn(value, 'saltedBook');
   let signedDomain: ParsedReceipt['signedDomain'] = null;
   if (hasOwn(value, 'signedDomain')) {
     const domain = value.signedDomain;
@@ -465,6 +490,9 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
       priorKeyProof: priorKeyRead.proof,
       signedDomain,
       lineHex: lineBody,
+      paymentProof: paymentRead.proof,
+      saltedBook,
+      paymentBound,
     },
   };
 }
@@ -700,8 +728,13 @@ function padWord(value: bigint): string {
   return `0x${value.toString(16).padStart(64, '0')}`;
 }
 
-export function paymentStatus(line: LineView, payment: PaymentView): 'wrong_block_hash' | 'payment_mismatch' | 'payment_unchecked' | 'ok' {
+export function paymentStatus(line: LineView, payment: PaymentView): 'wrong_block_hash' | 'payment_mismatch' | 'payment_unchecked' | 'header_unchecked' | 'ok' {
   if (payment.blockHash.toLowerCase() !== line.blockHash.toLowerCase()) return 'wrong_block_hash';
+  if (payment.chainNumber !== undefined || payment.chainTime !== undefined) {
+    if (payment.chainNumber == null || payment.chainTime == null) return 'header_unchecked';
+    if (line.blockNumber !== payment.chainNumber) return 'payment_mismatch';
+    if (line.blockTime !== payment.chainTime) return 'payment_mismatch';
+  }
   if (!payment.txIndexMatch) return 'payment_mismatch';
   const usdc = usdcFor(line.chainId);
   if (!usdc) return 'payment_mismatch';
@@ -880,6 +913,20 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (!proof.ok) {
     return fail(2, proof.reason || 'state_unproven', world, { log_inclusion: 'could_not_check' }, messageOf(proof.reason || 'state_unproven'));
   }
+  if (parsed.receipt.paymentBound) {
+    const bound = hooks.paymentOk
+      ? hooks.paymentOk(leaf.hash, parsed.receipt.saltedBook, parsed.receipt.paymentProof, stateRoot)
+      : { ok: false, exit: 2 as const, reason: 'payment_unchecked' };
+    if (!bound.ok) {
+      const exit = bound.exit === 1 ? 1 : 2;
+      return fail(exit, bound.reason || 'payment_unchecked', world, {
+        payment_binding: exit === 1 ? 'fail' : 'could_not_check',
+      }, messageOf(bound.reason || 'payment_unchecked'));
+    }
+  }
+  if (world.line.blockNumber > head.blockNumber) {
+    return fail(1, 'payment_after_anchor', world, { payment_binding: 'fail' }, messageOf('payment_after_anchor'));
+  }
   if (world.canonical === 'unknown_block') return fail(2, 'unknown_block', world, { payment_binding: 'could_not_check' }, messageOf('unknown_block'));
   if (world.canonical === 'not_final') return fail(2, 'block_not_final', world, { payment_binding: 'could_not_check' }, messageOf('block_not_final'));
   if (world.canonical === 'finality_unavailable') return fail(2, 'finality_unavailable', world, { payment_binding: 'could_not_check' }, messageOf('finality_unavailable'));
@@ -887,6 +934,7 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (!world.payment) return fail(2, 'rpc_unreachable', world, { payment_binding: 'could_not_check' }, messageOf('rpc_unreachable'));
   const paid = paymentStatus(world.line, world.payment);
   if (paid === 'wrong_block_hash') return fail(1, 'wrong_block_hash', world, { payment_binding: 'fail' }, messageOf('wrong_block_hash'));
+  if (paid === 'header_unchecked') return fail(2, 'payment_unchecked', world, { payment_binding: 'could_not_check' }, messageOf('payment_unchecked'));
   if (paid === 'payment_unchecked') return fail(2, 'rpc_unreachable', world, { payment_binding: 'could_not_check' }, messageOf('rpc_unreachable'));
   if (paid !== 'ok') return fail(1, 'payment_mismatch', world, { payment_binding: 'fail' }, messageOf('payment_mismatch'));
   return {

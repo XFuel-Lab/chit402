@@ -4,6 +4,7 @@
  * A checkpoint rotation is not consulted and cannot add a trusted sender.
  */
 
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -67,7 +68,8 @@ type MerkleModule = {
 type LineModule = {
   decodeLine: (value: Uint8Array) => { ok: true; payment: Record<string, unknown>; sigma: { sigma: Uint8Array } } | { ok: false; reason: string };
   commitments: (input: Uint8Array) => { ok: true; sigmaDigest: Uint8Array } | { ok: false; reason: string };
-  slotKey: (input: { kind: number; chainId: number; id: string }) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
+  slotKey: (input: { kind: number; chainId: number | bigint; id: string | Uint8Array }) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
+  canonicalPaymentId: (input: Record<string, unknown>) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateLeaf: (key: Uint8Array, value: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   stateNode: (left: Uint8Array, right: Uint8Array) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
   emptyHash: (depth: number) => { ok: true; bytes: Uint8Array } | { ok: false; reason: string };
@@ -273,10 +275,12 @@ function lineView(decoded: { payment: Record<string, unknown> }, bytes: Uint8Arr
   const p = decoded.payment;
   const chain = p.chainId;
   const blockNumber = p.blockNumber;
-  if (typeof chain !== 'bigint' || typeof blockNumber !== 'bigint') return null;
+  const blockTime = p.blockTime;
+  if (typeof chain !== 'bigint' || typeof blockNumber !== 'bigint' || typeof blockTime !== 'bigint') return null;
   const chainId = fitBig(chain);
   const number = fitBig(blockNumber);
-  if (chainId == null || number == null) return null;
+  const time = fitBig(blockTime);
+  if (chainId == null || number == null || time == null) return null;
   if (!(p.blockHash instanceof Uint8Array) || !(p.txHash instanceof Uint8Array)) return null;
   if (!(p.token instanceof Uint8Array) || !(p.from instanceof Uint8Array) || !(p.to instanceof Uint8Array)) return null;
   if (!(p.authorizer instanceof Uint8Array) || !(p.nonce instanceof Uint8Array)) return null;
@@ -287,6 +291,7 @@ function lineView(decoded: { payment: Record<string, unknown> }, bytes: Uint8Arr
     chainId,
     blockHash: `0x${bytesToHex(p.blockHash)}`,
     blockNumber: number,
+    blockTime: time,
     txIndex: p.txIndex,
     localLogIndex: p.localLogIndex,
     txHash: `0x${bytesToHex(p.txHash)}`,
@@ -347,6 +352,43 @@ function foldProof(
   root: Uint8Array,
 ): boolean {
   return smt.verifyProof(derived, slotValue, slotProof, root).ok;
+}
+
+function paymentSlotValue(salted: Uint8Array, leaf: Uint8Array): Uint8Array {
+  const hash = createHash('sha256');
+  hash.update(new TextEncoder().encode('cs2-pay-slot'));
+  hash.update(salted);
+  hash.update(leaf);
+  return new Uint8Array(hash.digest());
+}
+
+function paymentSlotOk(line: LineModule, smt: SmtModule, view: LineView) {
+  return (leaf: Uint8Array, saltedBook: Uint8Array | null, proof: Uint8Array, stateRoot: string) => {
+    if (!(saltedBook instanceof Uint8Array) || saltedBook.length !== 32) {
+      return { ok: false, exit: 2 as const, reason: 'payment_unchecked' };
+    }
+    if (!(proof instanceof Uint8Array) || proof.length < 32) {
+      return { ok: false, exit: 2 as const, reason: 'payment_unchecked' };
+    }
+    const decoded = line.decodeLine(patchedSigma(line, view.bytes));
+    if (!decoded.ok) return { ok: false, exit: 2 as const, reason: 'payment_unchecked' };
+    const id = line.canonicalPaymentId(decoded.payment);
+    if (!id.ok) return { ok: false, exit: 2 as const, reason: 'payment_unchecked' };
+    const chain = decoded.payment.chainId;
+    const key = line.slotKey({
+      kind: 7,
+      chainId: typeof chain === 'bigint' || typeof chain === 'number' ? chain : view.chainId,
+      id: id.bytes,
+    });
+    if (!key.ok) return { ok: false, exit: 2 as const, reason: 'payment_unchecked' };
+    const root = hexToBytes(stateRoot.startsWith('0x') ? stateRoot.slice(2) : stateRoot);
+    if (!root || root.length !== 32) return { ok: false, exit: 2 as const, reason: 'payment_unchecked' };
+    const value = paymentSlotValue(saltedBook, leaf);
+    if (!smt.verifyProof(key.bytes, value, proof, root).ok) {
+      return { ok: false, exit: 1 as const, reason: 'payment_mismatch' };
+    }
+    return { ok: true, exit: 0 as const, reason: null };
+  };
 }
 
 function stateOk(
@@ -703,16 +745,29 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     if (!byHash) {
       canonical = 'unknown_block';
     } else {
+      // Block number and time come from this chain-checked view, never from the raw line.
       const number = parseQty(byHash.number);
+      const timestamp = parseQty(byHash.timestamp);
       const hash = typeof byHash.hash === 'string' ? byHash.hash : '';
       if (!hash) {
         canonical = 'unreachable';
+      } else if (number == null) {
+        canonical = 'ok';
+        payment = {
+          blockHash: hash,
+          txIndexMatch: false,
+          txTo: null,
+          input: '',
+          logs: [],
+          chainNumber: null,
+          chainTime: null,
+        };
       } else {
-        const byNumber = number == null ? null : asRecord(await rpc(urls, 'eth_getBlockByNumber', [hexQty(number), false]));
+        const byNumber = asRecord(await rpc(urls, 'eth_getBlockByNumber', [hexQty(number), false]));
         const canonicalHash = byNumber && typeof byNumber.hash === 'string' && byNumber.hash.length > 0 ? byNumber.hash : null;
         const judged = classifyCanonical({
           rpcError: false,
-          block: number == null ? null : { number, hash },
+          block: { number, hash },
           finalizedNumber,
           canonicalHash,
           wantHash: line.blockHash,
@@ -731,6 +786,18 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
             txTo: tx && typeof tx.to === 'string' ? tx.to : null,
             input: tx && typeof tx.input === 'string' ? tx.input : '',
             logs: receiptLogs(logs),
+            chainNumber: number,
+            chainTime: timestamp,
+          };
+        } else if (timestamp == null) {
+          payment = {
+            blockHash: hash,
+            txIndexMatch,
+            txTo: null,
+            input: '',
+            logs: [],
+            chainNumber: number,
+            chainTime: null,
           };
         }
       }
@@ -751,6 +818,7 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
       parsed.receipt.slotValue,
       parsed.receipt.slotProof,
     ),
+    paymentOk: paymentSlotOk(loaded.line, loaded.smt, line),
   };
   return verdictOf(runV13(receipt, blankWorld(history, {
     ...base,
