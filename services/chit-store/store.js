@@ -17,14 +17,7 @@ export const STORE_STATUS = 404;
 
 export const STORE_BODY = Object.freeze({ error: 'not_found' });
 
-let pendingBody = null;
-
 function storeError() {
-  if (pendingBody) {
-    const body = pendingBody;
-    pendingBody = null;
-    return { ok: false, status: 202, body };
-  }
   return { ok: false, status: STORE_STATUS, body: STORE_BODY };
 }
 
@@ -316,11 +309,13 @@ export function fetchReceipt(store, input) {
   const receipt = id ? store.receipts.get(id) : undefined;
   const epoch = receipt ? store.epochs.get(String(receipt.epoch)) : undefined;
   const owns = authed && receipt && epoch && receipt.bookId === callerBook;
-  pendingBody = owns && epoch.released === false
+  const pending = owns && epoch.released === false
     ? { state: 'pending_anchor', epoch: epoch.epoch }
     : null;
-  if (!owns || epoch.released !== true) return storeError();
-  pendingBody = null;
+  if (!owns || epoch.released !== true) {
+    if (pending) return { ok: false, status: 202, body: pending };
+    return storeError();
+  }
   return { ok: true, status: 200, body: servedBody(receipt, epoch) };
 }
 

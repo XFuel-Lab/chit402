@@ -37,8 +37,8 @@
     {
       "id": "R5",
       "file": "services/chit-store/store.js",
-      "find": "  if (!owns || epoch.released !== true) return storeError();\n",
-      "replace": "  if (receipt && callerBook !== receipt.bookId) return { ok: false, status: 403, body: { error: 'forbidden' } };\n  if (!owns || epoch.released !== true) return storeError();\n",
+      "find": "  if (!owns || epoch.released !== true) {\n    if (pending) return { ok: false, status: 202, body: pending };\n    return storeError();\n  }\n",
+      "replace": "  if (receipt && callerBook !== receipt.bookId) return { ok: false, status: 403, body: { error: 'forbidden' } };\n  if (!owns || epoch.released !== true) {\n    if (pending) return { ok: false, status: 202, body: pending };\n    return storeError();\n  }\n",
       "note": "A distinct error for another book's receipt must fail the uniform-error and cross-book tests."
     },
     {
