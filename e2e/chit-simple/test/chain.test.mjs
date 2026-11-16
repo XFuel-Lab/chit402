@@ -6,19 +6,26 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
+import { SECP256K1, ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
+import { publicPoint } from '../../../packages/cs2-core/ecdsa/sign.js';
 import { checkReceiptInput } from '../../../packages/verify/dist/check-input.js';
-import { treeSizeFromHead } from '../../../packages/verify/dist/v13/core/decide.js';
+import { PAYMENT_SLOT_MISSING, treeSizeFromHead } from '../../../packages/verify/dist/v13/core/decide.js';
 import { buildAnchorCalldata } from '../../../services/chit-sealer/calldata.js';
-import { fetchReceipt, noteAnchored } from '../../../services/chit-store/store.js';
-import { CHAIN_ID, rpc } from '../chain.mjs';
+import { recover } from '../../../services/chit-sealer/close.js';
+import { fetchReceipt } from '../../../services/chit-store/store.js';
+import { CHAIN_ID, deployAnchor, rpc } from '../chain.mjs';
 import {
   coreLine,
+  listenAnchored,
   openLoop,
   pay,
-  release,
   sealHour,
+  sendFrom,
   verifyBody,
 } from '../loop.mjs';
+
+/** Well-known Hardhat account 2. A public development key, not a secret. */
+const ACCOUNT2 = ethereumAddress(publicPoint(0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365an, SECP256K1));
 
 const HOUR = 3600;
 const TABLE = join(import.meta.dirname, '..', 'tamper-matrix.json');
@@ -41,34 +48,125 @@ function clearMutate(loop) {
   loop.chain.mirror.state.mutate = null;
 }
 
+function proofWords(calldata) {
+  const hex = String(calldata).replace(/^0x/i, '');
+  const bytes = Buffer.from(hex, 'hex');
+  const lenAt = 4 + 7 * 32;
+  const len = Number(BigInt(`0x${bytes.subarray(lenAt, lenAt + 32).toString('hex')}`));
+  const proof = [];
+  for (let i = 0; i < len; i += 1) {
+    const start = lenAt + 32 + i * 32;
+    proof.push(bytes.subarray(start, start + 32).toString('hex'));
+  }
+  return proof;
+}
+
+async function anchorTuple(to, from, record, proof) {
+  const built = buildAnchorCalldata({
+    chainId: CHAIN_ID,
+    contract: to,
+    epoch: record.epoch,
+    hourStart: record.hourStart,
+    size: record.size,
+    root: record.root,
+    stateRoot: record.stateRoot,
+    proof,
+  });
+  const hash = await rpc('eth_sendTransaction', [{
+    from,
+    to,
+    data: `0x${built.calldata}`,
+    gas: '0x200000',
+  }]);
+  const rec = await rpc('eth_getTransactionReceipt', [hash]);
+  if (!rec || rec.status !== '0x1') throw new Error(`foreign anchor status ${rec && rec.status}`);
+}
+
+async function broadcast(wire) {
+  const raw = wire.startsWith('0x') ? wire : `0x${wire}`;
+  const hash = await rpc('eth_sendRawTransaction', [raw]);
+  const start = Date.now();
+  let rec = null;
+  while (Date.now() - start < 15000) {
+    rec = await rpc('eth_getTransactionReceipt', [hash]);
+    if (rec) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  if (!rec || rec.status !== '0x1') throw new Error('broadcast reverted');
+  return hash;
+}
+
 describe('p0-9 local chain', () => {
   test('twenty-four hours, one green receipt, and the tamper matrix', async () => {
-    const loop = await openLoop();
+    let loop;
     const rows = [];
     const samples = [];
     try {
+      loop = await openLoop();
       const callerPk = new Uint8Array(32).fill(9);
       let body = null;
       let payment = null;
-      for (let step = 0; step < 24; step += 1) {
+      const hour0 = loop.firstHour;
+      loop.clock.now = hour0 + HOUR + 40;
+      payment = await pay(loop);
+      const held = await sealHour(loop, hour0, [{
+        line: coreLine(payment),
+        bookId: loop.book.id,
+        bookPk: callerPk,
+      }], async () => {
+        throw new Error('hold');
+      });
+      assert.equal(held.committed, true, held.reason);
+      const commit = loop.sealer.state.commits.at(-1);
+      const proof = proofWords(commit.calldata);
+      const other = await deployAnchor(loop.chain.wallet, ACCOUNT2);
+      await anchorTuple(other.address, ACCOUNT2, commit, proof);
+      const foreign = await listenAnchored(loop);
+      assert.equal(foreign.released, false);
+      const pendingId = commit.receipts[0].id;
+      const still = fetchReceipt(loop.store, { receiptId: pendingId, bookId: loop.book.id, token: loop.book.token });
+      rows.push({ id: 'T17', expected: 202, exit: still.status, reason: still.body?.state || 'not_released' });
+      assert.equal(still.status, 202);
+
+      const recovered = await recover(loop.sealer, { send: broadcast });
+      assert.equal(recovered.ok, true, recovered.reason);
+      loop.rpcUrl = loop.chain.urls[0];
+      setMutate(loop, (req, res) => {
+        if (req.method === 'eth_getTransactionByHash' && res.result && res.result.from) res.result.from = ACCOUNT2;
+        return res;
+      });
+      const lied = await listenAnchored(loop);
+      assert.equal(lied.released, false, 'a rewritten sender released the hour');
+      clearMutate(loop);
+      loop.rpcUrl = undefined;
+      const noted0 = await listenAnchored(loop);
+      assert.equal(noted0.released, true, 'hour 0 did not release');
+      samples.push(held.elapsedMs);
+      const fetched0 = fetchReceipt(loop.store, { receiptId: pendingId, bookId: loop.book.id, token: loop.book.token });
+      assert.equal(fetched0.ok, true);
+      body = fetched0.body;
+
+      for (let step = 1; step < 24; step += 1) {
         const hour = loop.firstHour + step * HOUR;
         loop.clock.now = hour + HOUR + 40;
-        const lines = [];
-        if (step === 0) {
-          payment = await pay(loop);
-          lines.push({ line: coreLine(payment), bookId: loop.book.id, bookPk: callerPk });
-        }
-        const closed = await sealHour(loop, hour, lines);
+        const closed = await sealHour(loop, hour, []);
         assert.equal(closed.ok, true, closed.reason);
-        const noted = release(loop, closed.record);
+        if (step === 1) {
+          loop.rpcUrl = loop.chain.urls[0];
+          setMutate(loop, (req, res) => {
+            if (req.method === 'eth_getBlockByNumber' && req.params?.[0] === 'finalized' && res.result) {
+              res.result.number = '0x1';
+            }
+            return res;
+          });
+          const early = await listenAnchored(loop);
+          assert.equal(early.released, false, 'an unfinalized hour was released');
+          clearMutate(loop);
+          loop.rpcUrl = undefined;
+        }
+        const noted = await listenAnchored(loop);
         assert.equal(noted.released, true, `hour ${step} did not release`);
         samples.push(closed.elapsedMs);
-        if (step === 0) {
-          const id = loop.sealer.state.commits[0].receipts[0].id;
-          const fetched = fetchReceipt(loop.store, { receiptId: id, bookId: loop.book.id, token: loop.book.token });
-          assert.equal(fetched.ok, true);
-          body = fetched.body;
-        }
       }
       const green = await verifyBody(loop, body);
       rows.push({ id: 'green', expected: 0, exit: green.exit, reason: green.reason });
@@ -116,7 +214,7 @@ describe('p0-9 local chain', () => {
         paymentProof: body.paymentProof,
         saltedBook: body.saltedBook,
       });
-      const check = async (id, expected, receipt, reasonIncludes) => {
+      const check = async (id, expected, receipt, reasonIncludes, message) => {
         let timer;
         const got = await Promise.race([
           checkReceiptInput(JSON.stringify(receipt), loop.snapshot.options(loop.chain.urls)),
@@ -129,6 +227,7 @@ describe('p0-9 local chain', () => {
         assert.notEqual(verdict.exit, 0, id);
         assert.equal(verdict.exit, expected, `${id} ${verdict.reason}`);
         if (reasonIncludes) assert.match(String(verdict.reason), reasonIncludes);
+        if (message) assert.equal(got.verdict.message, message);
         return verdict;
       };
 
@@ -136,7 +235,24 @@ describe('p0-9 local chain', () => {
       await check('T1', 1, { ...base(), line: flip(lineHex, 1023) });
       await check('T2', 1, { ...base(), line: flip(lineHex, 738) });
       await check('T3', 2, { ...base(), contract: `0x${'44'.repeat(20)}` }, /contract_not_pinned/);
-      await check('T4', 1, { ...base(), line: flip(lineHex, 10) });
+
+      const otherBlock = await rpc('eth_getBlockByNumber', ['0x1', false]);
+      assert.notEqual(otherBlock.hash.slice(2).toLowerCase(), payment.blockHash.toLowerCase());
+      const wrongHour = loop.firstHour + 24 * HOUR;
+      loop.clock.now = Math.max(loop.clock.now, wrongHour + HOUR + 40);
+      const wrongSealed = await sealHour(loop, wrongHour, [{
+        line: coreLine({ ...payment, blockHash: otherBlock.hash.slice(2) }),
+        bookId: loop.book.id,
+        bookPk: callerPk,
+      }]);
+      assert.equal(wrongSealed.ok, true, wrongSealed.reason);
+      assert.equal((await listenAnchored(loop)).released, true);
+      const wrongId = loop.sealer.state.commits.at(-1).receipts[0].id;
+      const wrongBody = fetchReceipt(loop.store, { receiptId: wrongId, bookId: loop.book.id, token: loop.book.token });
+      const wrongVerdict = await verifyBody(loop, wrongBody.body);
+      rows.push({ id: 'T4', expected: 1, exit: wrongVerdict.exit, reason: wrongVerdict.reason });
+      assert.equal(wrongVerdict.exit, 1);
+      assert.equal(wrongVerdict.reason, 'wrong_block_hash');
 
       const wrong = `0x${'12'.repeat(32)}`;
       const payHash = `0x${payment.blockHash}`;
@@ -209,11 +325,11 @@ describe('p0-9 local chain', () => {
 
       const later = await pay(loop);
       const high = coreLine({ ...later, blockNumber: 50000 });
-      const hour = loop.firstHour + 24 * HOUR;
+      const hour = loop.firstHour + 25 * HOUR;
       loop.clock.now = Math.max(loop.clock.now, hour + HOUR + 40);
       const sealed = await sealHour(loop, hour, [{ line: high, bookId: loop.book.id, bookPk: callerPk }]);
       assert.equal(sealed.ok, true, sealed.reason);
-      assert.equal(release(loop, sealed.record).released, true);
+      assert.equal((await listenAnchored(loop)).released, true);
       const lateId = loop.sealer.state.commits.at(-1).receipts[0].id;
       const late = fetchReceipt(loop.store, { receiptId: lateId, bookId: loop.book.id, token: loop.book.token });
       await check('T14', 1, {
@@ -229,41 +345,41 @@ describe('p0-9 local chain', () => {
         saltedBook: late.body.saltedBook,
       }, /payment_after_anchor/);
 
-      await check('T15', 1, { ...base(), paymentProof: 'ab'.repeat(32) }, /payment_mismatch/);
+      assert.notEqual(late.body.paymentProof, body.paymentProof);
+      await check('T15', 1, { ...base(), paymentProof: late.body.paymentProof }, /payment_mismatch/);
       const missing = base();
       delete missing.paymentProof;
-      await check('T16', 2, missing, /payment_unchecked/);
+      await check('T16', 2, missing, /payment_unchecked/, PAYMENT_SLOT_MISSING);
+      const both = base();
+      delete both.paymentProof;
+      delete both.saltedBook;
+      await check('T16b', 2, both, /payment_unchecked/, PAYMENT_SLOT_MISSING);
+      const saltOnly = base();
+      delete saltOnly.saltedBook;
+      await check('T16c', 2, saltOnly, /payment_unchecked/, PAYMENT_SLOT_MISSING);
 
-      const heldPay = await pay(loop);
-      const heldHour = loop.firstHour + 25 * HOUR;
-      loop.clock.now = Math.max(loop.clock.now, heldHour + HOUR + 40);
-      const held = await sealHour(loop, heldHour, [{
-        line: coreLine(heldPay),
-        bookId: loop.book.id,
-        bookPk: callerPk,
-      }]);
-      assert.equal(held.ok, true, held.reason);
-      const ignored = noteAnchored(loop.store, {
-        finalized: true,
-        epoch: held.record.epoch,
-        hourStart: held.record.hourStart,
-        size: held.record.size,
-        root: held.record.root,
-        stateRoot: held.record.stateRoot,
-        chainId: CHAIN_ID,
-        contract: `0x${'55'.repeat(20)}`,
+      const rotateData = loop.anchor.contract.interface.encodeFunctionData('rotateCheckpointKey', [ACCOUNT2, 2]);
+      const rotateHash = await rpc('eth_sendTransaction', [{
         from: loop.address,
-      });
-      assert.equal(ignored.released, false);
-      const pendingId = loop.sealer.state.commits.at(-1).receipts[0].id;
-      const still = fetchReceipt(loop.store, { receiptId: pendingId, bookId: loop.book.id, token: loop.book.token });
-      rows.push({ id: 'T17', expected: 202, exit: still.status, reason: still.body?.state || 'not_released' });
-      assert.equal(still.status, 202);
+        to: loop.anchor.address,
+        data: rotateData,
+        gas: '0x100000',
+      }]);
+      const rotateRec = await rpc('eth_getTransactionReceipt', [rotateHash]);
+      assert.equal(rotateRec.status, '0x1');
+      const rotatedHour = loop.firstHour + 26 * HOUR;
+      loop.clock.now = Math.max(loop.clock.now, rotatedHour + HOUR + 40);
+      loop.sealer.signer.address = ACCOUNT2;
+      const rotated = await sealHour(loop, rotatedHour, [], (wire) => sendFrom(ACCOUNT2, loop.anchor.address, wire));
+      assert.equal(rotated.ok, true, rotated.reason);
+      const followed = await listenAnchored(loop);
+      assert.equal(followed.released, true, 'the rotated checkpoint was not followed');
+      assert.equal(followed.checkpoint, ACCOUNT2.toLowerCase());
 
       writeFileSync(TABLE, `${JSON.stringify({ label: 'local', samples, rows }, null, 2)}\n`);
     } finally {
       writeFileSync(TABLE, `${JSON.stringify({ label: 'local', samples, rows }, null, 2)}\n`);
-      await loop.stop();
+      if (loop) await loop.stop();
     }
   });
 });

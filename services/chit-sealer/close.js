@@ -201,7 +201,7 @@ function bindBooks(sealer, lines) {
 
 /**
  * Kind 0x01 is a slot, not a history record, so the payTo leaf is written
- * with putLeaf. placeHistory still runs for the wallet history.
+ * with putLeaf. An empty wallet history is written only when that slot is empty.
  */
 function placePayTo(tree, row) {
   const key = slotKey({ kind: KIND_PAYTO, chainId: row.payment.chainId, id: row.payment.to });
@@ -233,9 +233,13 @@ function placeBookedSlots(tree, lines) {
     row.slotKey = bytesToHex(payToPlaced.key);
     const history = emptyHistory(KIND_WALLET, row.payment.chainId, row.payment.from);
     if (!history.ok) return fail(history.reason);
-    const booked = placeHistory(next, history.bytes);
-    if (!booked.ok) return fail(booked.reason);
-    next = booked.tree;
+    const walletKey = slotKey({ kind: KIND_WALLET, chainId: row.payment.chainId, id: row.payment.from });
+    if (!walletKey.ok) return fail(walletKey.reason);
+    if (!hasLeaf(next, walletKey.bytes)) {
+      const booked = placeHistory(next, history.bytes);
+      if (!booked.ok) return fail(booked.reason);
+      next = booked.tree;
+    }
   }
   return { ok: true, tree: next };
 }

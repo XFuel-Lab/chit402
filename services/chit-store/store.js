@@ -89,6 +89,7 @@ export function openStore(dir, { books = [], io = fs } = {}) {
   const bookHashes = new Map();
   const bookRecords = new Map();
   const fileBooks = loaded.books && typeof loaded.books === 'object' && !Array.isArray(loaded.books) ? loaded.books : {};
+  let freshSalt = false;
   for (const book of books) {
     if (!book || typeof book.id !== 'string' || typeof book.token !== 'string' || book.id.length === 0) {
       const err = new Error('book credential is incomplete');
@@ -102,7 +103,10 @@ export function openStore(dir, { books = [], io = fs } = {}) {
       throw err;
     }
     const prior = fileBooks[book.id] && typeof fileBooks[book.id] === 'object' ? fileBooks[book.id] : {};
-    const salt = bytes32(book.bookSalt) || bytes32(prior.bookSalt) || new Uint8Array(randomBytes(32));
+    const fromCaller = bytes32(book.bookSalt);
+    const fromFile = bytes32(prior.bookSalt);
+    const salt = fromCaller || fromFile || new Uint8Array(randomBytes(32));
+    if (!fromCaller && !fromFile) freshSalt = true;
     bookHashes.set(book.id, sha256Text(book.token));
     bookRecords.set(book.id, { bookPk: pk, bookSalt: salt, wallets: walletSet(book.wallets) });
   }
@@ -133,6 +137,7 @@ export function openStore(dir, { books = [], io = fs } = {}) {
       return { bookPk: row.bookPk, bookSalt: row.bookSalt, wallets: row.wallets };
     },
   };
+  if (freshSalt) persist(store);
   return store;
 }
 

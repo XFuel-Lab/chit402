@@ -6,7 +6,20 @@
  * The repo hardhat network stays 1337; this process uses a temp config.
  */
 import { createRequire } from 'node:module';
-import { createServer, request as httpRequest } from 'node:http';
+import http, { createServer, request as httpRequest } from 'node:http';
+
+// ethers attaches its request error listener after request.end(). A reset in
+// that gap is an uncaught exception and skips the chain's teardown.
+const rawRequest = http.request;
+http.request = function requestWithError(...args) {
+  const req = rawRequest.apply(this, args);
+  req.on('error', () => {});
+  return req;
+};
+process.on('unhandledRejection', (err) => {
+  if (err && (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED')) return;
+  throw err;
+});
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,8 +50,6 @@ function compileMock() {
 }
 
 function waitForRpc(url, child) {
-  const provider = new JsonRpcProvider(url, CHAIN_ID, { staticNetwork: true });
-  provider.pollingInterval = 20;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('local chain did not open')), 60_000);
     const poll = async () => {
@@ -48,9 +59,18 @@ function waitForRpc(url, child) {
         return;
       }
       try {
-        const id = await provider.send('eth_chainId', []);
-        if (id === '0x14a34') {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+          signal: AbortSignal.timeout(1000),
+        });
+        const body = await res.json();
+        if (body.result === '0x14a34') {
           clearTimeout(timer);
+          const provider = new JsonRpcProvider(url, CHAIN_ID, { staticNetwork: true });
+          provider.pollingInterval = 20;
+          provider.on('error', () => {});
           resolve(provider);
           return;
         }
@@ -96,7 +116,7 @@ function startProxy(targetPort, listenPort) {
         });
       });
       call.on('error', () => {
-        res.writeHead(502);
+        if (!res.headersSent) res.writeHead(502);
         res.end('{}');
       });
       call.end(body);
@@ -120,6 +140,7 @@ export async function startChain() {
   writeFileSync(configPath, `const base = require(${JSON.stringify(join(REPO, 'hardhat.config.cjs'))});\nbase.networks.hardhat.chainId = ${CHAIN_ID};\nmodule.exports = base;\n`);
   const node = spawn('npx', ['hardhat', 'node', '--hostname', '127.0.0.1', '--port', '18545', '--config', configPath], {
     cwd: REPO,
+    detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';
@@ -128,30 +149,36 @@ export async function startChain() {
   node.unref();
   node.stdout.unref();
   node.stderr.unref();
-  const provider = await waitForRpc('http://127.0.0.1:18545', node).catch((err) => {
-    node.kill('SIGTERM');
-    throw new Error(`${err.message}\n${log.slice(-2000)}`);
-  });
-  const proxy = await startProxy(18545, 18546);
-  const mirror = await startProxy(18545, 18547);
-  const wallet = new Wallet(DEV_KEY, provider);
-  return {
-    provider,
-    wallet,
-    urls: ['http://127.0.0.1:18546', 'http://127.0.0.1:18547'],
-    proxy,
-    mirror,
-    log: () => log,
-    async stop() {
-      proxy.close();
-      mirror.close();
-      node.kill('SIGKILL');
-      await Promise.race([
-        new Promise((resolve) => node.once('exit', resolve)),
-        new Promise((resolve) => setTimeout(resolve, 1000)),
-      ]);
-    },
+  const stopNode = async () => {
+    try { process.kill(-node.pid, 'SIGKILL'); } catch { try { node.kill('SIGKILL'); } catch { /* already gone */ } }
+    await Promise.race([
+      new Promise((resolve) => node.once('exit', resolve)),
+      new Promise((resolve) => setTimeout(resolve, 1000)),
+    ]);
   };
+  try {
+    const provider = await waitForRpc('http://127.0.0.1:18545', node);
+    const proxy = await startProxy(18545, 18546);
+    const mirror = await startProxy(18545, 18547);
+    const wallet = new Wallet(DEV_KEY, provider);
+    return {
+      provider,
+      wallet,
+      urls: ['http://127.0.0.1:18546', 'http://127.0.0.1:18547'],
+      proxy,
+      mirror,
+      log: () => log,
+      async stop() {
+        proxy.close();
+        mirror.close();
+        provider.destroy?.();
+        await stopNode();
+      },
+    };
+  } catch (err) {
+    await stopNode();
+    throw new Error(`${err.message}\n${log.slice(-2000)}`);
+  }
 }
 
 async function rawNonce(provider, address) {

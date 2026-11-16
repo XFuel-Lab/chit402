@@ -126,7 +126,6 @@ export interface ParsedReceipt {
   lineHex: string;
   paymentProof: Uint8Array;
   saltedBook: Uint8Array | null;
-  paymentBound: boolean;
 }
 
 export interface ChainLog {
@@ -364,6 +363,8 @@ const MESSAGES: Record<string, string> = {
   payment_unchecked: 'The payment header could not be checked.',
 };
 
+export const PAYMENT_SLOT_MISSING = 'The payment slot proof is missing.';
+
 function messageOf(reason: string): string {
   return MESSAGES[reason] || reason;
 }
@@ -459,7 +460,6 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
     if (!/^[0-9a-f]{64}$/.test(body)) return { ok: false, exit: 1, reason: 'bad_receipt' };
     saltedBook = hexToBytes(body);
   }
-  const paymentBound = hasOwn(value, 'paymentProof') || hasOwn(value, 'saltedBook');
   let signedDomain: ParsedReceipt['signedDomain'] = null;
   if (hasOwn(value, 'signedDomain')) {
     const domain = value.signedDomain;
@@ -492,7 +492,6 @@ export function parseV13Receipt(value: unknown): { ok: true; receipt: ParsedRece
       lineHex: lineBody,
       paymentProof: paymentRead.proof,
       saltedBook,
-      paymentBound,
     },
   };
 }
@@ -913,7 +912,12 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (!proof.ok) {
     return fail(2, proof.reason || 'state_unproven', world, { log_inclusion: 'could_not_check' }, messageOf(proof.reason || 'state_unproven'));
   }
-  if (parsed.receipt.paymentBound) {
+  // Both fields are required on a v13 receipt. Older shapes never reach this path.
+  const requirePaymentSlot = true;
+  if (requirePaymentSlot && (parsed.receipt.saltedBook == null || parsed.receipt.paymentProof.length < 32)) {
+    return fail(2, 'payment_unchecked', world, { payment_binding: 'could_not_check' }, PAYMENT_SLOT_MISSING);
+  }
+  if (requirePaymentSlot) {
     const bound = hooks.paymentOk
       ? hooks.paymentOk(leaf.hash, parsed.receipt.saltedBook, parsed.receipt.paymentProof, stateRoot)
       : { ok: false, exit: 2 as const, reason: 'payment_unchecked' };

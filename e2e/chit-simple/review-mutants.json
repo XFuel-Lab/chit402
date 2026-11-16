@@ -72,11 +72,46 @@
       "note": "accept a wallet outside the book"
     },
     {
-      "id": "Q10",
+      "id": "Q10-contract",
       "file": "services/chit-store/store.js",
-      "find": "  if (normAddr(event.contract) !== normAddr(row.contract)) return false;\n  if (!sameU64(event.chainId, row.chainId)) return false;\n  if (normAddr(event.from) !== normAddr(row.checkpoint)) return false;",
+      "find": "  if (normAddr(event.contract) !== normAddr(row.contract)) return false;",
       "replace": "  if (false) return false;",
-      "note": "release on a foreign Anchored tuple"
+      "note": "release an Anchored tuple from another contract"
+    },
+    {
+      "id": "Q10-chain",
+      "file": "services/chit-store/store.js",
+      "find": "  if (!sameU64(event.chainId, row.chainId)) return false;",
+      "replace": "  if (false) return false;",
+      "note": "release an Anchored tuple from another chain"
+    },
+    {
+      "id": "Q10-from",
+      "file": "services/chit-store/store.js",
+      "find": "  if (normAddr(event.from) !== normAddr(row.checkpoint)) return false;",
+      "replace": "  if (false) return false;",
+      "note": "release an Anchored tuple from another sender"
+    },
+    {
+      "id": "Q10b",
+      "file": "e2e/chit-simple/loop.mjs",
+      "find": "  if (String(address).toLowerCase() !== String(contract).toLowerCase()) return false;",
+      "replace": "  if (false) return false;",
+      "note": "listener skips the contract filter"
+    },
+    {
+      "id": "Q10c",
+      "file": "e2e/chit-simple/loop.mjs",
+      "find": "  if (String(txFrom).toLowerCase() !== String(checkpoint).toLowerCase()) return false;",
+      "replace": "  if (false) return false;",
+      "note": "listener skips the sender check"
+    },
+    {
+      "id": "Q10d",
+      "file": "e2e/chit-simple/loop.mjs",
+      "find": "  if (finalizedNumber == null || BigInt(blockNumber) > BigInt(finalizedNumber)) return false;",
+      "replace": "  if (false) return false;",
+      "note": "listener skips the finality check"
     },
     {
       "id": "Q11",
@@ -109,9 +144,16 @@
     {
       "id": "Q15",
       "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "  if (parsed.receipt.paymentBound) {",
-      "replace": "  if (parsed.receipt.paymentBound && Number.isNaN(1)) {",
+      "find": "hooks.paymentOk(leaf.hash, parsed.receipt.saltedBook, parsed.receipt.paymentProof, stateRoot)",
+      "replace": "({ ok: true, exit: 0 as 0 | 1 | 2, reason: null })",
       "note": "skip the payment-slot proof"
+    },
+    {
+      "id": "Q15b",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "  const requirePaymentSlot = true;",
+      "replace": "  const requirePaymentSlot = parsed.receipt.saltedBook != null || parsed.receipt.paymentProof.length >= 32;",
+      "note": "restore the optional payment-slot gate"
     },
     {
       "id": "Q16",

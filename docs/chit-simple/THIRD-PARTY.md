@@ -18,10 +18,11 @@ Clone this repository at a commit. From the repository root, and again in `packa
 npm ci
 ```
 
-Build the verifier:
+Build the verifier, then compile the anchor so the local run can load its artifact:
 
 ```
 npm run build --prefix packages/verify
+npx hardhat compile
 ```
 
 ## The local loop
@@ -44,7 +45,7 @@ Hardhat 2.19 answered `eth_getBlockByNumber` of `finalized` with a block on this
 node --test --test-concurrency=1 e2e/chit-simple/test/chain.test.mjs
 ```
 
-That command also anchors 24 consecutive hours, including empty hours, and forces one `HourNotFinished` revert. It writes `e2e/chit-simple/tamper-matrix.json`. Every tamper row has a non-zero `exit`. `T17` is HTTP 202: the proof stays unreleased.
+That command also anchors 24 consecutive hours, including empty hours, and forces one `HourNotFinished` revert. It writes `e2e/chit-simple/tamper-matrix.json`. Every tamper row has a non-zero `exit`. `T17` is HTTP 202: the same tuple anchored from a second contract is not released. `T16b` and `T16c` are exit 2 because the payment slot fields are required.
 
 ## Sepolia
 

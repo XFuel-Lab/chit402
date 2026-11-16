@@ -6,7 +6,8 @@ import { mkdirSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bytesToHex } from '../../packages/cs2-core/ecdsa/bytes.js';
-import { SECP256K1, eip1559Digest, eip1559Serialize, eip1559TxHash, ethereumAddress } from '../../packages/cs2-core/ecdsa/index.js';
+import { SECP256K1, eip1559Decode, eip1559Digest, eip1559Serialize, eip1559TxHash, ethereumAddress } from '../../packages/cs2-core/ecdsa/index.js';
+import { keccak256 } from '../../packages/cs2-core/ecdsa/keccak.js';
 import { publicPoint, signRawDigest } from '../../packages/cs2-core/ecdsa/sign.js';
 import { LAYOUT, encodeLine } from '../../packages/cs2-core/line/index.mjs';
 import { SAMPLE } from '../../packages/cs2-core/line/sample.mjs';
@@ -20,6 +21,8 @@ import { makeSnapshot } from './snapshot.mjs';
 
 const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const AUTH = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5';
+const ANCHORED_TOPIC = `0x${bytesToHex(keccak256(new TextEncoder().encode('Anchored(uint64,uint64,uint64,bytes32,bytes32,uint8)')))}`;
+const ROTATE_TOPIC = `0x${bytesToHex(keccak256(new TextEncoder().encode('CheckpointKeyRotated(uint64,address,address)')))}`;
 const HOUR = 3600;
 const FEES = { gasLimit: '800000', maxFeePerGas: '2000000000', maxPriorityFeePerGas: '1000000000' };
 /** Well-known Hardhat account 1. A public development key, not a secret. */
@@ -71,15 +74,94 @@ async function sendRaw(provider, wire) {
   return hash;
 }
 
-export function observe(store, event, expect) {
-  if (Number(event.chainId) !== expect.chainId) return { ok: true, released: false };
-  if (String(event.contract).toLowerCase() !== expect.contract) return { ok: true, released: false };
-  if (String(event.from).toLowerCase() !== expect.checkpoint) return { ok: true, released: false };
-  return noteAnchored(store, { ...event, finalized: true });
+function topicOf(log) {
+  return String(log?.topics?.[0] || '').toLowerCase();
+}
+
+function wordAt(data, index) {
+  const body = String(data || '').replace(/^0x/i, '');
+  return body.slice(index * 64, (index + 1) * 64);
+}
+
+function addressWord(word) {
+  return `0x${word.slice(24)}`.toLowerCase();
+}
+
+/**
+ * One Anchored log is admissible when it is on the pinned chain, from the
+ * pinned contract, sent by the checkpoint current at that log, and in a
+ * block the chain already calls finalized.
+ */
+export function acceptAnchoredLog({ address, txFrom, checkpoint, chainId, blockNumber, finalizedNumber, contract }) {
+  if (Number(chainId) !== CHAIN_ID) return false;
+  if (String(address).toLowerCase() !== String(contract).toLowerCase()) return false;
+  if (String(txFrom).toLowerCase() !== String(checkpoint).toLowerCase()) return false;
+  if (finalizedNumber == null || BigInt(blockNumber) > BigInt(finalizedNumber)) return false;
+  return true;
+}
+
+function decodeAnchored(log) {
+  return {
+    epoch: Number(BigInt(log.topics[1])),
+    hourStart: Number(BigInt(log.topics[2])),
+    size: Number(BigInt(`0x${wordAt(log.data, 0)}`)),
+    root: wordAt(log.data, 1),
+    stateRoot: wordAt(log.data, 2),
+  };
+}
+
+/**
+ * Read Anchored logs from the chain and pass finalized ones to the store.
+ * CheckpointKeyRotated logs from the same contract move the accepted sender.
+ */
+export async function listenAnchored(loop, fromBlock = '0x0') {
+  const url = loop.rpcUrl;
+  const chainId = Number(await rpc('eth_chainId', [], url));
+  if (chainId !== CHAIN_ID) return { ok: true, released: false, reason: 'chain_id' };
+  const finalized = await rpc('eth_getBlockByNumber', ['finalized', false], url);
+  const finalizedNumber = finalized && finalized.number != null ? BigInt(finalized.number) : null;
+  const logs = await rpc('eth_getLogs', [{
+    fromBlock,
+    toBlock: 'latest',
+    topics: [[ANCHORED_TOPIC, ROTATE_TOPIC]],
+  }], url);
+  let checkpoint = String(loop.address).toLowerCase();
+  let last = { ok: true, released: false };
+  for (const log of logs) {
+    const topic = topicOf(log);
+    if (topic === ROTATE_TOPIC.toLowerCase()) {
+      if (String(log.address).toLowerCase() !== String(loop.anchor.address).toLowerCase()) continue;
+      const next = addressWord(wordAt(log.data, 2));
+      if (/^0x[0-9a-f]{40}$/.test(next)) checkpoint = next;
+      continue;
+    }
+    if (topic !== ANCHORED_TOPIC.toLowerCase()) continue;
+    const tx = await rpc('eth_getTransactionByHash', [log.transactionHash], url);
+    const txFrom = tx && typeof tx.from === 'string' ? tx.from : '';
+    if (!acceptAnchoredLog({
+      address: log.address,
+      txFrom,
+      checkpoint,
+      chainId,
+      blockNumber: log.blockNumber,
+      finalizedNumber,
+      contract: loop.anchor.address,
+    })) continue;
+    const decoded = decodeAnchored(log);
+    last = noteAnchored(loop.store, {
+      ...decoded,
+      finalized: true,
+      chainId,
+      contract: log.address,
+      from: txFrom,
+    });
+  }
+  return { ...last, checkpoint };
 }
 
 export async function openLoop() {
   const chain = await startChain();
+  try {
   const address = ethereumAddress(publicPoint(DEV_SCALAR, SECP256K1));
   if (address.toLowerCase() !== '0x70997970c51812dc3a010c7d01b50e0d17dc79c8') {
     throw new Error('dev key address does not match the Hardhat account');
@@ -125,6 +207,10 @@ export async function openLoop() {
     chain, anchor, usdc, store, sealer, clock, book, firstHour, snapshot, address,
     async stop() { await chain.stop(); },
   };
+  } catch (err) {
+    await chain.stop();
+    throw err;
+  }
 }
 
 async function mineAt(loop, atLeast) {
@@ -175,33 +261,25 @@ export async function pay(loop, nonce = bytesToHex(loop.sealer.randomBytes(32)))
   };
 }
 
-export async function sealHour(loop, hourStart, lines) {
+export async function sealHour(loop, hourStart, lines, send) {
   const started = Date.now();
   await mineAt(loop, Math.max(loop.clock.now, hourStart + HOUR));
   const closed = await closeHour(loop.sealer, {
     hourStart,
     lines,
     fees: FEES,
-    send: (wire) => sendRaw(loop.chain.provider, wire),
+    send: send || ((wire) => sendRaw(loop.chain.provider, wire)),
   });
   return { ...closed, elapsedMs: Date.now() - started };
 }
 
-export function release(loop, record) {
-  return observe(loop.store, {
-    epoch: record.epoch,
-    hourStart: record.hourStart,
-    size: record.size,
-    root: record.root,
-    stateRoot: record.stateRoot,
-    chainId: CHAIN_ID,
-    contract: loop.anchor.address,
-    from: loop.address,
-  }, {
-    chainId: CHAIN_ID,
-    contract: loop.anchor.address,
-    checkpoint: loop.address.toLowerCase(),
-  });
+export async function sendFrom(from, to, wire) {
+  const decoded = eip1559Decode(wire);
+  const data = decoded.data.startsWith('0x') ? decoded.data : `0x${decoded.data}`;
+  const hash = await rpc('eth_sendTransaction', [{ from, to, data, gas: '0x200000' }]);
+  const rec = await rpc('eth_getTransactionReceipt', [hash]);
+  if (!rec || rec.status !== '0x1') throw new Error('anchor from the rotated checkpoint reverted');
+  return hash;
 }
 
 export function receiptOf(body, contract) {
@@ -238,7 +316,7 @@ export async function runOnce() {
     const line = coreLine(payment);
     const closed = await sealHour(loop, loop.firstHour, [{ line, bookId: loop.book.id, bookPk: new Uint8Array(32).fill(9) }]);
     if (!closed.ok) throw new Error(closed.reason || 'close failed');
-    const noted = release(loop, closed.record);
+    const noted = await listenAnchored(loop);
     if (!noted.released) throw new Error('anchor was not released');
     const id = loop.sealer.state.commits.at(-1).receipts[0].id;
     const fetched = fetchReceipt(loop.store, { receiptId: id, bookId: loop.book.id, token: loop.book.token });

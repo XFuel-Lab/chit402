@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
@@ -13,20 +13,22 @@ import { keccak256 } from '../../../packages/cs2-core/ecdsa/keccak.js';
 import { eip1559TxHash, ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
 import { SECP256K1, eip1559Digest, eip1559Serialize } from '../../../packages/cs2-core/ecdsa/index.js';
 import { publicPoint, signRawDigest } from '../../../packages/cs2-core/ecdsa/sign.js';
-import { LAYOUT, KIND_PAYMENT, KIND_PAYTO, canonicalPaymentId, encodeLine, slotKey } from '../../../packages/cs2-core/line/index.mjs';
+import { LAYOUT, KIND_PAYMENT, KIND_PAYTO, KIND_WALLET, canonicalPaymentId, encodeLine, slotKey } from '../../../packages/cs2-core/line/index.mjs';
 import { SAMPLE } from '../../../packages/cs2-core/line/sample.mjs';
 import { leafHash } from '../../../packages/cs2-core/merkle/index.js';
 import { deriveKeyPair } from '../../../packages/cs2-core/seal/hpke.js';
 import { openLineAny } from '../../../packages/cs2-core/seal/index.js';
-import { getLeaf } from '../../../packages/cs2-core/smt/index.mjs';
+import { encodeHistory, getLeaf, placeHistory } from '../../../packages/cs2-core/smt/index.mjs';
 import { ANCHOR_SELECTOR, ANCHOR_SIGNATURE, buildAnchorCalldata } from '../../../services/chit-sealer/calldata.js';
 import { closeHour, openSealer } from '../../../services/chit-sealer/close.js';
 import { commitAnchorIntent } from '../../../services/chit-sealer/kms-secp256k1.js';
 import { openAnchorIntentLog } from '../../../services/chit-sealer/kms-secp256k1.js';
 import { fetchReceipt, noteAnchored, openStore, sealedHeld } from '../../../services/chit-store/store.js';
+import { acceptAnchoredLog } from '../loop.mjs';
 import {
   AUTHORIZATION_USED_TOPIC0,
   MAX_TREE_SIZE,
+  PAYMENT_SLOT_MISSING,
   TRANSFER_TOPIC0,
   paymentStatus,
   runV13,
@@ -277,6 +279,7 @@ describe('p0-9 sealer, store, and verifier', { concurrency: false }, () => {
       from: DUMMY_ADDRESS,
     };
     assert.equal(noteAnchored(store, { ...base, contract: `0x${'44'.repeat(20)}` }).released, false);
+    assert.equal(noteAnchored(store, { ...base, chainId: CHAIN_ID + 1 }).released, false);
     assert.equal(noteAnchored(store, { ...base, from: `0x${'55'.repeat(20)}` }).released, false);
     const capped = noteAnchored(store, { ...base, size: Number.MAX_SAFE_INTEGER + 1 });
     assert.equal(capped.reason, 'uint64_above_cap');
@@ -326,6 +329,78 @@ describe('p0-9 sealer, store, and verifier', { concurrency: false }, () => {
     });
     assert.equal(unbound.exit, 1);
     assert.equal(unbound.reason, 'payment_mismatch');
+    const bare = dummyReceipt();
+    delete bare.paymentProof;
+    delete bare.saltedBook;
+    const both = runV13(bare, world(line), hooks());
+    assert.equal(both.exit, 2);
+    assert.equal(both.reason, 'payment_unchecked');
+    assert.equal(both.message, PAYMENT_SLOT_MISSING);
+    const proofOnly = dummyReceipt();
+    delete proofOnly.saltedBook;
+    const saltOnly = dummyReceipt();
+    delete saltOnly.paymentProof;
+    assert.equal(runV13(proofOnly, world(line), hooks()).message, PAYMENT_SLOT_MISSING);
+    assert.equal(runV13(saltOnly, world(line), hooks()).message, PAYMENT_SLOT_MISSING);
+  });
+
+  test('a drawn book salt is the same when the store is reopened before any commit', () => {
+    const { store, root } = fresh([BOOK_A]);
+    const salt = Buffer.from(store.bookRecord(BOOK_A.id).bookSalt).toString('hex');
+    const mode = statSync(join(root, 'store', 'store-state.json')).mode & 0o777;
+    assert.equal(mode, 0o600);
+    const again = openStore(join(root, 'store'), { books: [BOOK_A] });
+    assert.equal(Buffer.from(again.bookRecord(BOOK_A.id).bookSalt).toString('hex'), salt);
+  });
+
+  test('a wallet history that is already present survives a payment', async () => {
+    const { sealer } = fresh([BOOK_A]);
+    const from = Uint8Array.from(Buffer.from(PAYER.slice(2), 'hex'));
+    const history = encodeHistory({
+      kind: KIND_WALLET,
+      chainId: BigInt(CHAIN_ID),
+      id: from,
+      records: [{
+        seq: 0n,
+        block: 1n,
+        fromBlock: null,
+        id: new Uint8Array(32).fill(7),
+        type: 4,
+        sig: Uint8Array.of(1),
+      }],
+    });
+    assert.equal(history.ok, true, history.reason);
+    const placed = placeHistory(sealer.state.tree, history.bytes);
+    assert.equal(placed.ok, true, placed.reason);
+    sealer.state.tree = placed.tree;
+    const closed = await closeHour(sealer, {
+      hourStart: 0,
+      lines: [{ line: coreLine(), bookId: BOOK_A.id }],
+      fees: FEES,
+      send: sendOk(),
+    });
+    assert.equal(closed.ok, true, closed.reason);
+    const found = getLeaf(sealer.state.tree, placed.slotKey.bytes);
+    assert.equal(Buffer.from(found.value).toString('hex'), Buffer.from(history.bytes).toString('hex'));
+  });
+
+  test('the listener keeps a log that fails the contract, the sender, or finality', () => {
+    const contract = CONTRACT;
+    const checkpoint = DUMMY_ADDRESS;
+    const ok = {
+      address: contract,
+      txFrom: checkpoint,
+      checkpoint,
+      chainId: 84532,
+      blockNumber: '0x10',
+      finalizedNumber: 0x10n,
+      contract,
+    };
+    assert.equal(acceptAnchoredLog(ok), true);
+    assert.equal(acceptAnchoredLog({ ...ok, address: `0x${'44'.repeat(20)}` }), false);
+    assert.equal(acceptAnchoredLog({ ...ok, txFrom: `0x${'55'.repeat(20)}` }), false);
+    assert.equal(acceptAnchoredLog({ ...ok, finalizedNumber: 0x0fn }), false);
+    assert.equal(acceptAnchoredLog({ ...ok, chainId: 84533 }), false);
   });
 });
 
@@ -391,6 +466,8 @@ function dummyReceipt() {
     epoch: 1,
     contract: CONTRACT,
     proof: [],
+    paymentProof: '11'.repeat(32),
+    saltedBook: '22'.repeat(32),
   };
 }
 
@@ -445,5 +522,6 @@ function hooks() {
     leafHash: () => ({ ok: true, hash: new Uint8Array(32).fill(1) }),
     verifyInclusion: () => ({ ok: true }),
     stateOk: () => true,
+    paymentOk: () => ({ ok: true, exit: 0, reason: null }),
   };
 }

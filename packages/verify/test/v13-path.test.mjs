@@ -61,7 +61,7 @@ setDefaultResultOrder('ipv4first');
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CORE = new URL('../../cs2-core/', import.meta.url);
 const { leafHash, nodeHash } = await import(new URL('merkle/index.js', CORE));
-const { encodeLine, commitments, slotKey, stateLeaf, stateNode, emptyHash, isAllowedAlg, LAYOUT } = await import(new URL('line/index.mjs', CORE));
+const { encodeLine, commitments, slotKey, stateLeaf, stateNode, emptyHash, isAllowedAlg, LAYOUT, canonicalPaymentId } = await import(new URL('line/index.mjs', CORE));
 const { checkSigma, verifyPossession, canonicalKey } = await import(new URL('eip712/index.mjs', CORE));
 const { keccak256 } = await import(new URL('ecdsa/keccak.js', CORE));
 const { sha256 } = await import(new URL('sha256.js', CORE));
@@ -480,6 +480,20 @@ function hexProof(bytes) {
   return Buffer.from(bytes).toString('hex');
 }
 
+function paymentLeaf(line, payment) {
+  const id = canonicalPaymentId(payment);
+  if (!id.ok) throw new Error(id.reason);
+  const key = slotKey({ kind: 0x07, chainId: payment.chainId, id: id.bytes });
+  if (!key.ok) throw new Error(key.reason);
+  const salted = createHash('sha256').update('v13-fixture-book').digest();
+  const leaf = leafHash(line).hash;
+  const value = createHash('sha256');
+  value.update(Buffer.from('cs2-pay-slot'));
+  value.update(salted);
+  value.update(leaf);
+  return { key: key.bytes, value: new Uint8Array(value.digest()), salted: new Uint8Array(salted) };
+}
+
 function signedLine(over = {}) {
   const { expiry: expiryOver, keyValue, ...paymentOver } = over;
   const expiry = expiryOver ?? 4_000_000_000n;
@@ -519,6 +533,8 @@ function signedLine(over = {}) {
     if (!payKey.ok || !keySlot) continue;
     const leaves = [{ key: payKey.bytes, value: slotValue }];
     if (keyValue && keyValue.length > 0) leaves.push({ key: keySlot, value: Buffer.from(keyValue) });
+    const paySlot = paymentLeaf(line, payment);
+    leaves.push({ key: paySlot.key, value: paySlot.value });
     const tree = treeOf(leaves);
     const prior = treeOf([]);
     built = {
@@ -532,6 +548,10 @@ function signedLine(over = {}) {
       keySlotProof: hexProof(tree.proof(keySlot)),
       priorSlotProof: hexProof(prior.proof(payKey.bytes)),
       priorKeyProof: hexProof(prior.proof(keySlot)),
+      paymentProof: hexProof(tree.proof(paySlot.key)),
+      saltedBook: Buffer.from(paySlot.salted).toString('hex'),
+      paySlotKey: hexOf(paySlot.key),
+      paySlotValue: hexOf(paySlot.value),
       admissionBlock: 80,
       signedDomain: {
         name: DOMAIN_NAME,
@@ -576,6 +596,8 @@ function v13Receipt(built, extra = {}) {
     priorSlotProof: built.priorSlotProof,
     priorKeyProof: built.priorKeyProof,
     signedDomain: built.signedDomain,
+    paymentProof: built.paymentProof,
+    saltedBook: built.saltedBook,
     ...extra.fields,
   };
 }
@@ -939,6 +961,7 @@ test('a head size above the cap is refused and the cap itself is passed to inclu
     },
     stateOk: () => true,
     sigmaOk: () => true,
+    paymentOk: () => ({ ok: true, exit: 0, reason: null }),
   };
   const high = runV13(v13Receipt(built), world(BigInt(MAX_TREE_SIZE) + 1n), hooks);
   assert.equal(high.exit, 1);
@@ -1245,6 +1268,7 @@ test('an earlier finalized epoch that already covers the index is not the first 
     verifyInclusion: () => ({ ok: true }),
     stateOk: () => true,
     sigmaOk: () => true,
+    paymentOk: () => ({ ok: true, exit: 0, reason: null }),
   };
   const covered = runV13(v13Receipt(built, { epoch: 2 }), world([event(1, 1), event(2, 2)]), hooks);
   assert.equal(covered.exit, 1);
@@ -1766,13 +1790,18 @@ test('a short opaque slot value with a matching proof is payment proven', async 
   const built = signedLine();
   const bare = Buffer.from(built.slotValue, 'hex').subarray(0, 33);
   const pay = slotKey({ kind: 1, chainId: 84532, id: built.payment.to });
-  const tree = treeOf([{ key: pay.bytes, value: bare }]);
+  const paySlotKey = Buffer.from(built.paySlotKey, 'hex');
+  const tree = treeOf([
+    { key: pay.bytes, value: bare },
+    { key: paySlotKey, value: Buffer.from(built.paySlotValue, 'hex') },
+  ]);
   const doc = bundleFor(key);
   const next = {
     ...built,
     slotValue: hexOf(bare),
     stateRoot: hexOf(tree.root),
     slotProof: hexProof(tree.proof(pay.bytes)),
+    paymentProof: hexProof(tree.proof(paySlotKey)),
   };
   const seen = await runScene(
     { payment: built.payment, logs: [okLog(next)] },
@@ -1985,9 +2014,14 @@ test('D12 a payment block past finalized is exit 2', async () => {
   const above = await runScene({ payment: built.payment, logs: [okLog(built)], payBlockNumber: `0x${(FIN + 1).toString(16)}` }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(above.v.exit_code, 2);
   assert.equal(above.v.reason, 'block_not_final');
-  // The finalized control uses the line's own block number. P-1 compares it
-  // with the chain header, and 0x64 is inside the finalized range.
-  const at = await runScene({ payment: built.payment, logs: [okLog(built)], payBlockNumber: '0x64' }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  // The line is built at the finalized block, and the header reports that
+  // same number. Equal to finalized is final. One past it is not.
+  const atBuilt = signedLine({ blockNumber: FIN });
+  const at = await runScene({
+    payment: atBuilt.payment,
+    logs: [okLog(atBuilt, { block: FIN })],
+    payBlockNumber: `0x${FIN.toString(16)}`,
+  }, v13Receipt(atBuilt), (u) => optionsFor(key, doc, u));
   assert.equal(at.v.exit_code, 0, at.v.reason);
 });
 
@@ -2075,12 +2109,15 @@ function rebuildSlot(built, slotHex, keyValue = null) {
   const keySlot = keySlotKey(84532, hash, sha256);
   const leaves = [{ key: payKey.bytes, value: v }];
   if (keyValue && keyValue.length > 0) leaves.push({ key: keySlot, value: Buffer.from(keyValue) });
+  const paySlotKey = Buffer.from(built.paySlotKey, 'hex');
+  leaves.push({ key: paySlotKey, value: Buffer.from(built.paySlotValue, 'hex') });
   const tree = treeOf(leaves);
   return {
     ...built,
     slotValue: slotHex,
     stateRoot: hexOf(tree.root),
     slotProof: hexProof(tree.proof(payKey.bytes)),
+    paymentProof: hexProof(tree.proof(paySlotKey)),
     keySlotProof: hexProof(tree.proof(keySlot)),
   };
 }

@@ -1,32 +1,38 @@
 {
   "label": "local",
   "samples": [
-    818,
-    34,
-    27,
-    29,
-    24,
+    850,
+    20,
+    21,
+    25,
+    21,
     27,
     31,
-    32,
     29,
+    30,
+    30,
+    33,
     34,
-    32,
-    35,
-    37,
-    37,
+    39,
+    43,
+    39,
     40,
-    42,
     36,
+    41,
+    41,
+    44,
+    42,
     47,
-    45,
-    44,
-    44,
-    48,
-    49,
-    51
+    52,
+    49
   ],
   "rows": [
+    {
+      "id": "T17",
+      "expected": 202,
+      "exit": 202,
+      "reason": "pending_anchor"
+    },
     {
       "id": "green",
       "expected": 0,
@@ -55,7 +61,7 @@
       "id": "T4",
       "expected": 1,
       "exit": 1,
-      "reason": "not_in_log"
+      "reason": "wrong_block_hash"
     },
     {
       "id": "T5",
@@ -131,10 +137,16 @@
       "reason": "payment_unchecked"
     },
     {
-      "id": "T17",
-      "expected": 202,
-      "exit": 202,
-      "reason": "pending_anchor"
+      "id": "T16b",
+      "expected": 2,
+      "exit": 2,
+      "reason": "payment_unchecked"
+    },
+    {
+      "id": "T16c",
+      "expected": 2,
+      "exit": 2,
+      "reason": "payment_unchecked"
     }
   ]
 }

@@ -21,5 +21,5 @@ test('p0-9 fast suite (gateway CI hook)', () => {
   ], { cwd: repo, encoding: 'utf8', env, timeout: 120_000 });
   const out = `${run.stdout || ''}\n${run.stderr || ''}`;
   assert.equal(run.status, 0, out.slice(-4000));
-  assert.match(out, /# pass 9/);
+  assert.match(out, /^# pass 12$/m);
 });

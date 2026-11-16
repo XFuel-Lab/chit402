@@ -565,11 +565,19 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
 
   test('the sealer does not broadcast an epoch the store has not committed', async () => {
     const io = { ...fs };
+    const storeWrites = new Map();
     io.openSync = (file, flag, mode) => {
-      if (String(file).endsWith(`${join('store', 'store-state.json')}.tmp`) || String(file).includes('store-state.json.tmp')) {
-        const err = new Error('ENOSPC');
-        err.code = 'ENOSPC';
-        throw err;
+      const name = String(file);
+      if (name.includes('store-state.json.tmp')) {
+        const dir = name.slice(0, name.lastIndexOf('store-state'));
+        const count = (storeWrites.get(dir) || 0) + 1;
+        storeWrites.set(dir, count);
+        // Open writes a freshly drawn book salt. The commit is the write that fails.
+        if (count > 1) {
+          const err = new Error('ENOSPC');
+          err.code = 'ENOSPC';
+          throw err;
+        }
       }
       return fs.openSync(file, flag, mode);
     };
