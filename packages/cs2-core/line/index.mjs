@@ -46,6 +46,8 @@ export const HEADER_BYTE_1 = 0x32;
 export const KIND_WALLET = 0x02;
 export const KIND_BOOK = 0x03;
 export const KIND_EPOCH = 0x04;
+/** One booking of a canonical payment. 0x06 stays the channel kind. */
+export const KIND_PAYMENT = 0x07;
 export { KIND_CHANNEL, KIND_KEY, KIND_PAYTO };
 
 /** Implementation limit for emptyHash. Not a wire field. */
@@ -80,6 +82,7 @@ const ID_LENGTH_BY_KIND = new Map([
   [KIND_BOOK, 32],
   [KIND_EPOCH, 0],
   [KIND_KEY, 32],
+  [KIND_PAYMENT, 46],
 ]);
 
 /** Ordered §S1 fields: name, width. Offsets are the running sum. */
@@ -670,8 +673,9 @@ function chainBytes(chainId) {
 
 /**
  * Slot key H("chit402-state-v1" ‖ kind ‖ chainId ‖ id).
- * Kind 0x05 is the key slot, id 32. Id width is 20 / 20 / 32 / 0 / 32.
- * Kinds 0x00 and 0x06–0xFF are reserved. 0x06 is the channel kind.
+ * Kind 0x05 is the key slot, id 32. Id width is 20 / 20 / 32 / 0 / 32 / 46.
+ * Kind 0x07 is the payment slot. Its id is the 46-byte canonical payment id.
+ * Kinds 0x00, 0x06, and 0x08–0xFF are reserved. 0x06 is the channel kind.
  * @param {{ kind: number, chainId: bigint | number | string, id: Uint8Array | string }} input
  */
 export function slotKey(input) {
