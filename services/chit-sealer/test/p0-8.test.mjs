@@ -63,6 +63,11 @@ function bookKey() {
 }
 
 const BOOK_PK = bookKey();
+const PAYER = `0x${'33'.repeat(20)}`;
+BOOK_A.bookPk = BOOK_PK;
+BOOK_A.wallets = [PAYER];
+BOOK_B.bookPk = BOOK_PK;
+BOOK_B.wallets = [PAYER];
 
 function tagged(n, fill) {
   const out = new Uint8Array(32);
@@ -249,14 +254,7 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
       send: sent.send,
     });
     assert.equal(closed.ok, true, closed.reason);
-    noteAnchored(store, {
-      finalized: true,
-      epoch: closed.record.epoch,
-      hourStart: closed.record.hourStart,
-      size: closed.record.size,
-      root: closed.record.root,
-      stateRoot: closed.record.stateRoot,
-    });
+    noteAnchored(store, anchorEvent(closed.record));
     const id = closedBodyId(store, BOOK_A);
     const unknown = fetchReceipt(store, { receiptId: '00'.repeat(16), bookId: BOOK_A.id, token: BOOK_A.token });
     const other = fetchReceipt(store, { receiptId: id, bookId: BOOK_B.id, token: BOOK_B.token });
@@ -517,7 +515,8 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const id = closedBodyId(store, BOOK_A);
     const before = fetchReceipt(store, { receiptId: id, bookId: BOOK_A.id, token: BOOK_A.token, payTo: '0x11'.padEnd(42, '1') });
     assert.equal(before.ok, false);
-    assert.deepEqual(before.body, STORE_BODY);
+    assert.equal(before.status, 202);
+    assert.deepEqual(before.body, pendingBody(closed.record.epoch));
     const mismatch = noteAnchored(store, {
       finalized: true,
       epoch: closed.record.epoch,
@@ -530,17 +529,13 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
     const still = fetchReceipt(store, { receiptId: id, bookId: BOOK_A.id, token: BOOK_A.token });
     assert.deepEqual(still, before);
     const unfinalized = noteAnchored(store, {
+      ...anchorEvent(closed.record),
       finalized: false,
-      epoch: closed.record.epoch,
-      hourStart: closed.record.hourStart,
-      size: closed.record.size,
-      root: closed.record.root,
-      stateRoot: closed.record.stateRoot,
     });
     assert.equal(unfinalized.released, false);
     const hidden = fetchReceipt(store, { receiptId: id, bookId: BOOK_A.id, token: BOOK_A.token });
-    assert.equal(hidden.status, STORE_STATUS);
-    assert.deepEqual(hidden.body, STORE_BODY);
+    assert.equal(hidden.status, 202);
+    assert.deepEqual(hidden.body, pendingBody(closed.record.epoch));
     const fields = [
       { epoch: closed.record.epoch + 1 },
       { hourStart: closed.record.hourStart + HOUR },
@@ -548,28 +543,13 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
       { stateRoot: '11'.repeat(32) },
     ];
     for (const patch of fields) {
-      const noted = noteAnchored(store, {
-        finalized: true,
-        epoch: closed.record.epoch,
-        hourStart: closed.record.hourStart,
-        size: closed.record.size,
-        root: closed.record.root,
-        stateRoot: closed.record.stateRoot,
-        ...patch,
-      });
+      const noted = noteAnchored(store, anchorEvent(closed.record, patch));
       assert.equal(noted.released, false, JSON.stringify(patch));
       const fetched = fetchReceipt(store, { receiptId: id, bookId: BOOK_A.id, token: BOOK_A.token });
-      assert.equal(fetched.status, STORE_STATUS);
-      assert.deepEqual(fetched.body, STORE_BODY);
+      assert.equal(fetched.status, 202);
+      assert.deepEqual(fetched.body, pendingBody(closed.record.epoch));
     }
-    const matched = noteAnchored(store, {
-      finalized: true,
-      epoch: closed.record.epoch,
-      hourStart: closed.record.hourStart,
-      size: closed.record.size,
-      root: closed.record.root,
-      stateRoot: closed.record.stateRoot,
-    });
+    const matched = noteAnchored(store, anchorEvent(closed.record));
     assert.equal(matched.released, true);
     const after = fetchReceipt(store, {
       receiptId: id,
@@ -887,15 +867,27 @@ describe('p0-8 sealer and store', { concurrency: false }, () => {
   });
 });
 
-function release(store, record) {
-  const noted = noteAnchored(store, {
+function anchorEvent(record, extra = {}) {
+  return {
     finalized: true,
     epoch: record.epoch,
     hourStart: record.hourStart,
     size: record.size,
     root: record.root,
     stateRoot: record.stateRoot,
-  });
+    chainId: CHAIN_ID,
+    contract: CONTRACT,
+    from: DUMMY_ADDRESS,
+    ...extra,
+  };
+}
+
+function pendingBody(epoch) {
+  return { state: 'pending_anchor', epoch };
+}
+
+function release(store, record) {
+  const noted = noteAnchored(store, anchorEvent(record));
   assert.equal(noted.released, true);
 }
 

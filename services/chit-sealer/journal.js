@@ -17,7 +17,11 @@ import { createTree, treeFromLeaves } from '../../packages/cs2-core/smt/index.mj
 function atomicWrite(io, dir, file, text) {
   io.mkdirSync(dir, { recursive: true });
   const tmp = `${file}.tmp`;
+  if (typeof io.existsSync === 'function' && io.existsSync(tmp) && typeof io.chmodSync === 'function') {
+    io.chmodSync(tmp, 0o600);
+  }
   const fd = io.openSync(tmp, 'w', 0o600);
+  if (typeof io.fchmodSync === 'function') io.fchmodSync(fd, 0o600);
   try {
     const buf = Buffer.from(text);
     let offset = 0;
