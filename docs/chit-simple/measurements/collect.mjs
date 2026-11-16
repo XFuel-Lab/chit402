@@ -3,8 +3,11 @@
  *
  * Local λ is the close time from a local run, labeled local.
  * A Base Sepolia deposit observation is an input, not Δ_fin.
- * Q-R20: the Base sequencing window on the OP stack is about 12h.
- * See the deposit flow at docs.optimism.io and docs.base.org.
+ * Q-R20: the OP-stack sequencing window is 3600 L1 blocks, about 12h.
+ * https://specs.optimism.io/protocol/configurability.html
+ * https://docs.optimism.io/op-stack/protocol/derivation-pipeline
+ * https://docs.optimism.io/op-stack/bridging/deposit-flow
+ * Base sets the same window: https://docs.base.org/specifications/reference/configuration
  * A measured deposit latency is a lower bound only.
  *
  * This file is not a sealer. It does not send a transaction.
@@ -43,7 +46,7 @@ function localLambda() {
       min: sorted[0],
       median: mid,
       max: sorted[sorted.length - 1],
-      note: 'Close time on the local Hardhat chain. Not a Sepolia figure.',
+      note: 'Local sealer close time on the Hardhat chain. Not anchor inclusion latency. Not a Sepolia figure.',
     };
   } catch {
     return { label: 'local', status: 'pending: needs a local run' };
@@ -55,13 +58,13 @@ try {
   const chainId = await rpc('eth_chainId', []);
   const latest = await rpc('eth_getBlockByNumber', ['latest', false]);
   deposit = {
-    status: 'head_observed',
+    status: 'pending: not derived',
     chain: 'base-sepolia',
     chainId,
     block: latest?.number ?? null,
     timestamp: latest?.timestamp ?? null,
     lowerBoundOnly: true,
-    note: 'The public head answered. A deposit latency was not derived from this head. Q-R20 sequences on a window of about 12h; a measured deposit, when one exists, is a lower bound and is not Δ_fin.',
+    note: 'The public head answered. Deposit latency is pending: not derived. A measured deposit, when one exists, is a lower bound only and is not Δ_fin.',
   };
 } catch (err) {
   deposit = {
@@ -76,7 +79,7 @@ const report = {
   collectedAt: new Date().toISOString(),
   lambda: localLambda(),
   deposit,
-  citation: 'Q-R20. Base sequencing window, OP stack, about 12h. docs.optimism.io deposit flow and docs.base.org.',
+  citation: 'Q-R20. OP-stack sequencing window, 3600 L1 blocks (about 12h): https://specs.optimism.io/protocol/configurability.html https://docs.optimism.io/op-stack/protocol/derivation-pipeline . Deposit flow: https://docs.optimism.io/op-stack/bridging/deposit-flow . Base sets the same window: https://docs.base.org/specifications/reference/configuration .',
 };
 writeFileSync(join(here, 'local.json'), `${JSON.stringify(report, null, 2)}\n`);
 process.stdout.write(`${JSON.stringify(report)}\n`);

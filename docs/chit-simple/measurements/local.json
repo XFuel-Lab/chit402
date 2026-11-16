@@ -7,16 +7,16 @@
     "min": 24,
     "median": 37,
     "max": 818,
-    "note": "Close time on the local Hardhat chain. Not a Sepolia figure."
+    "note": "Local sealer close time on the Hardhat chain. Not anchor inclusion latency. Not a Sepolia figure."
   },
   "deposit": {
-    "status": "head_observed",
+    "status": "pending: not derived",
     "chain": "base-sepolia",
     "chainId": "0x14a34",
     "block": "0x38e9361",
     "timestamp": "0x6afb5806",
     "lowerBoundOnly": true,
-    "note": "The public head answered. A deposit latency was not derived from this head. Q-R20 sequences on a window of about 12h; a measured deposit, when one exists, is a lower bound and is not Δ_fin."
+    "note": "The public head answered. Deposit latency is pending: not derived. A measured deposit, when one exists, is a lower bound only and is not Δ_fin."
   },
-  "citation": "Q-R20. Base sequencing window, OP stack, about 12h. docs.optimism.io deposit flow and docs.base.org."
+  "citation": "Q-R20. OP-stack sequencing window, 3600 L1 blocks (about 12h): https://specs.optimism.io/protocol/configurability.html https://docs.optimism.io/op-stack/protocol/derivation-pipeline . Deposit flow: https://docs.optimism.io/op-stack/bridging/deposit-flow . Base sets the same window: https://docs.base.org/specifications/reference/configuration ."
 }
