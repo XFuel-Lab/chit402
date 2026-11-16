@@ -16,10 +16,11 @@ test('p0-9 fast suite (gateway CI hook)', () => {
   delete env.NODE_TEST_CONTEXT;
   const run = spawnSync(process.execPath, [
     '--test',
+    '--test-reporter=tap',
     '--test-concurrency=1',
     'e2e/chit-simple/test/fast.test.mjs',
   ], { cwd: repo, encoding: 'utf8', env, timeout: 120_000 });
   const out = `${run.stdout || ''}\n${run.stderr || ''}`;
   assert.equal(run.status, 0, out.slice(-4000));
-  assert.match(out, /^# pass 12$/m);
+  assert.match(out, /^(?:# |ℹ )pass 12$/m);
 });
