@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bytesToHex } from '../../packages/cs2-core/ecdsa/bytes.js';
 import { SECP256K1, eip1559Decode, eip1559Digest, eip1559Serialize, eip1559TxHash, ethereumAddress } from '../../packages/cs2-core/ecdsa/index.js';
-import { keccak256 } from '../../packages/cs2-core/ecdsa/keccak.js';
 import { publicPoint, signRawDigest } from '../../packages/cs2-core/ecdsa/sign.js';
 import { LAYOUT, encodeLine } from '../../packages/cs2-core/line/index.mjs';
 import { SAMPLE } from '../../packages/cs2-core/line/sample.mjs';
@@ -16,14 +15,12 @@ import { closeHour, openSealer } from '../../services/chit-sealer/close.js';
 import { buildAnchorCalldata } from '../../services/chit-sealer/calldata.js';
 import { fetchReceipt, noteAnchored, openStore } from '../../services/chit-store/store.js';
 import { checkReceiptInput } from '../../packages/verify/dist/check-input.js';
-import { acceptAnchoredLog } from './anchored.mjs';
+import { ANCHORED_TOPIC, ROTATE_TOPIC, admitListenerLogs, startingCheckpoint } from './anchored.mjs';
 import { CHAIN_ID, USDC, deployAnchor, installUsdc, rpc, startChain } from './chain.mjs';
 import { makeSnapshot } from './snapshot.mjs';
 
 const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const AUTH = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5';
-const ANCHORED_TOPIC = `0x${bytesToHex(keccak256(new TextEncoder().encode('Anchored(uint64,uint64,uint64,bytes32,bytes32,uint8)')))}`;
-const ROTATE_TOPIC = `0x${bytesToHex(keccak256(new TextEncoder().encode('CheckpointKeyRotated(uint64,address,address)')))}`;
 const HOUR = 3600;
 const FEES = { gasLimit: '800000', maxFeePerGas: '2000000000', maxPriorityFeePerGas: '1000000000' };
 /** Well-known Hardhat account 1. A public development key, not a secret. */
@@ -75,39 +72,18 @@ async function sendRaw(provider, wire) {
   return hash;
 }
 
-function topicOf(log) {
-  return String(log?.topics?.[0] || '').toLowerCase();
-}
-
-function wordAt(data, index) {
-  const body = String(data || '').replace(/^0x/i, '');
-  return body.slice(index * 64, (index + 1) * 64);
-}
-
-function addressWord(word) {
-  return `0x${word.slice(24)}`.toLowerCase();
-}
-
 export { acceptAnchoredLog } from './anchored.mjs';
-
-function decodeAnchored(log) {
-  return {
-    epoch: Number(BigInt(log.topics[1])),
-    hourStart: Number(BigInt(log.topics[2])),
-    size: Number(BigInt(`0x${wordAt(log.data, 0)}`)),
-    root: wordAt(log.data, 1),
-    stateRoot: wordAt(log.data, 2),
-  };
-}
 
 /**
  * Read Anchored logs from the chain and pass finalized ones to the store.
- * CheckpointKeyRotated logs from the same contract move the accepted sender.
+ * The pin supplies the chain id, the contract, and the checkpoint the walk
+ * starts from. CheckpointKeyRotated moves that checkpoint only from a
+ * finalized block of the same contract.
  */
 export async function listenAnchored(loop, fromBlock = '0x0') {
   const url = loop.rpcUrl;
-  const chainId = Number(await rpc('eth_chainId', [], url));
-  if (chainId !== CHAIN_ID) return { ok: true, released: false, reason: 'chain_id' };
+  const pin = loop.pin;
+  const observedChainId = Number(await rpc('eth_chainId', [], url));
   const finalized = await rpc('eth_getBlockByNumber', ['finalized', false], url);
   const finalizedNumber = finalized && finalized.number != null ? BigInt(finalized.number) : null;
   const logs = await rpc('eth_getLogs', [{
@@ -115,38 +91,32 @@ export async function listenAnchored(loop, fromBlock = '0x0') {
     toBlock: 'latest',
     topics: [[ANCHORED_TOPIC, ROTATE_TOPIC]],
   }], url);
-  let checkpoint = String(loop.address).toLowerCase();
-  let last = { ok: true, released: false };
+  const senders = new Map();
   for (const log of logs) {
-    const topic = topicOf(log);
-    if (topic === ROTATE_TOPIC.toLowerCase()) {
-      if (String(log.address).toLowerCase() !== String(loop.anchor.address).toLowerCase()) continue;
-      const next = addressWord(wordAt(log.data, 2));
-      if (/^0x[0-9a-f]{40}$/.test(next)) checkpoint = next;
-      continue;
-    }
-    if (topic !== ANCHORED_TOPIC.toLowerCase()) continue;
-    const tx = await rpc('eth_getTransactionByHash', [log.transactionHash], url);
-    const txFrom = tx && typeof tx.from === 'string' ? tx.from : '';
-    if (!acceptAnchoredLog({
-      address: log.address,
-      txFrom,
-      checkpoint,
-      chainId,
-      blockNumber: log.blockNumber,
-      finalizedNumber,
-      contract: loop.anchor.address,
-    })) continue;
-    const decoded = decodeAnchored(log);
+    if (String(log?.topics?.[0] || '').toLowerCase() !== ANCHORED_TOPIC.toLowerCase()) continue;
+    const hash = log.transactionHash;
+    if (senders.has(hash)) continue;
+    const tx = await rpc('eth_getTransactionByHash', [hash], url);
+    senders.set(hash, tx && typeof tx.from === 'string' ? tx.from : '');
+  }
+  const walked = admitListenerLogs({
+    pin,
+    observedChainId,
+    finalizedNumber,
+    logs,
+    txFromOf: (log) => senders.get(log.transactionHash) || '',
+  });
+  let last = { ok: true, released: false, reason: walked.reason };
+  for (const item of walked.admitted) {
     last = noteAnchored(loop.store, {
-      ...decoded,
+      ...item.decoded,
       finalized: true,
-      chainId,
-      contract: log.address,
-      from: txFrom,
+      chainId: observedChainId,
+      contract: item.log.address,
+      from: item.txFrom,
     });
   }
-  return { ...last, checkpoint };
+  return { ...last, checkpoint: walked.checkpoint || startingCheckpoint(pin) };
 }
 
 export async function openLoop() {
@@ -194,7 +164,7 @@ export async function openLoop() {
   };
   const snapshot = makeSnapshot(pin);
   return {
-    chain, anchor, usdc, store, sealer, clock, book, firstHour, snapshot, address,
+    chain, anchor, usdc, store, sealer, clock, book, firstHour, snapshot, address, pin,
     async stop() { await chain.stop(); },
   };
   } catch (err) {

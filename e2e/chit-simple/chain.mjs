@@ -6,21 +6,7 @@
  * The repo hardhat network stays 1337; this process uses a temp config.
  */
 import { createRequire } from 'node:module';
-import http, { createServer, request as httpRequest } from 'node:http';
-import { LISTENER_CHAIN_ID } from './anchored.mjs';
-
-// ethers attaches its request error listener after request.end(). A reset in
-// that gap is an uncaught exception and skips the chain's teardown.
-const rawRequest = http.request;
-http.request = function requestWithError(...args) {
-  const req = rawRequest.apply(this, args);
-  req.on('error', () => {});
-  return req;
-};
-process.on('unhandledRejection', (err) => {
-  if (err && (err.code === 'ECONNRESET' || err.code === 'ECONNREFUSED')) return;
-  throw err;
-});
+import { createServer, request as httpRequest } from 'node:http';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -33,7 +19,11 @@ const { ContractFactory, JsonRpcProvider, Wallet, keccak256 } = require('ethers'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '../..');
 
-export const CHAIN_ID = LISTENER_CHAIN_ID;
+/**
+ * Local Hardhat chain id. It matches the verifier's Base Sepolia USDC pin.
+ * The listener does not read this constant. It reads the loop pin.
+ */
+export const CHAIN_ID = 84532;
 export const USDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
 /** Well-known Hardhat account 0. A public development key, not a secret. */
 export const DEV_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
@@ -51,42 +41,74 @@ function compileMock() {
   return { abi: contract.abi, bytecode: `0x${contract.evm.bytecode.object}` };
 }
 
-function waitForRpc(url, child) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('local chain did not open')), 60_000);
-    const poll = async () => {
-      if (child.exitCode != null) {
-        clearTimeout(timer);
-        reject(new Error('local chain exited'));
-        return;
-      }
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
-          signal: AbortSignal.timeout(1000),
-        });
-        const body = await res.json();
-        if (body.result === '0x14a34') {
-          clearTimeout(timer);
-          const provider = new JsonRpcProvider(url, CHAIN_ID, { staticNetwork: true });
-          provider.pollingInterval = 20;
-          provider.on('error', () => {});
-          resolve(provider);
-          return;
-        }
-      } catch { /* not up yet */ }
-      setTimeout(poll, 200);
-    };
-    poll();
+function pause(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function postRpc(url, method, params) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal: AbortSignal.timeout(1500),
   });
+  if (!res.ok) throw new Error(`http ${res.status}`);
+  const body = await res.json();
+  if (body.error) throw new Error(body.error.message || method);
+  return body.result;
+}
+
+/**
+ * The node often resets the first socket while it is still booting.
+ * Retry that first call until a short streak of answers succeeds.
+ * The bound is the deadline. This is not a sleep before the first try.
+ * A later RPC failure is not retried here, so the e2e still fails on it.
+ */
+async function waitForRpc(url, child) {
+  const deadline = Date.now() + 60_000;
+  const streakNeed = 4;
+  let streak = 0;
+  let last = 'local chain did not open';
+  while (Date.now() < deadline) {
+    if (child.exitCode != null) throw new Error(`local chain exited: ${last}`);
+    let provider = null;
+    try {
+      const chainId = await postRpc(url, 'eth_chainId', []);
+      const block = chainId === '0x14a34' ? await postRpc(url, 'eth_blockNumber', []) : null;
+      if (chainId === '0x14a34' && typeof block === 'string') {
+        streak += 1;
+        if (streak >= streakNeed) {
+          provider = new JsonRpcProvider(url, CHAIN_ID, { staticNetwork: true });
+          provider.pollingInterval = 20;
+          const seen = await provider.send('eth_chainId', []);
+          if (seen === '0x14a34') return provider;
+          last = `provider chain id ${seen}`;
+          streak = 0;
+        } else {
+          continue;
+        }
+      } else {
+        streak = 0;
+        last = `chain id ${chainId}`;
+      }
+    } catch (err) {
+      streak = 0;
+      last = err && err.message ? err.message : 'rpc reset';
+    }
+    if (provider) provider.destroy?.();
+    await pause(100);
+  }
+  throw new Error(last);
 }
 
 function startProxy(targetPort, listenPort) {
   const state = { mutate: null };
   const server = createServer((req, res) => {
     const chunks = [];
+    req.on('error', () => {
+      if (!res.headersSent) res.writeHead(502);
+      res.end('{}');
+    });
     req.on('data', (chunk) => chunks.push(chunk));
     req.on('end', () => {
       const body = Buffer.concat(chunks);
@@ -98,6 +120,10 @@ function startProxy(targetPort, listenPort) {
         headers: { 'content-type': 'application/json', 'content-length': body.length },
       }, (up) => {
         const out = [];
+        up.on('error', () => {
+          if (!res.headersSent) res.writeHead(502);
+          res.end('{}');
+        });
         up.on('data', (chunk) => out.push(chunk));
         up.on('end', () => {
           let text = Buffer.concat(out).toString('utf8');
@@ -123,6 +149,9 @@ function startProxy(targetPort, listenPort) {
       });
       call.end(body);
     });
+  });
+  server.on('clientError', (_err, socket) => {
+    if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
   });
   return new Promise((resolve) => {
     server.listen(listenPort, '127.0.0.1', () => resolve({

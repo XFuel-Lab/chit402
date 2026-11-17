@@ -24,7 +24,7 @@ import { closeHour, openSealer } from '../../../services/chit-sealer/close.js';
 import { commitAnchorIntent } from '../../../services/chit-sealer/kms-secp256k1.js';
 import { openAnchorIntentLog } from '../../../services/chit-sealer/kms-secp256k1.js';
 import { fetchReceipt, noteAnchored, openStore, sealedHeld } from '../../../services/chit-store/store.js';
-import { acceptAnchoredLog } from '../anchored.mjs';
+import { ANCHORED_TOPIC, ROTATE_TOPIC, acceptAnchoredLog, admitListenerLogs, startingCheckpoint } from '../anchored.mjs';
 import {
   AUTHORIZATION_USED_TOPIC0,
   MAX_TREE_SIZE,
@@ -392,6 +392,7 @@ describe('p0-9 sealer, store, and verifier', { concurrency: false }, () => {
       txFrom: checkpoint,
       checkpoint,
       chainId: 84532,
+      pinnedChainId: 84532,
       blockNumber: '0x10',
       finalizedNumber: 0x10n,
       contract,
@@ -401,8 +402,137 @@ describe('p0-9 sealer, store, and verifier', { concurrency: false }, () => {
     assert.equal(acceptAnchoredLog({ ...ok, txFrom: `0x${'55'.repeat(20)}` }), false);
     assert.equal(acceptAnchoredLog({ ...ok, finalizedNumber: 0x0fn }), false);
     assert.equal(acceptAnchoredLog({ ...ok, chainId: 84533 }), false);
+    assert.equal(acceptAnchoredLog({ ...ok, pinnedChainId: 1 }), false);
+  });
+
+  test('a pin chain id that is not the node chain admits nothing', () => {
+    const pin = { chainId: 84532, address: CONTRACT, checkpoint: `0x${'11'.repeat(20)}` };
+    const logs = [anchoredLog(CONTRACT, '0x10', '0xaaa')];
+    const missed = admitListenerLogs({
+      pin,
+      observedChainId: 84533,
+      finalizedNumber: 0x10n,
+      logs,
+      txFromOf: () => pin.checkpoint,
+    });
+    assert.equal(missed.reason, 'chain_id');
+    assert.equal(missed.admitted.length, 0);
+    assert.equal(missed.checkpoint, pin.checkpoint);
+    const otherPin = admitListenerLogs({
+      pin: { ...pin, chainId: 1 },
+      observedChainId: 84532,
+      finalizedNumber: 0x10n,
+      logs,
+      txFromOf: () => pin.checkpoint,
+    });
+    assert.equal(otherPin.reason, 'chain_id');
+    assert.equal(otherPin.admitted.length, 0);
+    const matched = admitListenerLogs({
+      pin: { ...pin, chainId: 1 },
+      observedChainId: 1,
+      finalizedNumber: 0x10n,
+      logs,
+      txFromOf: () => pin.checkpoint,
+    });
+    assert.equal(matched.reason, null);
+    assert.equal(matched.admitted.length, 1);
+  });
+
+  test('a checkpoint rotation in a block that is not final is ignored until it is', () => {
+    const pinAddr = `0x${'11'.repeat(20)}`;
+    const next = `0x${'22'.repeat(20)}`;
+    const pin = { chainId: 84532, address: CONTRACT, checkpoint: pinAddr };
+    const logs = [
+      rotationLog(CONTRACT, '0x14', next),
+      anchoredLog(CONTRACT, '0x15', '0xabc'),
+    ];
+    const early = admitListenerLogs({
+      pin,
+      observedChainId: 84532,
+      finalizedNumber: 0x13n,
+      logs,
+      txFromOf: () => next,
+    });
+    assert.equal(early.checkpoint, pinAddr);
+    assert.equal(early.admitted.length, 0);
+    const atRotation = admitListenerLogs({
+      pin,
+      observedChainId: 84532,
+      finalizedNumber: 0x14n,
+      logs,
+      txFromOf: () => next,
+    });
+    assert.equal(atRotation.checkpoint, next);
+    assert.equal(atRotation.admitted.length, 0);
+    const final = admitListenerLogs({
+      pin,
+      observedChainId: 84532,
+      finalizedNumber: 0x15n,
+      logs,
+      txFromOf: () => next,
+    });
+    assert.equal(final.checkpoint, next);
+    assert.equal(final.admitted.length, 1);
+    const foreign = admitListenerLogs({
+      pin,
+      observedChainId: 84532,
+      finalizedNumber: 0x15n,
+      logs: [rotationLog(`0x${'44'.repeat(20)}`, '0x14', next)],
+      txFromOf: () => next,
+    });
+    assert.equal(foreign.checkpoint, pinAddr);
+  });
+
+  test('the listener starts from the pin checkpoint', () => {
+    const pinAddr = `0x${'ab'.repeat(20)}`;
+    const dev = `0x${'cd'.repeat(20)}`;
+    const pin = { chainId: 11155111, address: CONTRACT, checkpoint: pinAddr };
+    assert.equal(startingCheckpoint(pin), pinAddr);
+    assert.notEqual(startingCheckpoint(pin), dev);
+    const logs = [anchoredLog(CONTRACT, '0x10', '0xaaa')];
+    const fromPin = admitListenerLogs({
+      pin,
+      observedChainId: 11155111,
+      finalizedNumber: 0x10n,
+      logs,
+      txFromOf: () => pinAddr,
+    });
+    assert.equal(fromPin.checkpoint, pinAddr);
+    assert.equal(fromPin.admitted.length, 1);
+    const fromDev = admitListenerLogs({
+      pin,
+      observedChainId: 11155111,
+      finalizedNumber: 0x10n,
+      logs,
+      txFromOf: () => dev,
+    });
+    assert.equal(fromDev.checkpoint, pinAddr);
+    assert.equal(fromDev.admitted.length, 0);
   });
 });
+
+function padWord(hex) {
+  return String(hex).replace(/^0x/i, '').toLowerCase().padStart(64, '0');
+}
+
+function rotationLog(address, blockNumber, newAddr) {
+  return {
+    address,
+    blockNumber,
+    topics: [ROTATE_TOPIC],
+    data: `0x${padWord('2')}${padWord('0')}${padWord(newAddr)}`,
+  };
+}
+
+function anchoredLog(address, blockNumber, txHash) {
+  return {
+    address,
+    blockNumber,
+    transactionHash: txHash,
+    topics: [ANCHORED_TOPIC, `0x${'1'.padStart(64, '0')}`, `0x${'0'.padStart(64, '0')}`],
+    data: `0x${'80'.padStart(64, '0')}${'11'.repeat(32)}${'22'.repeat(32)}${'0'.padStart(64, '0')}`,
+  };
+}
 
 function sha256(buf) {
   return createHash('sha256').update(buf).digest('hex');

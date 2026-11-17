@@ -137,8 +137,8 @@
     {
       "id": "Q14",
       "file": "services/chit-store/store.js",
-      "find": "  pendingBody = owns && epoch.released === false",
-      "replace": "  pendingBody = epoch && epoch.released === false",
+      "find": "  const pending = owns && epoch.released === false",
+      "replace": "  const pending = epoch && epoch.released === false",
       "note": "tell a stranger the receipt is pending"
     },
     {
