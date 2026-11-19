@@ -33,7 +33,8 @@ function hostOf(url: string): string {
 
 export function isLoopbackRpc(url: string): boolean {
   const host = hostOf(url);
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  if (host === 'localhost' || host === '::1') return true;
+  return /^127(?:\.\d{1,3}){3}$/.test(host);
 }
 
 /**

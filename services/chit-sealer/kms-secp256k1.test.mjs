@@ -8,7 +8,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { bytesToBig, concat, hexToBytes } from '../../packages/cs2-core/ecdsa/bytes.js';
+import { bytesToBig, bytesToHex, concat, hexToBytes } from '../../packages/cs2-core/ecdsa/bytes.js';
+import { keccak256 } from '../../packages/cs2-core/ecdsa/keccak.js';
 import { P256, SECP256K1, eip1559Decode, eip1559Serialize } from '../../packages/cs2-core/ecdsa/index.js';
 import { highSDer, publicPoint, signRawDigest } from '../../packages/cs2-core/ecdsa/sign.js';
 import { rlpBytes, rlpInt, rlpList } from '../../packages/cs2-core/ecdsa/rlp.js';
@@ -22,6 +23,7 @@ import {
   openAnchorIntentLog,
   signCommittedAnchor,
 } from './kms-secp256k1.js';
+import { ANCHOR_SELECTOR, ANCHOR_SIGNATURE, buildAnchorCalldata } from './calldata.js';
 
 const q14 = JSON.parse(readFileSync(new URL('../../packages/cs2-core/ecdsa/vectors/q14-dry-run.json', import.meta.url), 'utf8'));
 
@@ -36,6 +38,16 @@ function env(extra = {}) {
 }
 
 function q14Anchor() {
+  const built = buildAnchorCalldata({
+    chainId: BigInt(q14.chainId),
+    contract: q14.contract,
+    epoch: q14.epoch,
+    hourStart: q14.hourStart,
+    size: q14.size,
+    root: q14.root,
+    stateRoot: q14.stateRoot,
+    proof: [],
+  });
   return {
     chainId: q14.chainId,
     to: q14.contract,
@@ -45,11 +57,12 @@ function q14Anchor() {
     size: q14.size,
     root: q14.root,
     stateRoot: q14.stateRoot,
-    calldata: q14.calldata,
+    calldata: built.calldata,
   };
 }
 
-function mockKms({ spki = q14.spki, signature = q14.kms_der_high_s, signError = null, keySpec = 'ECC_SECG_P256K1' } = {}) {
+function mockKms({ spki = q14.spki, signature = null, signError = null, keySpec = 'ECC_SECG_P256K1' } = {}) {
+  const d = 0xA11CEn;
   const calls = [];
   return {
     calls,
@@ -69,7 +82,20 @@ function mockKms({ spki = q14.spki, signature = q14.kms_der_high_s, signError = 
         };
       }
       if (signError) throw signError;
-      return { Signature: Buffer.from(signature, 'hex') };
+      if (signature != null) return { Signature: Buffer.from(signature, 'hex') };
+      const digest = new Uint8Array(command.input.Message);
+      let k = (bytesToBig(digest) % (SECP256K1.order - 3n)) + 2n;
+      let sig;
+      for (let i = 0; i < 4; i += 1) {
+        try {
+          sig = signRawDigest(digest, d, k, SECP256K1);
+          break;
+        } catch (err) {
+          if (err.code !== 'bad_nonce') throw err;
+          k += 1n;
+        }
+      }
+      return { Signature: highSDer(sig.raw, SECP256K1) };
     },
   };
 }
@@ -211,7 +237,30 @@ test('wrong key spec, usage, or address pin is refused', async () => {
 });
 
 test('Q14 dry-run: DIGEST, high-S DER, secp256k1 low-S, y-parity, intent before broadcast', async () => {
-  const client = mockKms();
+  const frozen = eip1559Decode(q14.raw);
+  assert.equal(frozen.data, q14.calldata);
+  const frozenS = BigInt(`0x${frozen.s}`);
+  const frozenHigh = SECP256K1.order - frozenS;
+  assert.equal(frozenS, bytesToBig(hexToBytes(q14.low_s).subarray(32)));
+  assert.notEqual(frozenS, P256.order - frozenHigh);
+  assert.equal(frozen.yParity, q14.y_parity);
+
+  const pinned = mockKms({ signature: q14.kms_der_high_s });
+  const pinnedSigner = await createCheckpointSigner({ client: pinned, env: env() });
+  const pinnedSig = await pinnedSigner.signDigest(hexToBytes(q14.digest));
+  const pinnedCall = pinned.calls.filter((call) => call.name === 'Sign').at(-1);
+  assert.equal(pinnedCall.input.MessageType, 'DIGEST');
+  assert.equal(pinnedCall.message.toString('hex'), q14.digest);
+  assert.equal(pinnedCall.input.SigningAlgorithm, 'ECDSA_SHA_256');
+  assert.equal(bytesToBig(pinnedSig.s), bytesToBig(hexToBytes(q14.low_s).subarray(32)));
+  assert.equal(pinnedSig.yParity, q14.y_parity);
+
+  const selector = bytesToHex(keccak256(new TextEncoder().encode(ANCHOR_SIGNATURE)).subarray(0, 4));
+  assert.equal(selector, ANCHOR_SELECTOR);
+  const anchor = q14Anchor();
+  assert.equal(anchor.calldata.slice(0, 8), selector);
+
+  const client = liveMock();
   const signer = await createCheckpointSigner({
     client,
     env: env({ CHIT_CHECKPOINT_ADDRESS: q14.address.toUpperCase().replace('0X', '0x') }),
@@ -231,12 +280,12 @@ test('Q14 dry-run: DIGEST, high-S DER, secp256k1 low-S, y-parity, intent before 
   const result = await broadcastAnchor({
     signer,
     log,
-    anchor: q14Anchor(),
+    anchor,
     fees: q14.fees,
     send(raw) {
       const rows = log.read();
       sawIntent = rows.some((row) => row.status === 'intent' && row.epoch === '1' && row.root === q14.root);
-      sawSigned = rows.some((row) => row.status === 'signed' && `0x${row.raw}` === q14.raw);
+      sawSigned = rows.some((row) => row.status === 'signed' && `0x${row.raw}` === raw);
       assert.ok(order.indexOf('write') < order.indexOf('fsync'));
       assert.ok(order.filter((step) => step === 'fsync').length >= 2);
       sent.push(raw);
@@ -245,20 +294,13 @@ test('Q14 dry-run: DIGEST, high-S DER, secp256k1 low-S, y-parity, intent before 
   });
   assert.equal(sawIntent, true);
   assert.equal(sawSigned, true);
-  assert.deepEqual(sent, [q14.raw]);
+  assert.equal(sent.length, 1);
   assert.equal(result.status, 'broadcast');
   assert.equal(result.tx, `0x${'ab'.repeat(32)}`);
-  const signCall = client.calls.filter((call) => call.name === 'Sign').at(-1);
-  assert.equal(signCall.input.MessageType, 'DIGEST');
-  assert.equal(signCall.message.toString('hex'), q14.digest);
-  assert.equal(signCall.input.SigningAlgorithm, 'ECDSA_SHA_256');
-  const decoded = eip1559Decode(q14.raw);
+  const decoded = eip1559Decode(sent[0]);
   const s = BigInt(`0x${decoded.s}`);
-  const highS = SECP256K1.order - s;
-  assert.equal(s, bytesToBig(hexToBytes(q14.low_s).subarray(32)));
-  assert.notEqual(s, P256.order - highS);
-  assert.equal(decoded.yParity, q14.y_parity);
-  assert.equal(decoded.data, q14.calldata);
+  assert.ok(s <= (SECP256K1.order >> 1n));
+  assert.equal(decoded.data, anchor.calldata);
   assert.equal(result.domain, q14.domain);
   assert.equal(result.hourStart, String(q14.hourStart));
 });
@@ -302,7 +344,8 @@ test('a live mock KMS signature round-trips and a second send reuses the raw byt
   const decoded = eip1559Decode(sent[0]);
   const s = BigInt(`0x${decoded.s}`);
   assert.ok(s <= (SECP256K1.order >> 1n));
-  assert.equal(decoded.data, q14.calldata);
+  assert.equal(decoded.data, anchor.calldata);
+  assert.equal(decoded.data.slice(0, 8), ANCHOR_SELECTOR);
   assert.equal(decoded.nonce, 0n);
 });
 
@@ -341,8 +384,8 @@ test('a rebuilt epoch at a used nonce is refused before another signature', asyn
     send() { return '0x' + '33'.repeat(32); },
   });
   const signs = client.calls.filter((call) => call.name === 'Sign').length;
-  const bytes = Buffer.from(q14.calldata, 'hex');
-  bytes.writeBigUInt64BE(2n, 32);
+  const bytes = Buffer.from(q14Anchor().calldata, 'hex');
+  bytes.writeBigUInt64BE(2n, 60);
   const rebuilt = { ...q14Anchor(), epoch: 2, calldata: bytes.toString('hex') };
   assert.throws(
     () => commitAnchorIntent(log, rebuilt, signer.address),
@@ -359,8 +402,8 @@ test('a different hour at the same nonce is refused', () => {
     () => commitAnchorIntent(log, { ...q14Anchor(), hourStart: hour }, q14.address),
     (err) => err.code === 'intent_payload_mismatch',
   );
-  const bytes = Buffer.from(q14.calldata, 'hex');
-  bytes.writeBigUInt64BE(BigInt(hour), 40);
+  const bytes = Buffer.from(q14Anchor().calldata, 'hex');
+  bytes.writeBigUInt64BE(BigInt(hour), 92);
   assert.throws(
     () => commitAnchorIntent(log, { ...q14Anchor(), hourStart: hour, calldata: bytes.toString('hex') }, q14.address),
     (err) => err.code === 'nonce_payload_conflict',
@@ -507,13 +550,22 @@ test('an empty address pin is refused before any KMS call', async () => {
 });
 
 test('calldata is checked at fixed offsets, including epoch, hour and size', () => {
-  const flipped = Buffer.from(q14.calldata, 'hex');
-  flipped[0] ^= 0xff;
+  const anchor = q14Anchor();
+  const selector = bytesToHex(keccak256(new TextEncoder().encode(ANCHOR_SIGNATURE)).subarray(0, 4));
+  assert.equal(anchor.calldata.slice(0, 8), selector);
+  const rotate = bytesToHex(keccak256(new TextEncoder().encode('rotateCheckpointKey(address,uint64)')).subarray(0, 4));
+  assert.notEqual(rotate, selector);
   assert.throws(
-    () => commitAnchorIntent(memoryLog().log, { ...q14Anchor(), calldata: flipped.toString('hex') }, q14.address),
+    () => commitAnchorIntent(memoryLog().log, { ...anchor, calldata: rotate + anchor.calldata.slice(8) }, q14.address),
     (err) => err.code === 'intent_payload_mismatch',
   );
-  const shifted = `00${q14.calldata}`;
+  const flipped = Buffer.from(anchor.calldata, 'hex');
+  flipped[0] ^= 0xff;
+  assert.throws(
+    () => commitAnchorIntent(memoryLog().log, { ...anchor, calldata: flipped.toString('hex') }, q14.address),
+    (err) => err.code === 'intent_payload_mismatch',
+  );
+  const shifted = `00${anchor.calldata}`;
   assert.throws(
     () => commitAnchorIntent(memoryLog().log, { ...q14Anchor(), calldata: shifted }, q14.address),
     (err) => err.code === 'intent_payload_mismatch',
@@ -530,8 +582,8 @@ test('calldata is checked at fixed offsets, including epoch, hour and size', () 
     () => commitAnchorIntent(memoryLog().log, { ...q14Anchor(), size: 2 }, q14.address),
     (err) => err.code === 'intent_payload_mismatch',
   );
-  const bytes = Buffer.from(q14.calldata, 'hex');
-  bytes.writeBigUInt64BE(7n, 32);
+  const bytes = Buffer.from(anchor.calldata, 'hex');
+  bytes.writeBigUInt64BE(7n, 60);
   const row = commitAnchorIntent(
     memoryLog().log,
     { ...q14Anchor(), epoch: 7, calldata: bytes.toString('hex') },

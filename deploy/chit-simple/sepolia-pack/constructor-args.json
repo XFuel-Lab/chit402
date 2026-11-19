@@ -1,0 +1,16 @@
+{
+  "chainId": 84532,
+  "network": "base-sepolia",
+  "contract": "ChitAnchor",
+  "constructor": {
+    "signature": "constructor(address checkpoint)",
+    "args": [
+      {
+        "name": "checkpoint",
+        "type": "address",
+        "example": "0x2222222222222222222222222222222222222222",
+        "note": "Testnet checkpoint address. The owner sets the real value at deploy time. This pack holds no key."
+      }
+    ]
+  }
+}

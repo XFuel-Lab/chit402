@@ -1,0 +1,5 @@
+{
+  "event": "Anchored(uint64 indexed epoch, uint64 indexed hourStart, uint64 size, bytes32 root, bytes32 stateRoot, uint8 kind)",
+  "signature": "Anchored(uint64,uint64,uint64,bytes32,bytes32,uint8)",
+  "topic0": "0xbc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e"
+}

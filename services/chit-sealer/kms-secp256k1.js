@@ -12,8 +12,9 @@
  * stop at the configured max fee. The checkpoint address pin is required.
  *
  * The domain is SHA-256("chit402-checkpoint-v1" || chainId || contract).
- * Calldata carries that domain, then epoch, hourStart, size, root and
- * stateRoot at fixed offsets.
+ * Calldata is the ABI encoding of anchor(...). The selector must be
+ * anchor, and the head words are domain, epoch, hourStart, size, root
+ * and stateRoot. Any other selector is refused.
  */
 
 import { createHash, createPublicKey } from 'node:crypto';
@@ -33,6 +34,7 @@ import {
   lowS,
   yParityByTrial,
 } from '../../packages/cs2-core/ecdsa/index.js';
+import { ANCHOR_SELECTOR } from './calldata.js';
 
 const CURVE = SECP256K1;
 const MESSAGE_TYPE = 'DIGEST';
@@ -194,16 +196,17 @@ function addressHex(value) {
   return bytesToHex(bytes);
 }
 
-function readU64(bytes, offset) {
+function readWord(word) {
   let value = 0n;
-  for (let i = 0; i < 8; i += 1) value = (value << 8n) | BigInt(bytes[offset + i]);
+  for (let i = 0; i < word.length; i += 1) value = (value << 8n) | BigInt(word[i]);
+  if (value > 0xffffffffffffffffn) throw coded('anchor field does not fit', 'intent_payload_mismatch');
   return value;
 }
 
 /**
- * Calldata prefix, fixed offsets, not a substring search:
- * domain 32, epoch u64, hourStart u64, size u64, root 32, stateRoot 32.
- * Bytes after that prefix (a consistency proof) are ignored here.
+ * ABI head of anchor(bytes32,uint64,uint64,uint64,bytes32,bytes32,bytes32[]).
+ * Selector, then six head words. The dynamic proof tail is not a field check.
+ * Any other selector, including rotateCheckpointKey, is refused.
  */
 function calldataFields(hex) {
   let bytes;
@@ -212,14 +215,18 @@ function calldataFields(hex) {
   } catch {
     throw coded('calldata is not hex', 'intent_payload_mismatch');
   }
-  if (bytes.length < 120) throw coded('calldata is shorter than the anchor fields', 'intent_payload_mismatch');
+  if (bytes.length < 4 + (7 * 32)) throw coded('calldata is shorter than the anchor head', 'intent_payload_mismatch');
+  if (bytesToHex(bytes.subarray(0, 4)) !== ANCHOR_SELECTOR) {
+    throw coded('calldata selector is not anchor', 'intent_payload_mismatch');
+  }
+  const word = (index) => bytes.subarray(4 + (index * 32), 4 + ((index + 1) * 32));
   return {
-    domain: bytesToHex(bytes.subarray(0, 32)),
-    epoch: readU64(bytes, 32),
-    hourStart: readU64(bytes, 40),
-    size: readU64(bytes, 48),
-    root: bytesToHex(bytes.subarray(56, 88)),
-    stateRoot: bytesToHex(bytes.subarray(88, 120)),
+    domain: bytesToHex(word(0)),
+    epoch: readWord(word(1)),
+    hourStart: readWord(word(2)),
+    size: readWord(word(3)),
+    root: bytesToHex(word(4)),
+    stateRoot: bytesToHex(word(5)),
   };
 }
 

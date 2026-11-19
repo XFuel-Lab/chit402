@@ -38,6 +38,7 @@ jobs:
           filters: |
             contracts:
               - 'contracts/**'
+              - 'deploy/**'
               - 'core-layer/**'
               - 'test/**'
               - 'hardhat.config.cjs'

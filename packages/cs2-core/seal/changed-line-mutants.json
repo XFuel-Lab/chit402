@@ -1,0 +1,159 @@
+{
+  "about": "Honest changed-line mutants for the HPKE context at 0c791f69, plus the tests that close C08/K11, C14, and C17. Score is killed / (killed + survived) over mutants only. equivalent is not scored.",
+  "reproduce": "node packages/cs2-core/seal/run-mutants.mjs --list packages/cs2-core/seal/changed-line-mutants.json",
+  "suite": {
+    "cwd": ".",
+    "argv": ["node", "--test", "--test-concurrency=1", "packages/cs2-core/seal/seal.test.mjs"]
+  },
+  "mutants": [
+    {
+      "id": "C01_seal_no_increment",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!ct) return fail('open_failed');\n  state.seq += 1;\n  return { ok: true, ct };",
+      "replace": "if (!ct) return fail('open_failed');\n  return { ok: true, ct };",
+      "note": "a successful seal reuses sequence 0"
+    },
+    {
+      "id": "C02_open_no_increment",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!pt) return fail('open_failed');\n  state.seq += 1;\n  return { ok: true, pt };",
+      "replace": "if (!pt) return fail('open_failed');\n  return { ok: true, pt };",
+      "note": "a successful open can be repeated"
+    },
+    {
+      "id": "C03_open_burns_on_failure",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!pt) return fail('open_failed');\n  state.seq += 1;",
+      "replace": "state.seq += 1;\n  if (!pt) return fail('open_failed');",
+      "note": "a bad tag advances the receiver"
+    },
+    {
+      "id": "C08_K11_seal_burns_on_failure",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!ct) return fail('open_failed');\n  state.seq += 1;",
+      "replace": "state.seq += 1;\n  if (!ct) return fail('open_failed');",
+      "note": "a failed seal advances the sender, so the next ciphertext is not receiver sequence 0"
+    },
+    {
+      "id": "C06_release_leaves_zero_key",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "wipeSchedule(state);\n  state.seq = null;\n  state.dead = true;",
+      "replace": "for (const name of ['key', 'baseNonce', 'exporterSecret', 'secret', 'sharedSecret']) {\n    if (state[name]) state[name].fill(0);\n  }",
+      "note": "release zeroes the key and then seal still runs"
+    },
+    {
+      "id": "C09_open_skips_tag_check",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "const pt = aeadOpen(state.key, nonce, aad, ct);\n  nonce.fill(0);\n  if (!pt) return fail('open_failed');\n",
+      "replace": "const pt = aeadOpen(state.key, nonce, aad, ct);\n  nonce.fill(0);\n",
+      "note": "a flipped ciphertext is returned as opened"
+    },
+    {
+      "id": "C11_seq_starts_at_one",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "seq: 0,\n    dead: false,",
+      "replace": "seq: 1,\n    dead: false,",
+      "note": "the first message is not sequence 0"
+    },
+    {
+      "id": "C12_open_uses_next_seq",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "export function contextOpen(ctx, aad, ct) {\n  const state = liveState(ctx);\n  const nonce = computeNonce(state.baseNonce, state.seq);",
+      "replace": "export function contextOpen(ctx, aad, ct) {\n  const state = liveState(ctx);\n  state.seq += 1;\n  const nonce = computeNonce(state.baseNonce, state.seq);",
+      "note": "the receiver opens at sequence 1 first"
+    },
+    {
+      "id": "C13_release_is_noop",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "const state = readState(ctx);\n  if (!state || state.dead) return;\n  wipeSchedule(state);\n  state.seq = null;\n  state.dead = true;",
+      "replace": "const state = readState(ctx);\n  if (!state || state.dead) return;",
+      "note": "release leaves the context able to seal"
+    },
+    {
+      "id": "C14_export_skips_closed_check",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "export function contextExport(ctx, exporterContext, length) {\n  const state = liveState(ctx);\n",
+      "replace": "export function contextExport(ctx, exporterContext, length) {\n  const state = { exporterSecret: ctx.exporterSecret };\n",
+      "note": "export after release returns a failure instead of throwing"
+    },
+    {
+      "id": "C15_export_drops_type_check",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!(exporterContext instanceof Uint8Array)) return fail('bad_type');\n  ",
+      "replace": "",
+      "note": "a non-bytes exporter context is not bad_type"
+    },
+    {
+      "id": "C17_spread_drops_context_state",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!role.ok) return role;\n  role.enc = encap.enc;\n  return role;",
+      "replace": "if (!role.ok) return role;\n  return { ...role, enc: encap.enc };",
+      "note": "a fresh sender handle has no context state, so seal throws instead of returning ok"
+    },
+    {
+      "id": "C18_receiver_spread_drops_state",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!decap.ok) return decap;\n  return scheduleRole(mode, decap.shared, info, psk, pskId);",
+      "replace": "if (!decap.ok) return decap;\n  return { ...scheduleRole(mode, decap.shared, info, psk, pskId) };",
+      "note": "a fresh receiver handle has no context state, so open throws instead of returning ok"
+    },
+    {
+      "id": "C19_sender_omits_enc",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "role.enc = encap.enc;\n  return role;",
+      "replace": "return role;",
+      "note": "setupS no longer returns the encapsulated key"
+    }
+  ],
+  "equivalent": [
+    {
+      "id": "E01_dead_flag_removed",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!state || state.dead || !state.key || !state.baseNonce)",
+      "replace": "if (!state || !state.key || !state.baseNonce)",
+      "reason": "release also nulls the key, so liveState still throws closed context before a zero key can be used"
+    },
+    {
+      "id": "E02_seq_null_removed",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "state.seq = null;\n  state.dead = true;",
+      "replace": "state.dead = true;",
+      "reason": "the dead flag throws before the sequence number is read"
+    },
+    {
+      "id": "E03_export_max_length_removed",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!Number.isSafeInteger(length) || length < 0 || length > 255 * NH) return fail('open_failed');",
+      "replace": "if (!Number.isSafeInteger(length) || length < 0) return fail('open_failed');",
+      "reason": "labeledExpand already returns null when expand throws, and contextExport maps that null to open_failed"
+    },
+    {
+      "id": "E04_export_negative_length_removed",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!Number.isSafeInteger(length) || length < 0 || length > 255 * NH) return fail('open_failed');",
+      "replace": "if (!Number.isSafeInteger(length) || length > 255 * NH) return fail('open_failed');",
+      "reason": "a negative length makes expand throw, and that throw is already mapped to open_failed"
+    },
+    {
+      "id": "E05_nonce_null_throw_removed",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "if (!nonce) throw new Error('closed context');\n  const ct = aeadSeal(state.key, nonce, aad, pt);",
+      "replace": "const ct = aeadSeal(state.key, nonce, aad, pt);",
+      "reason": "liveState already rejects every sequence number for which computeNonce returns null"
+    },
+    {
+      "id": "E06_expand_copy_not_wiped",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "const copy = out.slice();\n  out.fill(0);\n  return copy;",
+      "replace": "return out.slice();",
+      "reason": "the caller receives the copy, and nothing observes the discarded buffer"
+    },
+    {
+      "id": "E07_symbol_made_enumerable",
+      "file": "packages/cs2-core/seal/hpke.js",
+      "find": "Object.defineProperty(handle, STATE, { value: state });",
+      "replace": "Object.defineProperty(handle, STATE, { value: state, enumerable: true });",
+      "reason": "object spread still does not copy symbol keys, so a copied handle still cannot seal. Reflection that reads the getters is NIT-11 and is not this mutant."
+    }
+  ]
+}

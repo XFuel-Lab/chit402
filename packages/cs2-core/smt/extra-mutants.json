@@ -1,0 +1,125 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": [
+      "node",
+      "--test",
+      "--test-concurrency=1",
+      "packages/cs2-core/smt/smt.test.mjs"
+    ]
+  },
+  "mutants": [
+    {
+      "id": "D01_no_backward_branch",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (forward.extends) return { ok: true, equivocation: false };\n  return { ok: true, equivocation: true, reason: 'rule_5' };",
+      "replace": "  if (forward.extends) return { ok: true, equivocation: false };\n  const backward = extendsHistory(later.value, earlier.value);\n  if (backward.ok && backward.extends) return { ok: true, equivocation: false };\n  return { ok: true, equivocation: true, reason: 'rule_5' };",
+      "note": "a rollback is accepted because either history may extend the other"
+    },
+    {
+      "id": "D02_revoke_backdate",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "const afterPrev = block > epoch.prevAnchorBlock;",
+      "replace": "const afterPrev = true;",
+      "note": "an admission block may precede the previous anchor"
+    },
+    {
+      "id": "D06_epoch_chain",
+      "file": "packages/cs2-core/smt/epoch.mjs",
+      "find": "    if (chainId !== tree.epoch.chainId) return fail('bad_epoch');\n",
+      "replace": "",
+      "note": "epoch slot switches chain"
+    },
+    {
+      "id": "D09_idlen_byte",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (idLen === null || bytes[10] !== idLen) return fail('bad_kind');",
+      "replace": "  if (idLen === null) return fail('bad_kind');",
+      "note": "idLen byte unchecked"
+    },
+    {
+      "id": "D10_leave_without_join",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (state.active === null && !state.stopped) return 'rule_2';\n",
+      "replace": "",
+      "note": "leave with no active book"
+    },
+    {
+      "id": "D11_stop_without_active",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (state.active === null || state.stopped) return 'rule_2';",
+      "replace": "    if (state.stopped) return 'rule_2';",
+      "note": "STOP with no active book"
+    },
+    {
+      "id": "D14_unique_id",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (!reason && seen.has(idHex)) reason = 'rule_1';\n",
+      "replace": "",
+      "note": "duplicate record id accepted"
+    },
+    {
+      "id": "D16_proof_root_len",
+      "file": "packages/cs2-core/smt/tree.mjs",
+      "find": "  if (root.length !== 32) return { ok: false, reason: 'bad_length' };",
+      "replace": "  if (false && root.length !== 32) return { ok: false, reason: 'bad_length' };",
+      "note": "root length unchecked"
+    },
+    {
+      "id": "D17_low_s_equal",
+      "file": "packages/cs2-core/smt/sig.mjs",
+      "find": "  if (s > curve.order / 2n) return null;",
+      "replace": "  if (s > curve.order) return null;",
+      "note": "high-S accepted (both curves)"
+    },
+    {
+      "id": "D18_parity_27",
+      "file": "packages/cs2-core/smt/sig.mjs",
+      "find": "  if (v === 0 || v === 1) return v;\n  return null;",
+      "replace": "  if (v === 0 || v === 1) return v;\n  if (v === 27 || v === 28) return v - 27;\n  return null;",
+      "note": "27/28 accepted again"
+    },
+    {
+      "id": "D20_record_count_cap",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (count > MAX_RECORDS) return fail('bad_size');",
+      "replace": "  if (false) return fail('bad_size');",
+      "note": "record cap removed"
+    },
+    {
+      "id": "D21_wallet_kind_join",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "    if (decoded.kind !== KIND_WALLET) return 'rule_4';\n    if (!verifyWalletJoin",
+      "replace": "    if (!verifyWalletJoin",
+      "note": "join in a payTo slot"
+    },
+    {
+      "id": "E06_epoch_overlap_last",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "      if (found) return null;\n",
+      "replace": "",
+      "note": "overlapping epoch windows keep the last contract"
+    },
+    {
+      "id": "E14_derived_key",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  const derived = slotKey({ kind: older.kind, chainId: older.chainId, id: older.id });\n  if (!derived.ok || !equalBytes(derived.bytes, earlier.key)) return { ok: false, reason: 'bad_key' };\n",
+      "replace": "",
+      "note": "equivocation accepts a proof key that is not the slot key"
+    },
+    {
+      "id": "E15_different_keys",
+      "file": "packages/cs2-core/smt/history.mjs",
+      "find": "  if (!equalBytes(earlier.key, later.key)) return { ok: true, equivocation: false };\n",
+      "replace": "",
+      "note": "two proofs under different keys are still equivocation"
+    },
+    {
+      "id": "E22_until_hour",
+      "file": "packages/cs2-core/smt/sig.mjs",
+      "find": "hour >= entry.untilHour) continue;",
+      "replace": "hour > entry.untilHour) continue;",
+      "note": "the untilHour boundary stays inside the earlier contract"
+    }
+  ]
+}
