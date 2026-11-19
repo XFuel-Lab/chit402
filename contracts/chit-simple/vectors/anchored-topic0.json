@@ -1,0 +1,23 @@
+{
+  "schema": "chit402.cs2.chit-anchor-abi.v0",
+  "anchored": {
+    "event": "Anchored(uint64 indexed epoch, uint64 indexed hourStart, uint64 size, bytes32 root, bytes32 stateRoot, uint8 kind)",
+    "signature": "Anchored(uint64,uint64,uint64,bytes32,bytes32,uint8)",
+    "topic0": "0xbc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e",
+    "indexed": ["epoch", "hourStart"],
+    "data": ["size", "root", "stateRoot", "kind"],
+    "data_words": 4,
+    "kind_hourly": 0,
+    "kind_v0": 0,
+    "note": "Frozen event shape. v0 emits kind 0 only. Readers fetch by topic0 plus the indexed epoch and hourStart. topic0 is keccak256 of the canonical signature."
+  },
+  "checkpoint_key_rotated": {
+    "event": "CheckpointKeyRotated(uint64 version, address oldAddr, address newAddr)",
+    "signature": "CheckpointKeyRotated(uint64,address,address)",
+    "topic0": "0x95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3",
+    "indexed": [],
+    "data": ["version", "oldAddr", "newAddr"],
+    "data_words": 3,
+    "note": "v0 rotation log. No field is indexed. Version 1 is emitted from the constructor with oldAddr = 0."
+  }
+}

@@ -316,6 +316,8 @@ export function formatSupportedReceiptVersions(): string {
     '  unversioned JWS: outer version 4 or 5 and no field introduced at v6 or later (version_source: inferred),',
     '    and detached signatures: only by exact fingerprint on the bundled legacy list (empty in this release)',
     '  each version is accepted only inside its signed validity window (version-windows.json)',
+    '  v13 receipt file: exact JSON number v = 13 and schema chit402.cs2.receipt.v1.',
+    '    payload_version 13 is not that type and stays unsupported_version.',
     'Unknown versions fail closed: unsupported_version, exit 2.',
     `Use chit402-verify ${VERIFIER_MIN} or later.`,
     'Older verifiers may print VERIFIED for formats they do not understand.',

@@ -1,0 +1,152 @@
+{
+  "label": "local",
+  "samples": [
+    850,
+    20,
+    21,
+    25,
+    21,
+    27,
+    31,
+    29,
+    30,
+    30,
+    33,
+    34,
+    39,
+    43,
+    39,
+    40,
+    36,
+    41,
+    41,
+    44,
+    42,
+    47,
+    52,
+    49
+  ],
+  "rows": [
+    {
+      "id": "T17",
+      "expected": 202,
+      "exit": 202,
+      "reason": "pending_anchor"
+    },
+    {
+      "id": "green",
+      "expected": 0,
+      "exit": 0,
+      "reason": null
+    },
+    {
+      "id": "T1",
+      "expected": 1,
+      "exit": 1,
+      "reason": "bad_line"
+    },
+    {
+      "id": "T2",
+      "expected": 1,
+      "exit": 1,
+      "reason": "sigma_not_core"
+    },
+    {
+      "id": "T3",
+      "expected": 2,
+      "exit": 2,
+      "reason": "contract_not_pinned"
+    },
+    {
+      "id": "T4",
+      "expected": 1,
+      "exit": 1,
+      "reason": "wrong_block_hash"
+    },
+    {
+      "id": "T5",
+      "expected": 1,
+      "exit": 1,
+      "reason": "reorged"
+    },
+    {
+      "id": "T6",
+      "expected": 2,
+      "exit": 2,
+      "reason": "pre_anchor"
+    },
+    {
+      "id": "T7",
+      "expected": 1,
+      "exit": 1,
+      "reason": "caller_supplied_leaf"
+    },
+    {
+      "id": "T8",
+      "expected": 1,
+      "exit": 1,
+      "reason": "caller_supplied_tree_size"
+    },
+    {
+      "id": "T9",
+      "expected": 1,
+      "exit": 1,
+      "reason": "tree_size_above_cap",
+      "capHandled": true
+    },
+    {
+      "id": "T10",
+      "expected": 1,
+      "exit": 1,
+      "reason": "payment_mismatch"
+    },
+    {
+      "id": "T11",
+      "expected": 1,
+      "exit": 1,
+      "reason": "payment_mismatch"
+    },
+    {
+      "id": "T12",
+      "expected": 2,
+      "exit": 2,
+      "reason": "payment_unchecked"
+    },
+    {
+      "id": "T13",
+      "expected": 2,
+      "exit": 2,
+      "reason": "rpc_disagreement"
+    },
+    {
+      "id": "T14",
+      "expected": 1,
+      "exit": 1,
+      "reason": "payment_after_anchor"
+    },
+    {
+      "id": "T15",
+      "expected": 1,
+      "exit": 1,
+      "reason": "payment_mismatch"
+    },
+    {
+      "id": "T16",
+      "expected": 2,
+      "exit": 2,
+      "reason": "payment_unchecked"
+    },
+    {
+      "id": "T16b",
+      "expected": 2,
+      "exit": 2,
+      "reason": "payment_unchecked"
+    },
+    {
+      "id": "T16c",
+      "expected": 2,
+      "exit": 2,
+      "reason": "payment_unchecked"
+    }
+  ]
+}

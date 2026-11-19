@@ -1,0 +1,76 @@
+{
+  "schema": "chit402.cs2.eip712.v1",
+  "time_unit": "unix-seconds",
+  "note": "Test keys only. The payTo scalar and the P-256 slot scalar are different. keyHash is SHA-256(keyAlg byte || key).",
+  "mail_digest": "be609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2",
+  "domain_type": "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+  "domain_typehash": "8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f",
+  "domain_version": "13",
+  "payto_control_type": "PayToControl(address payTo,uint8 keyAlg,bytes key,uint64 expiry)",
+  "payto_control_typehash": "b9e05efa31ea59a2a8ac77cc79d6a17527044e22e7e405bcdfaca5acff598536",
+  "revoke_type": "Revoke(address payTo,bytes32 keyHash)",
+  "revoke_typehash": "2aeb7bf8ec5ccff9f1218f0ab19e7d665b0d89ccc5e0503a46ab127a50954dd7",
+  "revoke_by_key_type": "RevokeByKey(bytes32 keyHash)",
+  "revoke_by_key_typehash": "2e96eb7816c01c8d0909ca84eccb813c2247c52637e358a6fe9cf6ef3867d810",
+  "book_action_type": "BookAction(bytes32 bookId,bytes32 eventHash,uint8 kind,uint64 seq,uint64 expiry)",
+  "book_action_typehash": "58bbffdf9ac6c59d4b918eebe9c7969d31eadcea735111284b79725690eb2f25",
+  "statement_record_type": "StatementRecord(bytes32 bookId,uint64 period,uint32 version,bytes32 statementHash,uint64 expiry)",
+  "statement_record_typehash": "8fda3d505be7e9cb17131dff46f1fdbae1a5f5df241ef115725a3069cef0d663",
+  "domain_separator_a": "287774a9ecf90150f1f68c4baf51abd1f89fa021dddc11bf37e9fa5f64ad43c5",
+  "domain_separator_b": "66ee4e7fb7a9f83dfc317ce79f87f7c98c655e531eaa2edd6e76fe889c863d8e",
+  "test_key": "a11ce",
+  "payTo": "0xe05fcc23807536bee418f142d19fa0d21bb0cff7",
+  "key": "03267f6c57891109e8a1633c5747060cee2ff47d70e34d266dd91d3a57eef4cec8",
+  "key_hash": "27de8732d0eca8c16f5859eeba00d82d71023a5d815b7d1088d70305b42f13f0",
+  "signer": "0xe05fcc23807536bee418f142d19fa0d21bb0cff7",
+  "contract_a": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "contract_b": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "expiry_allows_admission": true,
+  "expiry_allows_later_hour": false,
+  "digest_a": "5413f7f684c8d9395365ddd214ec0d912a1d1bf01f432d19b671b83f97187f00",
+  "digest_b": "ec3d50b40541d69e9d44fafa83943e237b240303a2e8c2ffc379530201164ce2",
+  "signature_a": "0041e67297c220f8b7c77fc41471addd8f33ba612c64feb52e7b1cf6716589ae77490cc870a4e23ee41d83d32afbc60cce83bc4febd7c25745e06d43c99c971a233f010040bc37515ad5e40132ec347655eaf53c61739313ea6ab6191b11052f2dc2b0f92900375f8e562d829b982d9a566e12d3738dc233334aa5c98184e6e24fa37729b6",
+  "registry": [
+    {
+      "keyAlg": 1,
+      "curve": "P-256",
+      "encoding": "sec1-compressed",
+      "length": 33,
+      "launch": true
+    },
+    {
+      "keyAlg": 2,
+      "curve": "secp256k1",
+      "encoding": "sec1-compressed",
+      "length": 33,
+      "launch": false
+    }
+  ],
+  "negatives": {
+    "off_curve": {
+      "keyAlg": 1,
+      "key": "020000000000000000000000000000000000000000000000000000000000000001",
+      "reason": "bad_key"
+    },
+    "long_key": {
+      "keyAlg": 1,
+      "key": "047268876e19db7d7a651d55d5f3cd08b0f14f0f2d99ac383d56e705cc58b2de09272f3460d10844d9d8a77c0f6f5754c8e1c7fa3a58c6671f9199d8710af43878",
+      "reason": "bad_length"
+    },
+    "alg_00": {
+      "keyAlg": 0,
+      "key": "027268876e19db7d7a651d55d5f3cd08b0f14f0f2d99ac383d56e705cc58b2de09",
+      "reason": "bad_alg"
+    },
+    "alg_02": {
+      "keyAlg": 2,
+      "key": "027268876e19db7d7a651d55d5f3cd08b0f14f0f2d99ac383d56e705cc58b2de09",
+      "reason": "bad_alg"
+    },
+    "missing_alg": {
+      "key": "027268876e19db7d7a651d55d5f3cd08b0f14f0f2d99ac383d56e705cc58b2de09",
+      "reason": "bad_alg"
+    }
+  },
+  "slot_scalar": "1b147a4f7fed08c11251100c9620efa7768ea26a860eaecf940f8e439099d673"
+}

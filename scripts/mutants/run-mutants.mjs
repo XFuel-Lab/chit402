@@ -225,14 +225,37 @@ for (const name of suites) {
 const tally = {};
 for (const m of mutants) {
   let result;
+  let detail = m.note || '';
   try {
     if (!applyMutant(m)) result = 'NOT_APPLIED';
-    else result = mutantLabel((await runSuite(m.suite)).result);
+    else {
+      const ran = await runSuite(m.suite);
+      const compiled = !/Compiler run failed|Error \(\d+\):/.test(ran.out);
+      if (ran.result === 'FAIL' && !compiled && !/\[FAIL/.test(ran.out)) {
+        result = 'COMPILE_FAIL';
+      } else {
+        result = mutantLabel(ran.result);
+      }
+      if (result === 'KILLED') {
+        const names = [];
+        const re = /\[FAIL(?::[^\]]*)?\]\s+([A-Za-z0-9_]+)\(\)/g;
+        let hit;
+        while ((hit = re.exec(ran.out))) {
+          if (!names.includes(hit[1])) names.push(hit[1]);
+        }
+        if (names.length) {
+          detail = `${detail ? detail + ' | ' : ''}killed by ${names.join(', ')}`;
+          console.log(`KILLED_BY\t${m.id}\t${names.join(',')}`);
+        }
+      } else if (result !== 'SURVIVED') {
+        console.error(ran.out.slice(-2000));
+      }
+    }
   } finally {
     restoreAll();
   }
   tally[result] = (tally[result] || 0) + 1;
-  console.log(`MUT\t${m.id}\t${result}\t${m.note || ''}`);
+  console.log(`MUT\t${m.id}\t${result}\t${detail}`);
 }
 const dirty = touched.filter((f) => sha(join(root, f)) !== before[f]);
 const errored = tally.ERROR || 0;
