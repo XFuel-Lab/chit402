@@ -1159,6 +1159,34 @@ contract ChitAnchorTest is Test {
         vm.pauseGasMetering();
     }
 
+    function test_rotation_rejects_the_controller_address() public {
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.RotationToController.selector);
+        a.proposeRotation(ctrl, 2);
+        (uint8 kind,,,) = a.pendingAction();
+        assertEq(uint256(kind), 0, "slot stays empty");
+    }
+
+    function test_controller_change_rejects_the_checkpoint() public {
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.ControllerIsCheckpoint.selector);
+        a.proposeControllerChange(cp);
+        (uint8 kind,,,) = a.pendingAction();
+        assertEq(uint256(kind), 0, "slot stays empty");
+    }
+
+    function test_version_cannot_exceed_uint32() public {
+        uint64 cap = uint64(type(uint32).max);
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.BadVersion.selector);
+        a.proposeRotation(address(0xBEEF), cap + 1);
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), cap);
+        (uint8 kind,, uint64 version,) = a.pendingAction();
+        assertEq(uint256(kind), 1, "accepted");
+        assertEq(uint256(version), uint256(cap), "uint32 max");
+    }
+
     function test_gas_anchor_genesis() public {
         vm.pauseGasMetering();
         (bytes32 root,,) = _roots(1);

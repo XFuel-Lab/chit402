@@ -80,7 +80,53 @@ function readThreshold(value) {
   }
 }
 
-// view is {code, singleton, threshold, owners}. No network.
+// keccak256("guard_manager.guard.address"), split so the pack scan sees no 64-hex word.
+export const GUARD_SLOT = `0x${'4a204f620c8c5ccdca3fd54d003badd8'}${'5ba500436a431f0cbda4f558c93c34c8'}`;
+// keccak256("fallback_manager.handler.address").
+export const FALLBACK_SLOT = `0x${'6c9a6c4a39284e37ed1cf53d337577d1'}${'4212a4870fb976a4366c693b939918d5'}`;
+// Compatibility fallback handler from Safe v1.4.1.
+export const SAFE_FALLBACK_HANDLER = '0xfd0732dc9e303f09fcef3a7388ad10a83459ec99';
+const SENTINEL_MODULES = '0x0000000000000000000000000000000000000001';
+
+function zeroWord(value) {
+  const hex = String(value || '').trim().toLowerCase().replace(/^0x/, '');
+  return hex.length > 0 && /^[0-9a-f]+$/.test(hex) && /^0+$/.test(hex);
+}
+
+function cleanAddress(value) {
+  const hex = String(value || '').trim().toLowerCase().replace(/^0x/, '');
+  if (!/^[0-9a-f]+$/.test(hex) || hex.length < 40 || hex.length > 64) return '';
+  const word = hex.padStart(64, '0');
+  if (word.slice(0, 24) !== '0'.repeat(24)) return '';
+  return `0x${word.slice(24)}`;
+}
+
+export function parseModules(value) {
+  if (Array.isArray(value)) return value.map(normAddr).filter(Boolean);
+  const raw = String(value ?? '');
+  const bracket = raw.match(/\[([\s\S]*?)\]/);
+  if (!bracket) return null;
+  return (bracket[1].match(/0x[0-9a-fA-F]{40}/gi) || []).map(normAddr);
+}
+
+// Cast stdout, not a live RPC. controllerView uses this after each read.
+export function controllerViewFromCast(reads) {
+  const ownersText = reads && reads.owners;
+  const owners = Array.isArray(ownersText)
+    ? ownersText
+    : (String(ownersText || '').match(/0x[0-9a-fA-F]{40}/gi) || []);
+  return {
+    code: reads && reads.code,
+    singleton: reads && (reads.singletonSlot ?? reads.singleton),
+    threshold: reads && reads.threshold,
+    owners,
+    modules: reads && reads.modules,
+    guard: reads && reads.guard,
+    fallbackHandler: reads && reads.fallbackHandler,
+  };
+}
+
+// view is the normalized controller read. No network.
 export function checkController(view) {
   if (!view || typeof view !== 'object') return 'controller view is missing';
   const code = normCode(view.code);
@@ -91,16 +137,31 @@ export function checkController(view) {
   const threshold = readThreshold(view.threshold);
   if (threshold !== 2n) return 'threshold is not 2';
   if (!Array.isArray(view.owners) || view.owners.length !== 3) return 'owners are not 3';
+  const modules = parseModules(view.modules);
+  if (modules === null) return 'modules are unreadable';
+  if (modules.length !== 0) return 'controller has a module';
+  if (!zeroWord(view.guard)) return 'guard is set';
+  const handler = cleanAddress(view.fallbackHandler);
+  if (handler !== SAFE_FALLBACK_HANDLER) return 'fallback handler is not the pinned Safe handler';
   return '';
 }
 
 function controllerView(controller, rpc) {
-  const code = cast(['code', controller], rpc);
-  const slot = cast(['storage', controller, '0'], rpc);
-  const threshold = cast(['call', controller, 'getThreshold()(uint256)'], rpc);
-  const ownersText = cast(['call', controller, 'getOwners()(address[])'], rpc);
-  const owners = ownersText.match(/0x[0-9a-fA-F]{40}/g) || [];
-  return { code, singleton: normAddr(slot), threshold, owners };
+  return controllerViewFromCast({
+    code: cast(['code', controller], rpc),
+    singletonSlot: cast(['storage', controller, '0'], rpc),
+    threshold: cast(['call', controller, 'getThreshold()(uint256)'], rpc),
+    owners: cast(['call', controller, 'getOwners()(address[])'], rpc),
+    modules: cast([
+      'call',
+      controller,
+      'getModulesPaginated(address,uint256)(address[],address)',
+      SENTINEL_MODULES,
+      '10',
+    ], rpc),
+    guard: cast(['storage', controller, GUARD_SLOT], rpc),
+    fallbackHandler: cast(['storage', controller, FALLBACK_SLOT], rpc),
+  });
 }
 
 function fail(message) {

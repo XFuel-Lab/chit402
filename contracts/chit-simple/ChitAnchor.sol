@@ -159,9 +159,8 @@ contract ChitAnchor {
     }
 
     /// @notice Kind 1. The version must be strictly above checkpointVersion
-    ///         and must fit the uint32 stored on a head. Both failures are
-    ///         BadVersion: one error for "not an increase", and the same error
-    ///         #700 uses when a version does not fit uint32.
+    ///         and must fit the uint32 stored on a head. Both failures revert
+    ///         BadVersion.
     function proposeRotation(address newAddr, uint64 version) external {
         if (msg.sender != controller) revert NotController();
         if (pendingAction.kind != 0) revert ActionPending();

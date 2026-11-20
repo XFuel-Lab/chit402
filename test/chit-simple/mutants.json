@@ -654,6 +654,33 @@
       "nth": 1,
       "suite": "anchor",
       "note": "after a controller change only the new controller is accepted"
+    },
+    {
+      "id": "CS11_rotation_to_controller",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newAddr == controller\\) revert RotationToController\\(\\);",
+      "replace": "if (newAddr == address(1)) revert RotationToController();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a rotation cannot target the controller"
+    },
+    {
+      "id": "CS12_controller_is_checkpoint",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newController == checkpoint\\) revert ControllerIsCheckpoint\\(\\);",
+      "replace": "if (newController == address(1)) revert ControllerIsCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a controller change cannot target the checkpoint"
+    },
+    {
+      "id": "CS13_version_above_uint32",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(version > type\\(uint32\\)\\.max\\) revert BadVersion\\(\\);",
+      "replace": "if (version > type(uint64).max) revert BadVersion();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a rotation version cannot exceed uint32 max"
     }
   ],
   "retired": []
