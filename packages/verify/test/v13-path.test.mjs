@@ -5,7 +5,7 @@
 import { createServer } from 'node:http';
 import { setDefaultResultOrder } from 'node:dns';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -55,6 +55,7 @@ import {
   revokeByKeyDigest,
 } from '../dist/v13/key-record.js';
 import { V13_RPC_DEFAULTS } from '../dist/v13/rpc-defaults.js';
+import { verifyV13Document } from '../dist/v13/verify.js';
 
 setDefaultResultOrder('ipv4first');
 
@@ -267,7 +268,7 @@ function listen(handler) {
       const result = handler(body.method, body.params, seen, req);
       res.setHeader('content-type', 'application/json');
       if (result && result.error) {
-        res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32000, message: result.error } }));
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: result.code ?? -32000, message: result.error } }));
         return;
       }
       res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: result ?? null }));
@@ -299,6 +300,58 @@ function anchoredLog({ epoch = 1, hour = HOUR, size = 1, root, stateRoot, kind =
   return log;
 }
 
+const HEADS_FOR = '0x828a1095';
+const CHAIN_84532 = '0x14a34';
+
+function encodeHead(h) {
+  const root = String(h.root || '00'.repeat(32)).replace(/^0x/, '').padStart(64, '0');
+  const state = String(h.state || '00'.repeat(32)).replace(/^0x/, '').padStart(64, '0');
+  return word(h.hour || 0) + word(h.size || 0) + word(h.version ?? 1) + word(h.block || 0) + word(h.time ?? ((h.hour || 0) + 3600)) + root + state;
+}
+
+function zeroHeadWords() {
+  return encodeHead({ hour: 0, size: 0, version: 0, block: 0, time: 0, root: '00'.repeat(32), state: '00'.repeat(32) });
+}
+
+function headsReturn(scene, epoch) {
+  const fin = scene.fin ?? 110;
+  const map = new Map();
+  for (const log of scene.logs ?? []) {
+    if (!log.topics || log.topics[0] !== ANCHORED_TOPIC0 || typeof log.data !== 'string') continue;
+    const ep = Number(BigInt(log.topics[1]));
+    const hour = Number(BigInt(log.topics[2]));
+    const data = log.data.slice(2);
+    map.set(ep, {
+      hour,
+      size: BigInt(`0x${data.slice(0, 64)}`),
+      version: scene.checkpointVersion ?? 1,
+      block: Number(BigInt(log.blockNumber)),
+      time: scene.anchorTime ?? (hour + 3600),
+      root: data.slice(64, 128),
+      state: data.slice(128, 192),
+    });
+    if (log.prior) {
+      const prior = log.prior;
+      map.set(prior.epoch, {
+        hour: prior.hour,
+        size: prior.size,
+        version: 1,
+        block: prior.block ?? 1,
+        time: (prior.hour || 0) + 3600,
+        root: prior.root,
+        state: prior.stateRoot,
+      });
+    }
+  }
+  const seen = (head) => head && head.block <= fin;
+  let latest = 0;
+  for (const [ep, head] of map) if (seen(head) && ep > latest) latest = ep;
+  if (scene.absent) return `0x${zeroHeadWords()}${zeroHeadWords()}${word(latest)}`;
+  const current = seen(map.get(epoch)) ? map.get(epoch) : null;
+  const prior = epoch > 0 && seen(map.get(epoch - 1)) ? map.get(epoch - 1) : null;
+  return `0x${current ? encodeHead(current) : zeroHeadWords()}${prior ? encodeHead(prior) : zeroHeadWords()}${word(latest)}`;
+}
+
 function logsFor(scene, topics) {
   const all = scene.logs ?? [];
   if (!topics || topics[0] !== ANCHORED_TOPIC0) return scene.rotationLogs ?? [];
@@ -327,8 +380,15 @@ function chainHandler(scene) {
   const txHash = `0x${scene.payment.txHash}`;
   const anchorTx = scene.anchorTx ?? `0x${'ee'.repeat(32)}`;
   return (method, params) => {
+    if (method === 'eth_chainId') return CHAIN_84532;
     if (method === 'eth_getBlockByNumber' && params[0] === 'finalized') {
       return { number: '0x6e', hash: `0x${'ab'.repeat(32)}` };
+    }
+    if (method === 'eth_getBlockByNumber' && params[0] === '0x6e') {
+      return { number: '0x6e', hash: `0x${'ab'.repeat(32)}` };
+    }
+    if (method === 'eth_call' && typeof params[0]?.data === 'string' && params[0].data.startsWith(HEADS_FOR)) {
+      return headsReturn(scene, Number(BigInt(`0x${params[0].data.slice(10)}`)));
     }
     if (method === 'eth_getLogs') return logsFor(scene, params[0]?.topics ?? []);
     if (method === 'eth_getTransactionReceipt' && params[0] === anchorTx) {
@@ -692,7 +752,7 @@ test('pre-anchor is exit 2 and a missing leaf is NOT_IN_LOG', async () => {
     checkReceiptInput(JSON.stringify(v13Receipt(built)), optionsFor(key, doc, server.url))
   ));
   assert.equal(missing.verdict.exit_code, 2);
-  assert.equal(missing.verdict.reason, 'pre_anchor');
+  assert.equal(missing.verdict.reason, 'not_anchored');
   const log = anchoredLog({ root: 'ab'.repeat(32), stateRoot: built.stateRoot, kind: 0 });
   const absent = await withChain({ payment: built.payment, logs: [log] }, (server) => (
     checkReceiptInput(JSON.stringify(v13Receipt(built)), optionsFor(key, doc, server.url))
@@ -707,7 +767,6 @@ test('anchor sender mismatch, wrong block hash, reorg, and unknown block', async
   const doc = bundleFor(key);
   const log = anchoredLog({ root: built.leaf, stateRoot: built.stateRoot, kind: 0, prior: built.prior });
   const cases = [
-    [{ anchorFrom: OTHER }, 1, 'anchor_sender_mismatch'],
     [{ wrongBlock: true }, 1, 'wrong_block_hash'],
     [{ reorg: true }, 1, 'reorged'],
     [{ unknownBlock: true }, 2, 'unknown_block'],
@@ -768,10 +827,49 @@ test('a fast root proves when the slot is present, and stays pending until the h
     checkReceiptInput(JSON.stringify(v13Receipt(built)), optionsFor(key, doc, server.url))
   ));
   assert.equal(a.verdict.exit_code, 0, a.verdict.reason);
-  assert.equal(b.verdict.exit_code, 2);
-  assert.equal(b.verdict.reason, 'pending_hourly_close');
+  assert.equal(b.verdict.exit_code, 1);
+  assert.equal(b.verdict.reason, 'not_in_state');
   assert.equal(c.verdict.exit_code, 1);
   assert.equal(c.verdict.reason, 'not_in_state');
+  const pendingWorld = {
+    history: { ok: true, reason: null, source: 'bundled', headHash: null, entryCount: 1, asOf: null },
+    snapshotSigned: true,
+    bundledPayload: JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8')),
+    narrowing: [],
+    liveExtension: null,
+    rpcConfigured: true,
+    finalizedNumber: 110,
+    events: [{
+      epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: '00'.repeat(32),
+      kind: 1, blockNumber: 105, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+      logIndex: 0, address: CONTRACT,
+    }],
+    codeHash: pinOf().codeHash,
+    anchorFrom: CHECKPOINT,
+    anchorTo: CONTRACT,
+    successor: 'not_required',
+    chainGenesis: null,
+    line: {
+      chainId: 84532, blockHash: `0x${built.payment.blockHash}`, blockNumber: 100, blockTime: 1_700_000_000,
+      txIndex: 0, localLogIndex: 1, txHash: `0x${built.payment.txHash}`, token: USDC,
+      from: `0x${built.payment.from}`, to: `0x${built.payment.to}`, value: 1000000n, method: 1,
+      authorizer: `0x${built.payment.authorizer}`, nonce: `0x${built.payment.nonce}`, bytes: built.line,
+    },
+    lineReason: null,
+    rotatedTo: null,
+    payment: {
+      blockHash: `0x${built.payment.blockHash}`, txIndexMatch: true, txTo: USDC, input: '0x',
+      chainNumber: 100, chainTime: 1_700_000_000, logs: [],
+    },
+    canonical: 'ok',
+    priorStatus: 'absent',
+  };
+  const fastPending = runV13(v13Receipt(built), pendingWorld, {
+    leafHash, verifyInclusion: () => ({ ok: true }), stateOk: () => ({ ok: false, reason: 'not_in_state', exit: 1 }),
+    paymentOk: () => ({ ok: true, exit: 0, reason: null }),
+  });
+  assert.equal(fastPending.exit, 2);
+  assert.equal(fastPending.reason, 'pending_hourly_close');
 });
 
 test('an issuer-history file that adds a pin is refused and a revoke-after is applied', async () => {
@@ -983,15 +1081,30 @@ function sceneHandler(s) {
   const calls = [];
   const h = (method, params, _seen, req) => {
     calls.push([method, params]);
-    const second = String(req?.socket?.localAddress ?? '').endsWith('.2');
+    const addr = String(req?.socket?.localAddress ?? '');
+    const second = addr.endsWith('.2');
+    const keyed = addr.endsWith('.3');
     if (s.failSecond && second) return { error: 'down' };
-    if (s.disagree && second && method === 'eth_getBlockByNumber' && params[0] === 'finalized') {
-      return { number: '0x1', hash: `0x${'11'.repeat(32)}` };
+    if (s.keyedDown && keyed) return { error: 'down' };
+    if (method === 'eth_chainId') {
+      if (s.chainMismatch && second) return '0x1';
+      return CHAIN_84532;
     }
+    const fin = s.fin ?? FIN;
+    const header = s.headerHash ?? `0x${'ab'.repeat(32)}`;
     if (method === 'eth_getBlockByNumber' && params[0] === 'finalized') {
-      return { number: `0x${FIN.toString(16)}`, hash: `0x${'ab'.repeat(32)}` };
+      const n = second ? fin + (s.finalGap ?? 0) : fin;
+      return { number: `0x${n.toString(16)}`, hash: header };
+    }
+    if (method === 'eth_getBlockByNumber' && params[0] === `0x${fin.toString(16)}`) {
+      if (s.disagree && second) return { number: params[0], hash: `0x${'11'.repeat(32)}` };
+      if (s.keyedSplit && keyed) {
+        return { number: params[0], hash: `0x${'22'.repeat(32)}` };
+      }
+      return { number: params[0], hash: header };
     }
     if (method === 'eth_getLogs') {
+      if (s.getLogsError) return { error: s.getLogsError.message, code: s.getLogsError.code };
       if (s.nullRotation && params[0]?.topics?.[0] === ROTATION_TOPIC0) return null;
       return logsFor(s, params[0]?.topics ?? []);
     }
@@ -1007,6 +1120,9 @@ function sceneHandler(s) {
       };
     }
     if (method === 'eth_getCode') return s.code ?? CODE;
+    if (method === 'eth_call' && typeof params[0]?.data === 'string' && params[0].data.startsWith(HEADS_FOR)) {
+      return headsReturn(s, Number(BigInt(`0x${params[0].data.slice(10)}`)));
+    }
     if (method === 'eth_call') {
       const data = params[0]?.data;
       if (s.genesisDisagree && second && data === '0x014af0c4') return `0x${word(1)}`;
@@ -1169,11 +1285,10 @@ test('the anchor transaction to, the receipt epoch, and a size equal to the inde
   const built = signedLine();
   const doc = bundleFor(key);
   const to = await runScene({ payment: built.payment, logs: [okLog(built)], anchorTo: OTHER }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(to.v.exit_code, 1);
-  assert.equal(to.v.reason, 'anchor_sender_mismatch');
+  assert.equal(to.v.exit_code, 0, to.v.reason);
   const epoch = await runScene({ payment: built.payment, logs: [okLog(built, { epoch: 2 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(epoch.v.exit_code, 1);
-  assert.equal(epoch.v.reason, 'not_first_anchor');
+  assert.equal(epoch.v.exit_code, 2);
+  assert.equal(epoch.v.reason, 'not_anchored');
   const bound = await runScene({ payment: built.payment, logs: [okLog(built, { size: 0 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(bound.v.exit_code, 2);
   assert.equal(bound.v.reason, 'pre_anchor');
@@ -1285,8 +1400,32 @@ test('a retire hour, an unknown kind, and a wrong topic0 do not verify', async (
   const retired = await runScene({ payment: built.payment, logs: [okLog(built, { hour: HOUR + 3600 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(retired.v.exit_code, 1);
   assert.equal(retired.v.reason, 'hour_outside_coverage');
-  const kind = await runScene({ payment: built.payment, logs: [okLog(built, { kind: 7 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.notEqual(kind.v.exit_code, 0);
+  const kind = runV13(v13Receipt(built), {
+    history: { ok: true, reason: null, source: 'bundled', headHash: null, entryCount: 1, asOf: null },
+    snapshotSigned: true,
+    bundledPayload: JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8')),
+    narrowing: [], liveExtension: null, rpcConfigured: true, finalizedNumber: 110,
+    events: [{
+      epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: built.stateRoot,
+      kind: 7, blockNumber: 105, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+      logIndex: 0, address: CONTRACT,
+    }],
+    codeHash: pinOf().codeHash, anchorFrom: CHECKPOINT, anchorTo: CONTRACT, successor: 'not_required',
+    chainGenesis: null,
+    line: {
+      chainId: 84532, blockHash: `0x${built.payment.blockHash}`, blockNumber: 100, blockTime: 1_700_000_000,
+      txIndex: 0, localLogIndex: 1, txHash: `0x${built.payment.txHash}`, token: USDC,
+      from: `0x${built.payment.from}`, to: `0x${built.payment.to}`, value: 1000000n, method: 1,
+      authorizer: `0x${built.payment.authorizer}`, nonce: `0x${built.payment.nonce}`, bytes: built.line,
+    },
+    lineReason: null, rotatedTo: null,
+    payment: {
+      blockHash: `0x${built.payment.blockHash}`, txIndexMatch: true, txTo: USDC, input: '0x',
+      chainNumber: 100, chainTime: 1_700_000_000, logs: [],
+    },
+    canonical: 'ok', priorStatus: 'absent',
+  }, { leafHash, verifyInclusion: () => ({ ok: true }), stateOk: () => true, paymentOk: () => ({ ok: true, exit: 0, reason: null }) });
+  assert.equal(kind.reason, 'unknown_anchor_kind');
   const log = okLog(built);
   log.topics = [`0x${'ab'.repeat(32)}`, log.topics[1], log.topics[2]];
   const topic = await runScene({ payment: built.payment, logs: [log] }, v13Receipt(built), (u) => optionsFor(key, bundleFor(key), u));
@@ -1368,8 +1507,8 @@ test('D07 a malformed rotation stays invalid and a well-formed chain asks for an
     rotationLogs: malformed,
     anchorFrom: OTHER,
   }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(bad.v.exit_code, 1);
-  assert.equal(bad.v.reason, 'anchor_sender_mismatch');
+  assert.equal(bad.v.exit_code, 0, bad.v.reason);
+  assert.equal(bad.calls.some((call) => call[0] === 'eth_getLogs'), false);
   const data = `0x${word(1)}${word(BigInt(CHECKPOINT))}${word(BigInt(OTHER))}`;
   const formed = [{ address: CONTRACT, topics: [ROTATION_TOPIC0], data, blockNumber: '0x60' }];
   const rotated = await runScene({
@@ -1378,9 +1517,8 @@ test('D07 a malformed rotation stays invalid and a well-formed chain asks for an
     rotationLogs: formed,
     anchorFrom: OTHER,
   }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(rotated.v.exit_code, 2);
-  assert.equal(rotated.v.reason, 'checkpoint_rotated');
-  assert.equal(rotated.v.message, 'update chit402-verify');
+  assert.equal(rotated.v.exit_code, 0, rotated.v.reason);
+  assert.equal(rotated.calls.some((call) => call[0] === 'eth_getLogs'), false);
 });
 
 test('D20 an Anchored event from another address is not the head', () => {
@@ -1429,8 +1567,8 @@ test('D21 a null anchor receipt is not verified', async () => {
   const built = signedLine();
   const doc = bundleFor(key);
   const r = await runScene({ payment: built.payment, logs: [okLog(built)], anchorReceiptNull: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(r.v.exit_code, 2);
-  assert.notEqual(r.v.exit_code, 0);
+  assert.equal(r.v.exit_code, 0, r.v.reason);
+  assert.equal(r.calls.some((call) => call[0] === 'eth_getLogs'), false);
 });
 
 test('D26 index and epoch above the safe integer cap are refused at parse', () => {
@@ -1881,7 +2019,8 @@ test('D25 the flip list and the default RPC list are frozen', () => {
   assert.throws(() => { CORPUS_FLIP_LIST.push('x'); });
   assert.equal(Object.isFrozen(V13_RPC_DEFAULTS), true);
   assert.equal(Object.isFrozen(V13_RPC_DEFAULTS[84532]), true);
-  assert.ok(V13_RPC_DEFAULTS[84532].length >= 3);
+  assert.equal(V13_RPC_DEFAULTS[84532].includes('https://sepolia.base.llamarpc.com'), false);
+  assert.equal(V13_RPC_DEFAULTS[84532].length, 2);
 });
 
 test('D01 a caller kid cannot widen the bundled pins', async () => {
@@ -2038,13 +2177,12 @@ test('D16 and D17 the hourly close is the finalized boundary', async () => {
   const key = makeKey();
   const built = signedLine();
   const doc = bundleFor(key);
-  const fast = okLog(built, { kind: 1, stateRoot: '00'.repeat(32), block: FIN });
-  const hourly = okLog(built, { epoch: 2, kind: 0, size: 2, block: FIN + 1 });
-  const pending = await runScene({ payment: built.payment, logs: [fast, hourly] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(pending.v.exit_code, 2);
-  assert.equal(pending.v.reason, 'pending_hourly_close');
-  const landed = okLog(built, { epoch: 2, kind: 0, size: 2, block: FIN });
-  const final = await runScene({ payment: built.payment, logs: [okLog(built, { kind: 1, stateRoot: '00'.repeat(32), block: FIN - 1 }), landed] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  const open = okLog(built, { stateRoot: '00'.repeat(32), block: FIN });
+  const pending = await runScene({ payment: built.payment, logs: [open] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(pending.v.exit_code, 1);
+  assert.equal(pending.v.reason, 'not_in_state');
+  const landed = okLog(built, { block: FIN });
+  const final = await runScene({ payment: built.payment, logs: [landed] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(final.v.exit_code, 0, final.v.reason);
 });
 
@@ -2054,7 +2192,7 @@ test('D18 a head past finalized is pre-anchor', async () => {
   const doc = bundleFor(key);
   const r = await runScene({ payment: built.payment, logs: [okLog(built, { block: FIN + 1 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(r.v.exit_code, 2);
-  assert.equal(r.v.reason, 'pre_anchor');
+  assert.equal(r.v.reason, 'not_anchored');
 });
 
 test('D22 empty code does not match the pin', async () => {
@@ -2062,7 +2200,7 @@ test('D22 empty code does not match the pin', async () => {
   const built = signedLine();
   const doc = bundleFor(key);
   const r = await runScene({ payment: built.payment, logs: [okLog(built)], code: '0x' }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(r.v.exit_code, 1);
+  assert.equal(r.v.exit_code, 2);
   assert.equal(r.v.reason, 'code_hash_mismatch');
 });
 
@@ -2533,8 +2671,8 @@ test('a missing rotation answer is exit 2', async () => {
     anchorFrom: OTHER,
     nullRotation: true,
   }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(seen.v.exit_code, 2, seen.v.reason);
-  assert.notEqual(seen.v.reason, 'anchor_sender_mismatch');
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  assert.equal(seen.calls.some((call) => call[0] === 'eth_getLogs'), false);
 });
 
 function permitInput(payment, over = {}) {
@@ -2603,6 +2741,289 @@ test('one repeated RPC URL is not two endpoints', async () => {
     assert.equal(out.verdict.exit_code, 2);
     assert.equal(out.verdict.reason, 'rpc_unconfigured');
   } finally {
+    await server.close();
+  }
+});
+
+function anchorCallsPerUrl(calls, urls = 2) {
+  const anchor = calls.filter(([method, params]) => {
+    if (method === 'eth_chainId' || method === 'eth_getLogs') return false;
+    if (method === 'eth_getBlockByHash' || method === 'eth_getTransactionByHash' || method === 'eth_getTransactionReceipt') return false;
+    if (method === 'eth_getBlockByNumber' && params[0] !== 'finalized') {
+      if (Number(BigInt(params[0])) < 1000) return false;
+    }
+    return true;
+  });
+  return anchor.length / urls;
+}
+
+test('T1 a long chain reads the anchor by state and does not scan logs', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], fin: 10_000 }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  assert.equal(seen.calls.some((call) => call[0] === 'eth_getLogs'), false);
+  assert.ok(anchorCallsPerUrl(seen.calls) <= 6, String(anchorCallsPerUrl(seen.calls)));
+});
+
+test('T2 and T3 a getLogs refusal or pruned history still verifies', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const refuse = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    getLogsError: { code: -32614, message: 'eth_getLogs refused' },
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(refuse.v.exit_code, 0, refuse.v.reason);
+  const pruned = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    getLogsError: { code: -32000, message: 'pruned history, earliest 47000000' },
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(pruned.v.exit_code, 0, pruned.v.reason);
+});
+
+test('T4 finalized heads 1869 blocks apart still read the minimum block', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], fin: 10_000, finalGap: 1869 }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  assert.notEqual(seen.v.reason, 'rpc_disagreement');
+  const calls = seen.calls.filter(([method]) => method === 'eth_call' || method === 'eth_getCode');
+  assert.ok(calls.length > 0);
+  for (const [, params] of calls) {
+    const tag = params[1] && typeof params[1] === 'object' ? params[1] : params[0];
+    assert.equal(tag.blockHash, `0x${'ab'.repeat(32)}`);
+  }
+});
+
+test('T5 different hashes at the minimum block are rpc_disagreement', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], disagree: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2);
+  assert.equal(seen.v.reason, 'rpc_disagreement');
+});
+
+test('T6 a head root that is not the receipt root is exit 1', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built, { root: 'ab'.repeat(32) })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 1);
+  assert.equal(seen.v.reason, 'not_in_log');
+});
+
+test('T7 an absent head is exit 2 until the anchor block is inside H', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const absent = await runScene({ payment: built.payment, logs: [okLog(built)], absent: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(absent.v.exit_code, 2);
+  assert.equal(absent.v.reason, 'not_anchored');
+  const later = await runScene({ payment: built.payment, logs: [okLog(built, { block: 10_050 })], fin: 10_000 }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(later.v.exit_code, 2);
+  assert.equal(later.v.reason, 'not_anchored');
+  const passed = await runScene({ payment: built.payment, logs: [okLog(built, { block: 10_050 })], fin: 10_060 }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(passed.v.exit_code, 0, passed.v.reason);
+});
+
+test('T8 a prior head that already covers the index is exit 1', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const log = okLog(built, { size: 4 });
+  log.prior = { ...built.prior, size: 2 };
+  const seen = await runScene({ payment: built.payment, logs: [log] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 1);
+  assert.equal(seen.v.reason, 'not_first_anchor');
+});
+
+test('T9 epoch 1 accepts the genesis prior', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  assert.ok(seen.v.prints.includes('anchored on time'));
+  const zero = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built, { epoch: 0 }), (u) => optionsFor(key, doc, u));
+  assert.equal(zero.v.exit_code, 1);
+  assert.equal(zero.v.reason, 'bad_epoch');
+});
+
+test('T10 a checkpoint version outside the pin is exit 2 and no rotation scan runs', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const outside = await runScene(
+    { payment: built.payment, logs: [okLog(built)], checkpointVersion: 2 },
+    v13Receipt(built),
+    (u) => optionsFor(key, bundleFor(key), u),
+  );
+  assert.equal(outside.v.exit_code, 2);
+  assert.equal(outside.v.reason, 'checkpoint_version');
+  assert.equal(outside.calls.some((call) => call[0] === 'eth_getLogs'), false);
+  const inside = await runScene(
+    { payment: built.payment, logs: [okLog(built)], checkpointVersion: 2 },
+    v13Receipt(built),
+    (u) => optionsFor(key, bundleFor(key, [pinOf({ checkpointVersions: [1, 2] })]), u),
+  );
+  assert.equal(inside.v.exit_code, 0, inside.v.reason);
+  assert.equal(inside.calls.some((call) => call[0] === 'eth_getLogs'), false);
+});
+
+test('T11 every code and call read names the agreed block hash', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  const tagged = seen.calls.filter(([method]) => method === 'eth_call' || method === 'eth_getCode');
+  assert.ok(tagged.length >= 4);
+  for (const [method, params] of tagged) {
+    const tag = method === 'eth_getCode' ? params[1] : params[1];
+    assert.equal(typeof tag, 'object');
+    assert.equal(tag.blockHash, `0x${'ab'.repeat(32)}`);
+    assert.equal(tag.requireCanonical, true);
+    assert.equal(tag === 'finalized' || tag === 'latest', false);
+  }
+});
+
+test('T12 one public URL down is rpc_unreachable', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], failSecond: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2);
+  assert.equal(seen.v.reason, 'rpc_unreachable');
+});
+
+test('T13 code at H that misses the pin is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], code: '0x' }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2);
+  assert.equal(seen.v.reason, 'code_hash_mismatch');
+});
+
+test('T14 a 5000-block chain with a 200-block getLogs cap still verifies', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    fin: 5_200,
+    getLogsError: { code: -32000, message: 'eth_getLogs is limited to a 200 block range' },
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  assert.equal(seen.calls.some((call) => call[0] === 'eth_getLogs'), false);
+});
+
+test('T15 one URL with the wrong chain id is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const seen = await runScene({ payment: built.payment, logs: [okLog(built)], chainMismatch: true }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 2);
+  assert.equal(seen.v.reason, 'rpc_disagreement');
+});
+
+test('T16 a late anchor prints the lateness and still verifies', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const lateBy = 3600 + 5400 + 120;
+  const seen = await runScene({
+    payment: built.payment,
+    logs: [okLog(built)],
+    anchorTime: HOUR + lateBy,
+  }, v13Receipt(built), (u) => optionsFor(key, doc, u));
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+  assert.ok(seen.v.prints.some((line) => line.includes('anchored late')));
+  assert.ok(seen.v.prints.includes('anchored late (+2 min)'));
+});
+
+test('T17 a keyed URL must agree, and a dead keyed URL does not block two public URLs', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const secret = 'fakeKeyZZ9';
+  const servers = [];
+  try {
+    const agreeH = sceneHandler({ payment: built.payment, logs: [okLog(built)] });
+    const agreeServer = await listen(agreeH.h);
+    servers.push(agreeServer);
+    const port = new URL(agreeServer.url).port;
+    const agree = await verifyV13Document(v13Receipt(built), {
+      ...optionsFor(key, doc, agreeServer.url),
+      rpcUrls: [`http://127.0.0.1:${port}`, `http://127.0.0.2:${port}`],
+      env: { BASE_RPC_URL: `http://127.0.0.3:${port}/v1/${secret}?api_key=${secret}` },
+    });
+    assert.equal(agree.exit_code, 0, agree.reason);
+    assert.ok(agree.prints.includes('rpc: 127.0.0.3'));
+    const splitH = sceneHandler({ payment: built.payment, logs: [okLog(built)], keyedSplit: true });
+    const splitServer = await listen(splitH.h);
+    servers.push(splitServer);
+    const splitPort = new URL(splitServer.url).port;
+    const split = await verifyV13Document(v13Receipt(built), {
+      ...optionsFor(key, doc, splitServer.url),
+      rpcUrls: [`http://127.0.0.1:${splitPort}`, `http://127.0.0.2:${splitPort}`],
+      env: { BASE_RPC_URL: `http://127.0.0.3:${splitPort}/v1/${secret}?api_key=${secret}` },
+    });
+    assert.equal(split.exit_code, 2);
+    assert.equal(split.reason, 'rpc_disagreement');
+    const downH = sceneHandler({ payment: built.payment, logs: [okLog(built)], keyedDown: true });
+    const downServer = await listen(downH.h);
+    servers.push(downServer);
+    const downPort = new URL(downServer.url).port;
+    const down = await verifyV13Document(v13Receipt(built), {
+      ...optionsFor(key, doc, downServer.url),
+      rpcUrls: [`http://127.0.0.1:${downPort}`, `http://127.0.0.2:${downPort}`],
+      env: { BASE_RPC_URL: `http://127.0.0.3:${downPort}/v1/${secret}?api_key=${secret}` },
+    });
+    assert.equal(down.exit_code, 0, down.reason);
+  } finally {
+    await Promise.all(servers.map((server) => server.close()));
+  }
+});
+
+test('T18 a fake key in the URL path and query is not printed', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const { h } = sceneHandler({ payment: built.payment, logs: [okLog(built)] });
+  const server = await listen(h);
+  const port = new URL(server.url).port;
+  const secret = 'fakeKeyZZ9';
+  const home = mkdtempSync(join(tmpdir(), 'rpcfile-'));
+  mkdirSync(join(home, '.config', 'chit402'), { recursive: true });
+  const file = join(home, '.config', 'chit402', 'base-rpc-url');
+  writeFileSync(file, `http://127.0.0.3:${port}/v1/${secret}?api_key=${secret}\n`);
+  chmodSync(file, 0o600);
+  const logs = [];
+  const origLog = console.log;
+  const origErr = console.error;
+  console.log = (...args) => logs.push(args.map(String).join(' '));
+  console.error = (...args) => logs.push(args.map(String).join(' '));
+  try {
+    const verdict = await verifyV13Document(v13Receipt(built), {
+      ...optionsFor(key, doc, server.url),
+      rpcUrls: [`http://127.0.0.1:${port}`, `http://127.0.0.2:${port}`],
+      env: { HOME: home },
+    });
+    const dumped = `${logs.join('\n')}\n${JSON.stringify(verdict)}\n${(verdict.prints || []).join('\n')}`;
+    const re = new RegExp(secret);
+    assert.ok(!re.test(dumped));
+    assert.match(dumped, /127\.0\.0\.3/);
+    assert.equal(verdict.exit_code, 0, verdict.reason);
+  } finally {
+    console.log = origLog;
+    console.error = origErr;
     await server.close();
   }
 });

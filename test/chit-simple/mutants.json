@@ -45,8 +45,8 @@
     {
       "id": "A4_epoch_not_plus_one",
       "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "if \\(epoch_ != _head\\.epoch \\+ 1\\) revert BadEpoch\\(\\);",
-      "replace": "if (epoch_ != _head.epoch) revert BadEpoch();",
+      "find": "if \\(epoch_ != latestEpoch \\+ 1\\) revert BadEpoch\\(\\);",
+      "replace": "if (epoch_ != latestEpoch) revert BadEpoch();",
       "nth": 1,
       "suite": "anchor",
       "note": "epoch is the stored epoch plus one"
@@ -63,8 +63,8 @@
     {
       "id": "A6_hour_equal_allowed",
       "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "if \\(hourStart_ <= _head\\.hourStart\\) revert HourNotIncreasing\\(\\);",
-      "replace": "if (hourStart_ < _head.hourStart) revert HourNotIncreasing();",
+      "find": "if \\(hourStart_ <= prev\\.hourStart\\) revert HourNotIncreasing\\(\\);",
+      "replace": "if (hourStart_ < prev.hourStart) revert HourNotIncreasing();",
       "nth": 1,
       "suite": "anchor",
       "note": "hourStart is strictly increasing"
@@ -90,8 +90,8 @@
     {
       "id": "A9_equal_size_allowed",
       "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "if \\(size_ <= _head\\.size\\) revert SizeNotIncreasing\\(\\);",
-      "replace": "if (size_ < _head.size) revert SizeNotIncreasing();",
+      "find": "if \\(size_ <= prev\\.size\\) revert SizeNotIncreasing\\(\\);",
+      "replace": "if (size_ < prev.size) revert SizeNotIncreasing();",
       "nth": 1,
       "suite": "anchor",
       "note": "size strictly increases"
@@ -342,7 +342,7 @@
     {
       "id": "D1_stateRoot_not_stored",
       "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "_head\\.stateRoot = stateRoot_;",
+      "find": "next\\.stateRoot = stateRoot_;",
       "replace": "",
       "nth": 1,
       "suite": "anchor"
@@ -350,7 +350,7 @@
     {
       "id": "D2_hour_not_stored",
       "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "_head\\.hourStart = hourStart_;",
+      "find": "next\\.hourStart = uint40\\(hourStart_\\);",
       "replace": "",
       "nth": 1,
       "suite": "anchor"

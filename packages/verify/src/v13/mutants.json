@@ -17,12 +17,6 @@
   ],
   "mutants": [
     {
-      "id": "trust_rotation",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "return pin.checkpoint;",
-      "replace": "return rotatedTo || pin.checkpoint;"
-    },
-    {
       "id": "cap_inclusive",
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "size > BigInt(MAX_TREE_SIZE)",
@@ -107,12 +101,6 @@
       "replace": "if (!included.ok) return fail(0, 'not_in_log'"
     },
     {
-      "id": "ignore_sender",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "world.anchorFrom.toLowerCase() !== sender.toLowerCase()",
-      "replace": "false"
-    },
-    {
       "id": "tampered_snapshot_ok",
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "if (!world.snapshotSigned)",
@@ -123,12 +111,6 @@
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "if (!world.rpcConfigured) return fail(2, 'rpc_unconfigured'",
       "replace": "if (!world.rpcConfigured) return fail(0, 'rpc_unconfigured'"
-    },
-    {
-      "id": "drop_epoch_topic",
-      "file": "packages/verify/src/v13/verify.ts",
-      "find": "topics: [ANCHORED_TOPIC0, topic]",
-      "replace": "topics: [ANCHORED_TOPIC0]"
     },
     {
       "id": "D-covers-final-plus1",
@@ -187,8 +169,8 @@
     {
       "id": "D-read-by-number",
       "file": "packages/verify/src/v13/verify.ts",
-      "find": "rpc(urls, 'eth_getBlockByHash', [line.blockHash, false])",
-      "replace": "rpc(urls, 'eth_getBlockByNumber', [hexQty(line.blockNumber), false])"
+      "find": "rpc(slots, 'eth_getBlockByHash', [line.blockHash, false])",
+      "replace": "rpc(slots, 'eth_getBlockByNumber', [hexQty(line.blockNumber), false])"
     },
     {
       "id": "D-finalized-to-latest",
@@ -249,12 +231,6 @@
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "if (head.epoch > 0n && prior && prior.size > BigInt(parsed.receipt.index)) {",
       "replace": "if (false) {"
-    },
-    {
-      "id": "D-ignore-anchor-to",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "|| world.anchorTo.toLowerCase() !== pin.address)",
-      "replace": ")"
     },
     {
       "id": "D-ignore-codehash",
@@ -365,22 +341,36 @@
       "replace": ""
     },
     {
-      "id": "D-topic0-unchecked",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "if (!sameTopic(log.topics[0], ANCHORED_TOPIC0)) return null;",
-      "replace": ""
-    },
-    {
-      "id": "D-anchor-from-unchecked",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "world.anchorFrom.toLowerCase() !== sender.toLowerCase() ||",
-      "replace": ""
-    },
-    {
       "id": "D-library-maps-2-to-verified",
       "file": "packages/verify/src/index.ts",
       "find": "overall: exit === 0 ? 'verified' : exit === 1 ? 'failed' : 'partial',",
       "replace": "overall: exit === 1 ? 'failed' : 'verified',"
+    }
+  ],
+  "retired": [
+    {
+      "id": "trust_rotation",
+      "reason": "The anchor sender is no longer read. A rotation log cannot change who is trusted."
+    },
+    {
+      "id": "ignore_sender",
+      "reason": "The anchor transaction from address is no longer read."
+    },
+    {
+      "id": "drop_epoch_topic",
+      "reason": "eth_getLogs anchor scans were removed. Epoch heads are read with headsFor."
+    },
+    {
+      "id": "D-ignore-anchor-to",
+      "reason": "The anchor transaction to address is no longer read."
+    },
+    {
+      "id": "D-topic0-unchecked",
+      "reason": "Anchored logs are no longer decoded on the v13 path."
+    },
+    {
+      "id": "D-anchor-from-unchecked",
+      "reason": "The anchor transaction from address is no longer read."
     }
   ]
 }

@@ -5,7 +5,9 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { fetchNoRedirect } from '../fetch-guard.js';
@@ -23,18 +25,14 @@ import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
 import {
-  ANCHORED_TOPIC0,
   UNAUDITED_NOTE,
   ZERO_ADDRESS,
-  anchoredFromLog,
   bytesToHex,
   classifyCanonical,
-  firstCovering,
   hexToBytes,
   isExactV13Receipt,
   parseV13Receipt,
   runV13,
-  topicUint,
   type AnchoredEvent,
   type LineView,
   type PaymentView,
@@ -209,39 +207,80 @@ function canonRpc(url: string): string {
   }
 }
 
-function rpcUrls(chainId: number, options: V13Options): string[] {
-  let raw: string[] = [];
-  if (options.rpcUrls && options.rpcUrls.length > 0) {
-    raw = options.rpcUrls.map((item) => item.trim()).filter((item) => item !== '');
-  } else if (typeof options.rpcUrl === 'string' && options.rpcUrl.trim() !== '') {
-    raw = [options.rpcUrl.trim()];
-  } else {
-    const env = options.env ?? process.env;
-    const fromEnv = env.BASE_RPC_URL;
-    if (typeof fromEnv === 'string' && fromEnv.trim() !== '') raw = [fromEnv.trim()];
-    else raw = [...(V13_RPC_DEFAULTS[chainId] ?? [])];
+interface RpcPlan {
+  publicUrls: string[];
+  keyed: string | null;
+}
+
+function hostOnly(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  } catch {
+    return 'invalid-url';
   }
-  return [...new Set(raw.map(canonRpc))];
+}
+
+function keyedUrl(env: NodeJS.ProcessEnv): string | null {
+  const fromEnv = env.BASE_RPC_URL;
+  if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return fromEnv.trim();
+  const home = typeof env.HOME === 'string' && env.HOME.trim() !== '' ? env.HOME : homedir();
+  const file = join(home, '.config', 'chit402', 'base-rpc-url');
+  try {
+    const st = statSync(file);
+    if ((st.mode & 0o777) !== 0o600) return null;
+    const text = readFileSync(file, 'utf8').replace(/\r/g, '').trim();
+    if (text === '' || text.includes('\n')) return null;
+    return text;
+  } catch {
+    return null;
+  }
+}
+
+function rpcPlan(chainId: number, options: V13Options): RpcPlan {
+  const env = options.env ?? process.env;
+  let publicRaw: string[] = [];
+  let keyed: string | null = null;
+  if (options.rpcUrls && options.rpcUrls.length > 0) {
+    publicRaw = options.rpcUrls.map((item) => item.trim()).filter((item) => item !== '');
+    if (options.env) keyed = keyedUrl(options.env);
+  } else if (typeof options.rpcUrl === 'string' && options.rpcUrl.trim() !== '') {
+    publicRaw = [options.rpcUrl.trim()];
+  } else {
+    publicRaw = [...(V13_RPC_DEFAULTS[chainId] ?? [])];
+    keyed = keyedUrl(env);
+  }
+  const publicUrls = [...new Set(publicRaw.map(canonRpc))];
+  const keyedCanon = keyed ? canonRpc(keyed) : null;
+  return { publicUrls, keyed: keyedCanon && !publicUrls.includes(keyedCanon) ? keyedCanon : null };
+}
+
+function rpcSlots(plan: RpcPlan): { url: string; keyed: boolean }[] {
+  return [
+    ...plan.publicUrls.map((url) => ({ url, keyed: false })),
+    ...(plan.keyed ? [{ url: plan.keyed, keyed: true }] : []),
+  ];
 }
 
 function rpcError(code: string): Error {
   return Object.assign(new Error(code), { code });
 }
 
-async function rpc(urls: string[], method: string, params: unknown[]): Promise<unknown> {
-  const unique = [...new Set(urls.map(canonRpc))];
-  if (unique.length < 2) throw rpcError('rpc_unconfigured');
-  const settled = await Promise.all(unique.map(async (url) => {
+type RpcSlot = { url: string; keyed: boolean };
+
+async function rpc(slots: RpcSlot[], method: string, params: unknown[]): Promise<unknown> {
+  const publics = slots.filter((slot) => !slot.keyed);
+  if (publics.length < 2) throw rpcError('rpc_unconfigured');
+  const settled = await Promise.all(slots.map(async (slot) => {
     try {
-      return { ok: true as const, value: await jsonRpc(url, method, params) };
+      return { slot, ok: true as const, value: await jsonRpc(slot.url, method, params) };
     } catch (err) {
-      return { ok: false as const, err };
+      return { slot, ok: false as const, err };
     }
   }));
+  if (settled.some((item) => !item.slot.keyed && !item.ok)) throw rpcError('rpc_unreachable');
   const answers = settled.filter((item) => item.ok).map((item) => item.value);
   if (answers.length < 2) {
-    const failed = settled.find((item) => !item.ok);
-    throw failed && !failed.ok ? failed.err : rpcError('rpc_unreachable');
+    throw rpcError('rpc_unreachable');
   }
   const first = JSON.stringify(answers[0]);
   for (const answer of answers.slice(1)) {
@@ -459,9 +498,6 @@ function combineNarrowing(base: Record<string, unknown> | null, extra: Record<st
   return [...left, ...right];
 }
 
-const LOG_SPAN = 4999;
-const ROTATION_TOPIC0 = '0x95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3';
-
 function blankWorld(history: V13History, extra: Partial<V13World> = {}): V13World {
   return {
     history,
@@ -486,72 +522,121 @@ function blankWorld(history: V13History, extra: Partial<V13World> = {}): V13Worl
   };
 }
 
-async function fetchEvents(
-  urls: string[],
-  address: string,
-  epoch: number,
-  finalized: number,
-): Promise<{ events: AnchoredEvent[]; priorStatus: 'absent' | 'present' | 'unreadable' }> {
-  const want = new Set<number>();
-  if (epoch > 0) want.add(epoch - 1);
-  want.add(epoch);
-  const out: AnchoredEvent[] = [];
-  let priorStatus: 'absent' | 'present' | 'unreadable' = epoch > 0 ? 'absent' : 'present';
-  const pull = async (n: number): Promise<number> => {
-    const topic = topicUint(BigInt(n));
-    if (!topic) return 0;
-    let count = 0;
-    try {
-      for (let from = 0; from <= finalized; from += LOG_SPAN + 1) {
-        const to = Math.min(finalized, from + LOG_SPAN);
-        const result = await rpc(urls, 'eth_getLogs', [{
-          address,
-          fromBlock: hexQty(from),
-          toBlock: hexQty(to),
-          topics: [ANCHORED_TOPIC0, topic],
-        }]);
-        if (!Array.isArray(result)) {
-          if (n === epoch - 1) priorStatus = 'unreadable';
-          return 0;
-        }
-        for (const item of result) {
-          const rec = asRecord(item);
-          if (!rec) continue;
-          const blockNumber = parseQty(rec.blockNumber);
-          const logIndex = parseQty(rec.logIndex);
-          const event = anchoredFromLog({
-            address: typeof rec.address === 'string' ? rec.address : undefined,
-            topics: Array.isArray(rec.topics) ? rec.topics.filter((part): part is string => typeof part === 'string') : undefined,
-            data: typeof rec.data === 'string' ? rec.data : undefined,
-            blockNumber: blockNumber ?? undefined,
-            blockHash: typeof rec.blockHash === 'string' ? rec.blockHash : undefined,
-            transactionHash: typeof rec.transactionHash === 'string' ? rec.transactionHash : undefined,
-            logIndex: logIndex ?? undefined,
-          });
-          if (event) {
-            out.push(event);
-            count += 1;
-          }
-        }
-      }
-    } catch (err) {
-      const code = err && typeof err === 'object' && 'code' in err ? String((err as { code?: string }).code) : '';
-      const disagreed = code === 'rpc_disagreement';
-      if (disagreed || n !== epoch - 1) throw err;
-      priorStatus = 'unreadable';
-      return 0;
-    }
-    if (n === epoch - 1 && count > 0) priorStatus = 'present';
-    return count;
+const HEADS_FOR = '0x828a1095';
+
+function blockTag(hash: string): { blockHash: string; requireCanonical: true } {
+  return { blockHash: hash, requireCanonical: true };
+}
+
+interface StoredHead {
+  hourStart: bigint;
+  size: bigint;
+  version: number;
+  anchorBlock: bigint;
+  anchorTime: bigint;
+  root: string;
+  stateRoot: string;
+}
+
+function wordAt(body: string, index: number): bigint {
+  return BigInt(`0x${body.slice(index * 64, (index + 1) * 64)}`);
+}
+
+function hexWord(value: bigint): string {
+  return value.toString(16).padStart(64, '0');
+}
+
+function decodeHead(body: string, at: number): StoredHead | null {
+  const version = wordAt(body, at + 2);
+  const anchorBlock = wordAt(body, at + 3);
+  const anchorTime = wordAt(body, at + 4);
+  if (version > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  if (anchorBlock > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  if (anchorTime > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return {
+    hourStart: wordAt(body, at),
+    size: wordAt(body, at + 1),
+    version: Number(version),
+    anchorBlock,
+    anchorTime,
+    root: hexWord(wordAt(body, at + 5)),
+    stateRoot: hexWord(wordAt(body, at + 6)),
   };
-  for (const n of want) await pull(n);
-  let cursor = epoch;
-  for (let i = 0; i < 48; i += 1) {
-    cursor += 1;
-    const count = await pull(cursor);
-    if (count === 0) break;
+}
+
+function decodeHeadsFor(value: unknown): { current: StoredHead; prior: StoredHead } | null {
+  if (typeof value !== 'string' || !value.startsWith('0x')) return null;
+  const body = value.slice(2).toLowerCase();
+  if (!/^[0-9a-f]{960}$/.test(body)) return null;
+  const current = decodeHead(body, 0);
+  const prior = decodeHead(body, 7);
+  if (!current || !prior) return null;
+  return { current, prior };
+}
+
+function headEvent(head: StoredHead, epoch: number, address: string): AnchoredEvent {
+  return {
+    epoch: BigInt(epoch),
+    hourStart: head.hourStart,
+    size: head.size,
+    root: head.root,
+    stateRoot: head.stateRoot,
+    kind: 0,
+    blockNumber: Number(head.anchorBlock),
+    blockHash: `0x${'00'.repeat(32)}`,
+    txHash: `0x${'11'.repeat(32)}`,
+    logIndex: 0,
+    address,
+  };
+}
+
+async function agreedHeader(slots: RpcSlot[], chainId: number): Promise<{ number: number; hash: string }> {
+  const ids = await Promise.all(slots.map(async (slot) => {
+    try {
+      return { slot, ok: true as const, value: await jsonRpc(slot.url, 'eth_chainId', []) };
+    } catch (err) {
+      return { slot, ok: false as const, err };
+    }
+  }));
+  if (ids.some((item) => !item.slot.keyed && !item.ok)) throw rpcError('rpc_unreachable');
+  const idAnswers = ids.filter((item) => item.ok);
+  if (idAnswers.filter((item) => !item.slot.keyed).length < 2) throw rpcError('rpc_unreachable');
+  for (const item of idAnswers) {
+    if (parseQty(item.value) !== chainId) throw rpcError('rpc_disagreement');
   }
-  return { events: out, priorStatus };
+  const live = new Set(idAnswers.map((item) => item.slot));
+  const fins = await Promise.all(slots.map(async (slot) => {
+    if (!live.has(slot)) return { slot, ok: false as const, number: null as number | null };
+    try {
+      const value = asRecord(await jsonRpc(slot.url, 'eth_getBlockByNumber', ['finalized', false]));
+      const number = value ? parseQty(value.number) : null;
+      if (number == null) return { slot, ok: false as const, number: null };
+      return { slot, ok: true as const, number };
+    } catch {
+      return { slot, ok: false as const, number: null };
+    }
+  }));
+  if (fins.some((item) => !item.slot.keyed && !item.ok)) throw rpcError('rpc_unreachable');
+  const numbered = fins.filter((item) => item.ok && item.number != null);
+  if (numbered.filter((item) => !item.slot.keyed).length < 2) throw rpcError('rpc_unreachable');
+  const min = Math.min(...numbered.map((item) => item.number as number));
+  const headers = await Promise.all(numbered.map(async (item) => {
+    try {
+      const value = asRecord(await jsonRpc(item.slot.url, 'eth_getBlockByNumber', [hexQty(min), false]));
+      const hash = value && typeof value.hash === 'string' ? value.hash : '';
+      const number = value ? parseQty(value.number) : null;
+      if (!hash || number !== min) return { slot: item.slot, ok: false as const, hash: '' };
+      return { slot: item.slot, ok: true as const, hash };
+    } catch {
+      return { slot: item.slot, ok: false as const, hash: '' };
+    }
+  }));
+  if (headers.some((item) => !item.slot.keyed && !item.ok)) throw rpcError('rpc_unreachable');
+  const hashes = headers.filter((item) => item.ok);
+  if (hashes.filter((item) => !item.slot.keyed).length < 2) throw rpcError('rpc_unreachable');
+  const want = hashes[0].hash.toLowerCase();
+  if (hashes.some((item) => item.hash.toLowerCase() !== want)) throw rpcError('rpc_disagreement');
+  return { number: min, hash: hashes[0].hash };
 }
 
 function addressFromWord(word: string): string | null {
@@ -661,7 +746,8 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   }
 
   const chainId = line?.chainId ?? null;
-  const urls = chainId == null ? [] : rpcUrls(chainId, options);
+  const plan = chainId == null ? { publicUrls: [], keyed: null } : rpcPlan(chainId, options);
+  const slots = rpcSlots(plan);
   const base: Partial<V13World> = {
     history,
     snapshotSigned: true,
@@ -671,10 +757,11 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     line,
     lineReason,
     rotatedTo: null,
-    rpcConfigured: urls.length >= 2,
+    rpcConfigured: plan.publicUrls.length >= 2,
+    rpcHosts: slots.map((slot) => hostOnly(slot.url)),
   };
 
-  if (!parsed.ok || !line || !loaded || urls.length < 2) {
+  if (!parsed.ok || !line || !loaded || plan.publicUrls.length < 2) {
     return verdictOf(runV13(receipt, blankWorld(history, base), idleHooks()), version);
   }
 
@@ -693,55 +780,55 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   let rpcReason: string | null = null;
   let getterReason: string | null = null;
   let rotationUnreadable = false;
-  let showingHour: number | null = null;
+  let headAbsent = false;
+  let checkpointVersion: number | null = null;
+  let anchorTime: number | null = null;
 
   try {
-    const fin = asRecord(await rpc(urls, 'eth_getBlockByNumber', ['finalized', false]));
-    finalizedNumber = fin ? parseQty(fin.number) : null;
-    if (finalizedNumber == null) {
-      return verdictOf(runV13(receipt, blankWorld(history, { ...base, canonical: 'ok', finalizedNumber: null }), idleHooks()), version);
-    }
-    const fetched = await fetchEvents(urls, parsed.receipt.contract, parsed.receipt.epoch, finalizedNumber);
-    events = fetched.events;
-    priorStatus = fetched.priorStatus;
-    const head = firstCovering(events, parsed.receipt.index, finalizedNumber);
-    if (head) {
-      const tx = asRecord(await rpc(urls, 'eth_getTransactionReceipt', [head.txHash]));
-      anchorFrom = tx && typeof tx.from === 'string' ? tx.from : null;
-      anchorTo = tx && typeof tx.to === 'string' ? tx.to : null;
-      const code = await rpc(urls, 'eth_getCode', [parsed.receipt.contract, hexQty(head.blockNumber)]);
+    const agreed = await agreedHeader(slots, line.chainId);
+    finalizedNumber = agreed.number;
+    const tag = blockTag(agreed.hash);
+    const heads = await rpc(slots, 'eth_call', [{
+      to: parsed.receipt.contract,
+      data: `${HEADS_FOR}${BigInt(parsed.receipt.epoch).toString(16).padStart(64, '0')}`,
+    }, tag]);
+    const decoded = decodeHeadsFor(heads);
+    if (!decoded) throw rpcError('rpc_unreachable');
+    headAbsent = decoded.current.anchorBlock === 0n;
+    if (!headAbsent) {
+      checkpointVersion = decoded.current.version;
+      anchorTime = Number(decoded.current.anchorTime);
+      events = [headEvent(decoded.current, parsed.receipt.epoch, parsed.receipt.contract)];
+      if (parsed.receipt.epoch > 0 && decoded.prior.anchorBlock !== 0n) {
+        events.push(headEvent(decoded.prior, parsed.receipt.epoch - 1, parsed.receipt.contract));
+        priorStatus = 'present';
+      }
+      const code = await rpc(slots, 'eth_getCode', [parsed.receipt.contract, tag]);
       if (typeof code === 'string' && code.startsWith('0x')) {
         const raw = hexToBytes(code) ?? new Uint8Array();
         codeHash = `0x${bytesToHex(loaded.keccak(raw))}`;
       }
-      const genesis = await callWord(urls, parsed.receipt.contract, '0x014af0c4');
+      const genesis = await callWord(slots, parsed.receipt.contract, '0x014af0c4', tag);
       if (genesis.status === 'word') chainGenesis = Number(genesis.word);
       else if (genesis.status !== 'revert') getterReason = genesis.status === 'rpc_disagreement' ? 'rpc_disagreement' : 'rpc_unreachable';
-      const retired = await callWord(urls, parsed.receipt.contract, '0x2eb38ae0');
+      const retired = await callWord(slots, parsed.receipt.contract, '0x2eb38ae0', tag);
       if (retired.status === 'word' && retired.word === 1n) {
-        const next = await callWord(urls, parsed.receipt.contract, '0x6ff968c3');
+        const next = await callWord(slots, parsed.receipt.contract, '0x6ff968c3', tag);
         if (next.status !== 'word') ownRetired = 'successor_unreadable';
       } else if (retired.status !== 'revert' && retired.status !== 'word') {
         getterReason = retired.status === 'rpc_disagreement' ? 'rpc_disagreement' : 'rpc_unreachable';
       }
-      if (head.hourStart <= BigInt(Number.MAX_SAFE_INTEGER)) showingHour = Number(head.hourStart);
-      const checkpoint = checkpointOf(payload, line.chainId, parsed.receipt.contract);
-      if (checkpoint && anchorFrom && anchorFrom.toLowerCase() !== checkpoint) {
-        const logs = await fetchRotation(urls, parsed.receipt.contract, finalizedNumber);
-        if (!logs) rotationUnreadable = true;
-        else rotationExplains = rotationChain(logs, checkpoint, anchorFrom);
-      }
     }
     const pinPredecessor = predecessorOf(payload, line.chainId, parsed.receipt.contract);
     if (pinPredecessor && pinPredecessor !== ZERO_ADDRESS) {
-      const word = await callWord(urls, pinPredecessor, '0x6ff968c3');
+      const word = await callWord(slots, pinPredecessor, '0x6ff968c3', blockTag(agreed.hash));
       if (word.status !== 'word') successor = 'unreadable';
       else {
         const got = addressFromWord(word.word.toString(16).padStart(64, '0'));
         successor = got === parsed.receipt.contract ? 'match' : 'mismatch';
       }
     }
-    const byHash = asRecord(await rpc(urls, 'eth_getBlockByHash', [line.blockHash, false]));
+    const byHash = asRecord(await rpc(slots, 'eth_getBlockByHash', [line.blockHash, false]));
     if (!byHash) {
       canonical = 'unknown_block';
     } else {
@@ -763,7 +850,7 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
           chainTime: null,
         };
       } else {
-        const byNumber = asRecord(await rpc(urls, 'eth_getBlockByNumber', [hexQty(number), false]));
+        const byNumber = asRecord(await rpc(slots, 'eth_getBlockByNumber', [hexQty(number), false]));
         const canonicalHash = byNumber && typeof byNumber.hash === 'string' && byNumber.hash.length > 0 ? byNumber.hash : null;
         const judged = classifyCanonical({
           rpcError: false,
@@ -776,8 +863,8 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
         const txs = Array.isArray(byHash.transactions) ? byHash.transactions : [];
         const at = txs[line.txIndex];
         const txIndexMatch = typeof at === 'string' && at.toLowerCase() === line.txHash.toLowerCase();
-        const rec = asRecord(await rpc(urls, 'eth_getTransactionReceipt', [line.txHash]));
-        const tx = asRecord(await rpc(urls, 'eth_getTransactionByHash', [line.txHash]));
+        const rec = asRecord(await rpc(slots, 'eth_getTransactionReceipt', [line.txHash]));
+        const tx = asRecord(await rpc(slots, 'eth_getTransactionByHash', [line.txHash]));
         if (rec) {
           const logs = Array.isArray(rec.logs) ? rec.logs : [];
           payment = {
@@ -837,6 +924,9 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     rpcReason,
     getterReason,
     rotationUnreadable,
+    headAbsent,
+    checkpointVersion,
+    anchorTime,
     rpcConfigured: true,
   }), hooks), version);
 }
@@ -879,56 +969,6 @@ function receiptLogs(raw: unknown[]): PaymentView['logs'] {
   }));
 }
 
-async function fetchRotation(urls: string[], address: string, finalized: number): Promise<unknown[] | null> {
-  const out: unknown[] = [];
-  for (let from = 0; from <= finalized; from += LOG_SPAN + 1) {
-    const to = Math.min(finalized, from + LOG_SPAN);
-    const result = await rpc(urls, 'eth_getLogs', [{
-      address,
-      fromBlock: hexQty(from),
-      toBlock: hexQty(to),
-      topics: [ROTATION_TOPIC0],
-    }]);
-    if (!Array.isArray(result)) return null;
-    out.push(...result);
-  }
-  return out;
-}
-
-function rotationChain(logs: unknown[], checkpoint: string, anchorFrom: string): boolean {
-  const steps: { version: bigint; oldAddr: string; newAddr: string }[] = [];
-  for (const item of logs) {
-    const rec = asRecord(item);
-    if (!rec || typeof rec.data !== 'string') continue;
-    const body = rec.data.startsWith('0x') ? rec.data.slice(2) : rec.data;
-    if (!/^[0-9a-fA-F]{192}$/.test(body)) continue;
-    const oldAddr = `0x${body.slice(88, 128).toLowerCase()}`;
-    const newAddr = `0x${body.slice(152, 192).toLowerCase()}`;
-    steps.push({ version: BigInt(`0x${body.slice(0, 64)}`), oldAddr, newAddr });
-  }
-  steps.sort((a, b) => (a.version < b.version ? -1 : a.version > b.version ? 1 : 0));
-  let current = checkpoint.toLowerCase();
-  let moved = false;
-  for (const step of steps) {
-    if (step.oldAddr !== current) continue;
-    current = step.newAddr;
-    moved = true;
-  }
-  return moved && current === anchorFrom.toLowerCase();
-}
-
-function checkpointOf(payload: Record<string, unknown> | null, chainId: number, address: string): string | null {
-  const list = payload?.contracts;
-  if (!Array.isArray(list)) return null;
-  for (const item of list) {
-    const row = asRecord(item);
-    if (!row || row.chainId !== chainId) continue;
-    if (typeof row.address !== 'string' || row.address.toLowerCase() !== address.toLowerCase()) continue;
-    return typeof row.checkpoint === 'string' ? row.checkpoint.toLowerCase() : null;
-  }
-  return null;
-}
-
 function predecessorOf(payload: Record<string, unknown> | null, chainId: number, address: string): string | null {
   const list = payload?.contracts;
   if (!Array.isArray(list)) return null;
@@ -954,23 +994,32 @@ function callKind(value: { ok: true; value: unknown } | { ok: false; err: unknow
   return { status: 'word', word: BigInt(value.value) };
 }
 
-async function callWord(urls: string[], to: string, data: string): Promise<CallWord> {
-  const unique = [...new Set(urls.map(canonRpc))];
-  if (unique.length <= 1) return { status: 'rpc_unreachable' };
-  const settled = await Promise.all(unique.map(async (url) => {
+async function callWord(
+  slots: RpcSlot[],
+  to: string,
+  data: string,
+  block: { blockHash: string; requireCanonical: true },
+): Promise<CallWord> {
+  const publics = slots.filter((slot) => !slot.keyed);
+  if (publics.length < 2) return { status: 'rpc_unreachable' };
+  const settled = await Promise.all(slots.map(async (slot) => {
     try {
-      return { ok: true as const, value: await jsonRpc(url, 'eth_call', [{ to, data }, 'finalized']) };
+      return { slot, ok: true as const, value: await jsonRpc(slot.url, 'eth_call', [{ to, data }, block]) };
     } catch (err) {
-      return { ok: false as const, err };
+      return { slot, ok: false as const, err };
     }
   }));
-  const kinds = settled.map(callKind);
+  const kinds = settled.map((item) => ({ slot: item.slot, kind: callKind(item.ok ? { ok: true, value: item.value } : { ok: false, err: item.err }) }));
+  const relevant = kinds.filter((item) => !(item.slot.keyed && item.kind.status === 'rpc_unreachable'));
+  if (relevant.some((item) => !item.slot.keyed && item.kind.status === 'rpc_unreachable')) return { status: 'rpc_unreachable' };
+  if (relevant.filter((item) => !item.slot.keyed).length < 2) return { status: 'rpc_unreachable' };
   const kindKey = (kind: CallWord) => (kind.status === 'word' ? `word:${kind.word.toString()}` : kind.status);
-  const first = kindKey(kinds[0]);
-  for (const kind of kinds.slice(1)) {
+  const first = kindKey(relevant[0].kind);
+  for (const item of relevant.slice(1)) {
+    const kind = item.kind;
     if (kindKey(kind) !== first) return { status: 'rpc_disagreement' };
   }
-  return kinds[0];
+  return relevant[0].kind;
 }
 
 export { isExactV13Receipt };
