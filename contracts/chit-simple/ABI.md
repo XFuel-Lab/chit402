@@ -1,6 +1,6 @@
 # ChitAnchor ABI (Base Sepolia v0)
 
-Frozen for P0-7. v0 emits `kind = 0` only. This file and `vectors/anchored-topic0.json` are the ABI spec. The owner deploys from `deploy/chit-simple/sepolia-pack/`. Nothing here is a proxy.
+The anchor surface is the Chit402 P0-7 hourly log. Key changes are a controller timelock. A third party cannot change a key. v0 emits `kind = 0` only. This file and `vectors/anchored-topic0.json` are the ABI spec for the anchor event. The owner deploys from `deploy/chit-simple/sepolia-pack/`. ChitAnchor is not a proxy.
 
 Solidity `0.8.24`, via IR, optimizer 200 runs. No `delegatecall`, `selfdestruct`, owner, or payable path.
 
@@ -14,9 +14,11 @@ Illustrative check (not a deployment): contract `0x33333333333333333333333333333
 
 ## Constructor
 
-`constructor(address checkpoint)`
+`constructor(address checkpoint, address controller)`
 
-Reverts if `checkpoint` is the zero address. Stores that address at version 1 and emits `CheckpointKeyRotated(1, address(0), checkpoint)`. Writes `heads[0]` once: hourStart 0, size 0, checkpointVersion 1, anchorBlock = the deploy block, anchorTime = the deploy timestamp, root = SHA-256("") (`0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), stateRoot 0. `latestEpoch` starts at 0.
+Reverts `ZeroCheckpoint` if either address is zero. Reverts `SameCheckpoint` if they are equal. Stores the checkpoint at version 1, stores the controller, and emits `CheckpointKeyRotated(1, address(0), checkpoint)`. Writes `heads[0]` once: hourStart 0, size 0, checkpointVersion 1, anchorBlock = the deploy block, anchorTime = the deploy timestamp, root = SHA-256("") (`0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), stateRoot 0. `latestEpoch` starts at 0. The pending slot is empty (`kind = 0`).
+
+`ROTATION_DELAY` is `24 hours` (86400 seconds).
 
 ## anchor
 
@@ -37,28 +39,49 @@ Checks, in order:
 | 7 | `size > heads[latestEpoch].size` | `SizeNotIncreasing()` |
 | 8 | RFC 9162 consistency of `(prior size, prior root)` to `(size, root)`, genesis when prior size is 0 | `BadConsistency()` |
 
-Then it writes `heads[epoch]` once, with `anchorBlock = block.number`, `anchorTime = block.timestamp`, and `checkpointVersion` equal to the version stored at that call. It sets `latestEpoch` to `epoch` and emits Anchored with `kind = 0`. A later call does not rewrite an earlier head. `rotateCheckpointKey` does not write `heads`.
+Then it writes `heads[epoch]` once, with `anchorBlock = block.number`, `anchorTime = block.timestamp`, and `checkpointVersion` equal to the version stored at that call. It sets `latestEpoch` to `epoch` and emits Anchored with `kind = 0`. A later call does not rewrite an earlier head. `executePending` does not write `heads`. If the stored `checkpointVersion` is above the uint32 max, anchor reverts `BadVersion` and does not truncate.
 
 `size` is the uint64 wire field. The off-chain 2^53−1 cap is not a contract rule.
 
 Genesis (stored size 0) accepts an empty proof once. The stored root starts as the empty-tree root. A later anchor has stored size > 0, so genesis cannot run again.
 
-## rotateCheckpointKey
+## Key changes
 
-```
-rotateCheckpointKey(address newAddr, uint64 version)
-```
+A third party cannot change a key. The checkpoint key cannot either. There is no direct function for either change. One pending slot holds `{kind, addr, version, eta}`. Kind 1 is a checkpoint rotation. Kind 2 is a controller change. Kind 0 means the slot is empty. A propose while the slot is filled reverts `ActionPending`. Cancel first.
 
-In v0 on Base Sepolia, `rotateCheckpointKey` is authorized by the checkpoint key alone, so a rotation is not a trust event. The 2-of-3 secp256k1 controller path (SIMPLE §S6) is required before any mainnet deploy. This PR does not add that path. Checks:
+`proposeRotation(address newAddr, uint64 version)` — only the controller.
 
-| Check | Error |
-|---|---|
-| `msg.sender == checkpoint` | `NotCheckpoint()` |
-| `newAddr != address(0)` | `ZeroCheckpoint()` |
-| `newAddr != checkpoint` | `SameCheckpoint()` |
-| `version > stored version` | `BadVersion()` |
+| Order | Check | Error |
+|---|---|---|
+| 1 | `msg.sender == controller` | `NotController()` |
+| 2 | pending `kind == 0` | `ActionPending()` |
+| 3 | `newAddr != address(0)` | `ZeroCheckpoint()` |
+| 4 | `newAddr != checkpoint` | `SameCheckpoint()` |
+| 5 | `newAddr != controller` | `RotationToController()` |
+| 6 | `version > checkpointVersion` | `BadVersion()` |
+| 7 | `version <= uint32 max` | `BadVersion()` |
 
-Emits `CheckpointKeyRotated(version, oldAddr, newAddr)`. A later anchor from the old address reverts `NotCheckpoint()`.
+Stores kind 1 and `eta = block.timestamp + ROTATION_DELAY`. Emits `ActionProposed`.
+
+`BadVersion` is the one error for a version that is not a strict increase and for a version that does not fit in uint32. There is no second overflow error. The proposal uses `BadVersion` for both, which is the same error `anchor` uses if a stored version is already above uint32 max. A value that does not fit is rejected before it is stored, so the head's `uint32 checkpointVersion` is never a truncation.
+
+`proposeControllerChange(address newController)` — only the controller.
+
+| Order | Check | Error |
+|---|---|---|
+| 1 | `msg.sender == controller` | `NotController()` |
+| 2 | pending `kind == 0` | `ActionPending()` |
+| 3 | `newController != address(0)` | `ZeroCheckpoint()` |
+| 4 | `newController != controller` | `SameCheckpoint()` |
+| 5 | `newController != checkpoint` | `ControllerIsCheckpoint()` |
+
+Stores kind 2, version 0, and the same `eta`. Emits `ActionProposed`.
+
+`executePending()` — only the current controller, and only when the slot is filled and `block.timestamp >= eta`. The slot is cleared before the key changes. Kind 1 stores the new checkpoint and its version and emits `CheckpointKeyRotated`. Kind 2 stores the new controller and emits `ControllerChanged`. A controller change does not change the checkpoint or `checkpointVersion`. A rotation does not change the controller. After a controller change the old controller cannot propose, execute, or cancel. The new controller's first proposal waits another full `ROTATION_DELAY`.
+
+`cancelPending()` — only the current controller. Clears a filled slot at any time before execution and emits `ActionCancelled`. A later `executePending` reverts `NoPendingAction`. The next propose starts a new 24 hour delay.
+
+While a rotation is waiting, the old checkpoint can still anchor. After execution only the new checkpoint can. `checkpointVersion` changes when the rotation executes.
 
 ## Events
 
@@ -78,6 +101,25 @@ Byte layout is pinned in `vectors/anchored-topic0.json`.
 - no indexed fields
 - data: `abi.encode(version, oldAddr, newAddr)`
 
+`ActionProposed(uint8 kind, address addr, uint64 version, uint64 eta)`
+
+- topic0: `0x7d2919dd4e57938bcd8df21204dee96d6b3d99bb3cee819d491b88183aeba4f3`
+- no indexed fields
+- data: `abi.encode(kind, addr, version, eta)`
+- `eta` is the propose timestamp plus 86400
+
+`ActionCancelled(uint8 kind)`
+
+- topic0: `0x946129e76d2186c5b295b0fee9e243fa92ba1052ff225b1a53c9303061bf8ee2`
+- no indexed fields
+- data: `abi.encode(kind)`
+
+`ControllerChanged(address oldController, address newController)`
+
+- topic0: `0x6aef1fb5b23d0e109fc7f2b0601019e1edbacd177e31a441ec8548e8dd14f0f7`
+- no indexed fields
+- data: `abi.encode(oldController, newController)`
+
 ## Head
 
 ```
@@ -91,18 +133,21 @@ Head { uint40 hourStart; uint64 size; uint32 checkpointVersion; uint64 anchorBlo
 ## Views
 
 - `checkpoint() → address`
+- `controller() → address`
 - `checkpointVersion() → uint64`
 - `latestEpoch() → uint64`
+- `ROTATION_DELAY() → uint256`
 - `domain() → bytes32`
 - `MAX_ANCHOR_LAG() → uint64` (constant 5400)
 - `latest() → (uint64 epoch, uint64 hourStart, uint64 size, bytes32 root, bytes32 stateRoot)` reads `heads[latestEpoch]`
 - `headAt(uint64 e) → Head` (zero head when unwritten; never reverts)
 - `headsFor(uint64 e) → (Head current, Head prior, uint64 latestEpoch)` prior is the zero head when `e == 0`
 - `heads(uint64 e) → Head` the mapping getter
+- `pendingAction() → (uint8 kind, address addr, uint64 version, uint64 eta)`
 
 ## Errors
 
-`NotCheckpoint()`, `BadDomain()`, `BadEpoch()`, `BadHour()`, `HourNotIncreasing()`, `HourNotFinished()`, `SizeNotIncreasing()`, `BadConsistency()`, `ZeroCheckpoint()`, `SameCheckpoint()`, `BadVersion()`.
+`NotCheckpoint()`, `BadDomain()`, `BadEpoch()`, `BadHour()`, `HourNotIncreasing()`, `HourNotFinished()`, `SizeNotIncreasing()`, `BadConsistency()`, `ZeroCheckpoint()`, `SameCheckpoint()`, `BadVersion()`, `NotController()`, `ActionPending()`, `NoPendingAction()`, `TooEarly()`, `RotationToController()`, `ControllerIsCheckpoint()`.
 
 ## Consistency
 

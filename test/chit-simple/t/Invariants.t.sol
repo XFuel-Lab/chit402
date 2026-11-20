@@ -15,7 +15,7 @@ contract ChitAnchorInvariantTest is Test {
     function setUp() public {
         vm.chainId(84532);
         address cp = address(0xC0FFEE);
-        anchor = new ChitAnchor(cp);
+        anchor = new ChitAnchor(cp, address(0xC0117011));
         harness = new Rfc9162Harness();
         handler = new Handler(anchor);
         vm.deal(address(handler), 1 ether);
@@ -229,21 +229,26 @@ contract Handler {
     function rotate(uint96 salt) external {
         address next = address(uint160(uint256(keccak256(abi.encodePacked(salt, anchor.checkpointVersion())))));
         if (next == address(0) || next == anchor.checkpoint()) return;
-        address who = anchor.checkpoint();
+        address who = anchor.controller();
         uint64 version = anchor.checkpointVersion() + 1;
         vm.prank(who);
-        anchor.rotateCheckpointKey(next, version);
-        expectedCheckpoint = next;
+        try anchor.proposeRotation(next, version) {} catch {
+            return;
+        }
+        vm.warp(block.timestamp + 24 hours);
+        vm.prank(who);
+        try anchor.executePending() {} catch {}
+        expectedCheckpoint = anchor.checkpoint();
     }
 
-    /// @dev A third party cannot rotate the checkpoint key.
+    /// @dev A third party cannot propose a checkpoint rotation.
     function rotateThirdParty(address who, uint96 salt) external {
-        if (who == anchor.checkpoint()) return;
+        if (who == anchor.checkpoint() || who == anchor.controller()) return;
         address next = address(uint160(uint256(keccak256(abi.encodePacked(salt, who)))));
         if (next == address(0) || next == anchor.checkpoint()) return;
         uint64 version = anchor.checkpointVersion() + 1;
         vm.prank(who);
-        try anchor.rotateCheckpointKey(next, version) {} catch {}
+        try anchor.proposeRotation(next, version) {} catch {}
     }
 
     function pay() external {

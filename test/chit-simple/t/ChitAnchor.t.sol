@@ -9,14 +9,16 @@ contract ChitAnchorTest is Test {
     uint256 internal constant HOUR = 3600;
     address internal constant EXAMPLE_DEPLOYER = 0x1111111111111111111111111111111111111111;
     address internal constant EXAMPLE_CHECKPOINT = 0x2222222222222222222222222222222222222222;
+    address internal constant EXAMPLE_CONTROLLER = 0x4444444444444444444444444444444444444444;
 
     ChitAnchor internal a;
     address internal cp = address(0xC0FFEE);
+    address internal ctrl = address(0xC0117011);
     bytes32 internal dom;
 
     function setUp() public {
         vm.chainId(84532);
-        a = new ChitAnchor(cp);
+        a = new ChitAnchor(cp, ctrl);
         dom = a.domain();
     }
 
@@ -45,6 +47,10 @@ contract ChitAnchorTest is Test {
         assertEq(state, bytes32(0), "state");
         assertEq(a.checkpoint(), cp, "checkpoint");
         assertEq(a.checkpointVersion(), 1, "version");
+        assertEq(a.controller(), ctrl, "controller");
+        assertEq(a.ROTATION_DELAY(), 24 hours, "delay");
+        (uint8 kind,,,) = a.pendingAction();
+        assertEq(uint256(kind), 0, "empty slot");
     }
 
     function test_domain_matches_formula() public view {
@@ -61,12 +67,12 @@ contract ChitAnchorTest is Test {
 
     function test_constructor_rejects_zero_checkpoint() public {
         vm.expectRevert(ChitAnchor.ZeroCheckpoint.selector);
-        new ChitAnchor(address(0));
+        new ChitAnchor(address(0), ctrl);
     }
 
     function test_constructor_emits_initial_rotation() public {
         vm.recordLogs();
-        ChitAnchor fresh = new ChitAnchor(cp);
+        ChitAnchor fresh = new ChitAnchor(cp, ctrl);
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 1, "one log");
         assertEq(logs[0].topics.length, 1, "no indexed fields");
@@ -267,9 +273,13 @@ contract ChitAnchorTest is Test {
 
     function test_rotation_event_and_old_key_refused() public {
         address next = address(0xBEEF);
+        vm.prank(ctrl);
+        a.proposeRotation(next, 2);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.warp(eta);
         vm.recordLogs();
-        vm.prank(cp);
-        a.rotateCheckpointKey(next, 2);
+        vm.prank(ctrl);
+        a.executePending();
         Vm.Log[] memory logs = vm.getRecordedLogs();
         assertEq(logs.length, 1, "one log");
         assertEq(logs[0].topics[0], keccak256("CheckpointKeyRotated(uint64,address,address)"), "topic0");
@@ -291,33 +301,45 @@ contract ChitAnchorTest is Test {
 
     function test_revert_rotate_sender_zero_same_and_version() public {
         vm.prank(address(0xB0B));
-        vm.expectRevert(ChitAnchor.NotCheckpoint.selector);
-        a.rotateCheckpointKey(address(0xBEEF), 2);
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.proposeRotation(address(0xBEEF), 2);
 
-        vm.prank(cp);
+        vm.prank(ctrl);
         vm.expectRevert(ChitAnchor.ZeroCheckpoint.selector);
-        a.rotateCheckpointKey(address(0), 2);
+        a.proposeRotation(address(0), 2);
 
-        vm.prank(cp);
+        vm.prank(ctrl);
         vm.expectRevert(ChitAnchor.SameCheckpoint.selector);
-        a.rotateCheckpointKey(cp, 2);
+        a.proposeRotation(cp, 2);
 
-        vm.prank(cp);
+        vm.prank(ctrl);
         vm.expectRevert(ChitAnchor.BadVersion.selector);
-        a.rotateCheckpointKey(address(0xBEEF), 1);
-        vm.prank(cp);
+        a.proposeRotation(address(0xBEEF), 1);
+        vm.prank(ctrl);
         vm.expectRevert(ChitAnchor.BadVersion.selector);
-        a.rotateCheckpointKey(address(0xBEEF), 0);
+        a.proposeRotation(address(0xBEEF), 0);
 
-        vm.prank(cp);
-        a.rotateCheckpointKey(address(0xBEEF), 5);
-        assertEq(a.checkpointVersion(), 5, "skipped ahead");
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 5);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
+        assertEq(uint256(a.checkpointVersion()), 5, "skipped ahead");
         vm.prank(address(0xBEEF));
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.proposeRotation(address(0xCAFE), 6);
+        vm.prank(ctrl);
         vm.expectRevert(ChitAnchor.BadVersion.selector);
-        a.rotateCheckpointKey(address(0xCAFE), 4);
-        vm.prank(address(0xBEEF));
-        a.rotateCheckpointKey(address(0xCAFE), 6);
+        a.proposeRotation(address(0xCAFE), 4);
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xCAFE), 6);
+        (,,, eta) = a.pendingAction();
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
         assertEq(a.checkpoint(), address(0xCAFE), "second");
+        assertEq(uint256(a.checkpointVersion()), 6, "version");
     }
 
     function test_eth_transfer_reverts_and_balance_stays_zero() public {
@@ -335,8 +357,8 @@ contract ChitAnchorTest is Test {
         assertFalse(ok, "anchor value");
         assertEq(address(a).balance, 0, "balance after anchor");
 
-        vm.prank(cp);
-        (ok,) = address(a).call{value: 1}(abi.encodeCall(ChitAnchor.rotateCheckpointKey, (address(0xBEEF), uint64(2))));
+        vm.prank(ctrl);
+        (ok,) = address(a).call{value: 1}(abi.encodeCall(ChitAnchor.proposeRotation, (address(0xBEEF), uint64(2))));
         assertFalse(ok, "rotate value");
         assertEq(address(a).balance, 0, "balance after rotate");
         assertEq(a.checkpoint(), cp, "key unchanged");
@@ -390,7 +412,7 @@ contract ChitAnchorTest is Test {
         vm.setNonce(EXAMPLE_DEPLOYER, 0);
         address predicted = vm.computeCreateAddress(EXAMPLE_DEPLOYER, 0);
         vm.prank(EXAMPLE_DEPLOYER);
-        ChitAnchor deployed = new ChitAnchor(EXAMPLE_CHECKPOINT);
+        ChitAnchor deployed = new ChitAnchor(EXAMPLE_CHECKPOINT, EXAMPLE_CONTROLLER);
         assertEq(address(deployed), predicted, "create address");
         string memory json = vm.readFile("../../deploy/chit-simple/sepolia-pack/expected-runtime.json");
         string memory wantAddr = vm.parseJsonString(json, ".example.contract");
@@ -406,6 +428,7 @@ contract ChitAnchorTest is Test {
         assertEq(vm.parseJsonUint(json, ".example.nonce"), 0, "nonce");
         assertEq(vm.parseJsonString(json, ".bytecodeHash"), "none", "bytecode hash");
         assertEq(vm.parseJsonString(json, ".evmVersion"), "cancun", "cancun");
+        assertEq(vm.parseJsonString(json, ".example.controller"), "0x4444444444444444444444444444444444444444", "controller");
     }
 
     function test_pack_has_no_key_on_argv() public view {
@@ -536,9 +559,7 @@ contract ChitAnchorTest is Test {
 
     function _allowedHex(bytes memory b, uint256 start) private pure returns (bool) {
         bytes32 word = _parseHex(b, start);
-        return word == hex"dc28530bf79fbdfc06e4865a7e007a9eaa882e0566b55cd47df4509c93ba212d"
-            || word == hex"4c07cbb9113af81253522e8085b5865a81910dacc34945a58f2f9223ed3a8971"
-            || word == hex"cd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080"
+        return word == hex"b7ad0c729af141a19695bc89d09bd0a04a8d9ab9668373a066cba94f13aee45c"
             || word == hex"bc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e"
             || word == hex"95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3"
             || word == hex"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -613,8 +634,7 @@ contract ChitAnchorTest is Test {
         _seal(1, bytes32(uint256(1)));
         ChitAnchor.Head memory past = a.headAt(1);
         ChitAnchor.Head memory genesis = a.headAt(0);
-        vm.prank(cp);
-        a.rotateCheckpointKey(address(0xBEEF), 2);
+        _rotateTo(address(0xBEEF), 2);
         assertTrue(_sameHead(a.headAt(1), past), "epoch 1");
         assertTrue(_sameHead(a.headAt(0), genesis), "genesis");
         assertEq(a.headAt(1).checkpointVersion, 1, "old version");
@@ -631,7 +651,7 @@ contract ChitAnchorTest is Test {
         vm.chainId(84532);
         vm.warp(1234);
         uint64 bn = uint64(block.number);
-        ChitAnchor fresh = new ChitAnchor(cp);
+        ChitAnchor fresh = new ChitAnchor(cp, ctrl);
         ChitAnchor.Head memory g = fresh.headAt(0);
         assertEq(g.root, sha256(""), "empty root");
         assertEq(g.size, 0, "size");
@@ -682,18 +702,461 @@ contract ChitAnchorTest is Test {
     }
 
     function test_checkpoint_version_does_not_truncate() public {
-        vm.prank(cp);
+        vm.prank(ctrl);
         vm.expectRevert(ChitAnchor.BadVersion.selector);
-        a.rotateCheckpointKey(address(0xBEEF), uint64(type(uint32).max) + 1);
+        a.proposeRotation(address(0xBEEF), uint64(type(uint32).max) + 1);
         assertEq(a.checkpointVersion(), 1, "unchanged");
-        vm.prank(cp);
-        a.rotateCheckpointKey(address(0xBEEF), uint64(type(uint32).max));
+        _rotateTo(address(0xBEEF), uint64(type(uint32).max));
         (bytes32 root,,) = _roots(1);
         vm.warp(HOUR + HOUR);
         vm.prank(address(0xBEEF));
         a.anchor(dom, 1, uint64(HOUR), 1, root, bytes32(uint256(1)), new bytes32[](0));
         assertEq(a.headAt(1).checkpointVersion, type(uint32).max, "full width");
         assertEq(a.checkpointVersion(), uint64(type(uint32).max), "stored version");
+    }
+
+    function test_C1_checkpoint_cannot_propose_rotation() public {
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.proposeRotation(address(0xBEEF), 2);
+    }
+
+    function test_C2_controller_rotation_waits_and_keeps_head() public {
+        _seal(1, bytes32(uint256(11)));
+        (uint64 epoch, uint64 hour, uint64 size, bytes32 root, bytes32 state) = a.latest();
+        uint64 current = a.checkpointVersion();
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.BadVersion.selector);
+        a.proposeRotation(address(0xBEEF), current);
+        uint256 t = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        (uint8 kind, address addr, uint64 version, uint64 eta) = a.pendingAction();
+        assertEq(uint256(kind), 1, "kind");
+        assertEq(addr, address(0xBEEF), "addr");
+        assertEq(uint256(version), 2, "pending version");
+        assertEq(uint256(eta), t + 86400, "eta");
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
+        assertEq(a.checkpoint(), address(0xBEEF), "checkpoint");
+        assertEq(uint256(a.checkpointVersion()), 2, "version");
+        (uint64 e2, uint64 h2, uint64 s2, bytes32 r2, bytes32 st2) = a.latest();
+        assertEq(uint256(e2), uint256(epoch), "epoch");
+        assertEq(uint256(h2), uint256(hour), "hour");
+        assertEq(uint256(s2), uint256(size), "size");
+        assertEq(r2, root, "root");
+        assertEq(st2, state, "state");
+        assertEq(a.controller(), ctrl, "controller");
+    }
+
+    function test_C3_controller_change_only_by_controller() public {
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.proposeControllerChange(address(0xD00D));
+        vm.prank(address(0xB0B));
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.proposeControllerChange(address(0xD00D));
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.ZeroCheckpoint.selector);
+        a.proposeControllerChange(address(0));
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.SameCheckpoint.selector);
+        a.proposeControllerChange(ctrl);
+        vm.prank(ctrl);
+        a.proposeControllerChange(address(0xD00D));
+        (uint8 kind, address addr, uint64 version,) = a.pendingAction();
+        assertEq(uint256(kind), 2, "kind");
+        assertEq(addr, address(0xD00D), "addr");
+        assertEq(uint256(version), 0, "version");
+    }
+
+    function test_C4_constructor_rejects_zero_or_same_controller() public {
+        vm.expectRevert(ChitAnchor.ZeroCheckpoint.selector);
+        new ChitAnchor(cp, address(0));
+        vm.expectRevert(ChitAnchor.SameCheckpoint.selector);
+        new ChitAnchor(cp, cp);
+        vm.expectRevert(ChitAnchor.ZeroCheckpoint.selector);
+        new ChitAnchor(address(0), ctrl);
+    }
+
+    function test_C5_old_controller_loses_every_action() public {
+        address neu = address(0xD00D);
+        _controllerTo(neu);
+        assertEq(a.controller(), neu, "controller");
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.proposeRotation(address(0xBEEF), 2);
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.proposeControllerChange(address(0xCAFE));
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.executePending();
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.NotController.selector);
+        a.cancelPending();
+        vm.prank(neu);
+        a.proposeRotation(address(0xBEEF), 2);
+        (uint8 kind,,,) = a.pendingAction();
+        assertEq(uint256(kind), 1, "new controller proposes");
+    }
+
+    function test_C6_old_checkpoint_cannot_anchor_after_rotation() public {
+        address next = address(0xBEEF);
+        _rotateTo(next, 2);
+        (bytes32 root,,) = _roots(1);
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.NotCheckpoint.selector);
+        a.anchor(dom, 1, uint64(HOUR), 1, root, bytes32(uint256(1)), new bytes32[](0));
+        vm.prank(next);
+        a.anchor(dom, 1, uint64(HOUR), 1, root, bytes32(uint256(1)), new bytes32[](0));
+        (uint64 epoch,,,,) = a.latest();
+        assertEq(uint256(epoch), 1, "epoch");
+        assertEq(uint256(a.headAt(1).checkpointVersion), 2, "heads[1].checkpointVersion");
+        assertEq(uint256(a.headAt(0).checkpointVersion), 1, "heads[0].checkpointVersion");
+    }
+
+    function test_C8_anchor_invariants_hold_between_timelock_actions() public {
+        _seal(1, bytes32(uint256(1)));
+        address neu = address(0xD00D);
+        vm.prank(ctrl);
+        a.proposeControllerChange(neu);
+        (,,, uint64 etaC) = a.pendingAction();
+        _seal(2, bytes32(uint256(2)));
+        assertEq(uint256(a.headAt(2).checkpointVersion), 1, "heads[2].checkpointVersion during the delay");
+        (uint64 epoch,,,,) = a.latest();
+        assertEq(uint256(epoch), 2, "epoch during controller delay");
+        assertTrue(block.timestamp < etaC, "controller eta still ahead");
+        vm.warp(etaC);
+        vm.prank(ctrl);
+        a.executePending();
+        assertEq(a.controller(), neu, "controller");
+        assertEq(a.checkpoint(), cp, "checkpoint");
+        assertEq(uint256(a.checkpointVersion()), 1, "version");
+        (, uint64 h2, uint64 s2, bytes32 r2, bytes32 st2) = a.latest();
+        vm.prank(neu);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 etaR) = a.pendingAction();
+        _seal(3, bytes32(uint256(3)));
+        assertTrue(block.timestamp < etaR, "rotation eta still ahead");
+        (uint64 e3,,,,) = a.latest();
+        assertEq(uint256(e3), 3, "epoch during rotation delay");
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.BadEpoch.selector);
+        a.anchor(dom, 3, uint64(3 * HOUR), 3, r2, st2, new bytes32[](0));
+        vm.warp(etaR);
+        vm.prank(neu);
+        a.executePending();
+        (uint64 afterE, uint64 afterH, uint64 afterS, bytes32 afterR, bytes32 afterSRoot) = a.latest();
+        assertEq(uint256(afterE), uint256(e3), "rotation keeps the epoch");
+        assertEq(a.checkpoint(), address(0xBEEF), "new checkpoint");
+        assertEq(uint256(a.headAt(3).checkpointVersion), 1, "heads[3].checkpointVersion stays the pre-rotation version");
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.NotCheckpoint.selector);
+        a.anchor(dom, 4, uint64(4 * HOUR), 4, afterR, afterSRoot, new bytes32[](0));
+        _seal(4, bytes32(uint256(4)));
+        (uint64 e4, uint64 h4, uint64 s4,,) = a.latest();
+        assertEq(uint256(e4), 4, "new key epoch");
+        assertEq(uint256(a.headAt(4).checkpointVersion), 2, "heads[4].checkpointVersion");
+        assertEq(uint256(a.checkpointVersion()), 2, "anchor does not change version");
+        assertTrue(h4 > afterH && s4 > afterS && h2 > 0 && s2 > 0, "head only moved forward");
+        vm.prank(address(0xBEEF));
+        vm.expectRevert(ChitAnchor.BadEpoch.selector);
+        a.anchor(dom, 4, h4, s4, afterR, afterSRoot, new bytes32[](0));
+    }
+
+    function test_C9_execute_boundary_for_both_kinds() public {
+        uint256 t = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 eta) = a.pendingAction();
+        assertEq(uint256(eta), t + 86400, "rotation eta");
+        vm.warp(uint256(eta) - 1);
+        assertFalse(_ok(ctrl, abi.encodeCall(ChitAnchor.executePending, ())), "rotation eta-1");
+        assertEq(a.checkpoint(), cp, "checkpoint waits");
+        vm.warp(eta);
+        assertTrue(_ok(ctrl, abi.encodeCall(ChitAnchor.executePending, ())), "rotation at eta");
+        assertEq(a.checkpoint(), address(0xBEEF), "rotated");
+        t = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeControllerChange(address(0xD00D));
+        (,,, eta) = a.pendingAction();
+        assertEq(uint256(eta), t + 86400, "controller eta");
+        vm.warp(uint256(eta) - 1);
+        assertFalse(_ok(ctrl, abi.encodeCall(ChitAnchor.executePending, ())), "controller eta-1");
+        assertEq(a.controller(), ctrl, "controller waits");
+        vm.warp(eta);
+        assertTrue(_ok(ctrl, abi.encodeCall(ChitAnchor.executePending, ())), "controller at eta");
+        assertEq(a.controller(), address(0xD00D), "controller moved");
+        assertEq(a.checkpoint(), address(0xBEEF), "checkpoint stays");
+    }
+
+    function test_C10_no_direct_path_and_no_outsider() public {
+        bytes memory code = address(a).code;
+        assertTrue(_selector(code, bytes4(keccak256("proposeRotation(address,uint64)"))), "propose present");
+        assertTrue(_selector(code, bytes4(keccak256("proposeControllerChange(address)"))), "controller propose present");
+        assertTrue(_selector(code, bytes4(keccak256("executePending()"))), "execute present");
+        assertTrue(_selector(code, bytes4(keccak256("cancelPending()"))), "cancel present");
+        assertFalse(_selector(code, bytes4(keccak256("rotateCheckpointKey(address,uint64)"))), "rotate selector");
+        assertFalse(_selector(code, bytes4(keccak256("setController(address)"))), "setController selector");
+        string memory abiMd = vm.readFile("../../contracts/chit-simple/ABI.md");
+        assertFalse(_has(abiMd, "rotateCheckpointKey("), "abi rotate");
+        assertFalse(_has(abiMd, "setController("), "abi setController");
+        address[2] memory outsiders = [cp, address(0xB0B)];
+        for (uint256 i = 0; i < outsiders.length; i++) {
+            vm.prank(outsiders[i]);
+            vm.expectRevert(ChitAnchor.NotController.selector);
+            a.proposeRotation(address(0xBEEF), 2);
+            vm.prank(outsiders[i]);
+            vm.expectRevert(ChitAnchor.NotController.selector);
+            a.proposeControllerChange(address(0xD00D));
+        }
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 eta) = a.pendingAction();
+        for (uint256 i = 0; i < outsiders.length; i++) {
+            vm.prank(outsiders[i]);
+            vm.expectRevert(ChitAnchor.NotController.selector);
+            a.cancelPending();
+        }
+        vm.warp(eta);
+        for (uint256 i = 0; i < outsiders.length; i++) {
+            vm.prank(outsiders[i]);
+            vm.expectRevert(ChitAnchor.NotController.selector);
+            a.executePending();
+        }
+        (uint8 kind, address addr,, uint64 still) = a.pendingAction();
+        assertEq(uint256(kind), 1, "still pending");
+        assertEq(addr, address(0xBEEF), "same addr");
+        assertEq(uint256(still), uint256(eta), "same eta");
+    }
+
+    function test_C11_cancel_restarts_a_full_delay() public {
+        _cancelThenFresh(1, address(0xBEEF), 2);
+        _cancelThenFresh(2, address(0xD00D), 0);
+    }
+
+    function test_C12_second_propose_does_not_replace_the_slot() public {
+        uint256 t = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.ActionPending.selector);
+        a.proposeRotation(address(0xCAFE), 3);
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.ActionPending.selector);
+        a.proposeControllerChange(address(0xD00D));
+        (uint8 kind, address addr, uint64 version, uint64 eta) = a.pendingAction();
+        assertEq(uint256(kind), 1, "kind");
+        assertEq(addr, address(0xBEEF), "addr");
+        assertEq(uint256(version), 2, "version");
+        assertEq(uint256(eta), t + 86400, "eta");
+        vm.prank(ctrl);
+        a.cancelPending();
+        t = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeControllerChange(address(0xD00D));
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.ActionPending.selector);
+        a.proposeControllerChange(address(0xCAFE));
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.ActionPending.selector);
+        a.proposeRotation(address(0xBEEF), 2);
+        (kind, addr, version, eta) = a.pendingAction();
+        assertEq(uint256(kind), 2, "controller kind");
+        assertEq(addr, address(0xD00D), "controller addr");
+        assertEq(uint256(version), 0, "controller version");
+        assertEq(uint256(eta), t + 86400, "controller eta");
+    }
+
+    function test_C13_old_key_anchors_during_the_delay() public {
+        uint256 t = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 eta) = a.pendingAction();
+        assertEq(uint256(eta), t + 86400, "eta");
+        if (block.timestamp < HOUR + HOUR) vm.warp(HOUR + HOUR);
+        (bytes32 root1,,) = _roots(1);
+        vm.prank(cp);
+        a.anchor(dom, 1, uint64(HOUR), 1, root1, bytes32(uint256(1)), new bytes32[](0));
+        (uint64 epoch,,,,) = a.latest();
+        assertEq(uint256(epoch), 1, "epoch during delay");
+        assertEq(uint256(a.headAt(1).checkpointVersion), 1, "heads[1].checkpointVersion during the delay");
+        assertTrue(block.timestamp < eta, "delay still open");
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
+        assertEq(uint256(a.headAt(1).checkpointVersion), 1, "heads[1].checkpointVersion unchanged by execution");
+        (bytes32 root2, bytes32[] memory proof,) = _roots(2);
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.NotCheckpoint.selector);
+        a.anchor(dom, 2, uint64(2 * HOUR), 2, root2, bytes32(uint256(2)), proof);
+        vm.prank(address(0xBEEF));
+        a.anchor(dom, 2, uint64(2 * HOUR), 2, root2, bytes32(uint256(2)), proof);
+        (uint64 epoch2,,,,) = a.latest();
+        assertEq(uint256(epoch2), 2, "new key epoch");
+        assertEq(uint256(a.headAt(2).checkpointVersion), 2, "heads[2].checkpointVersion");
+        assertEq(uint256(a.headAt(1).checkpointVersion), 1, "heads[1].checkpointVersion stays");
+        assertEq(uint256(a.checkpointVersion()), 2, "anchor leaves the version");
+    }
+
+    function test_C14_proposed_events_use_a_one_day_eta() public {
+        uint256 t = block.timestamp;
+        vm.recordLogs();
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 4);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "one rotation log");
+        assertEq(logs[0].topics.length, 1, "rotation topics");
+        assertEq(logs[0].topics[0], keccak256("ActionProposed(uint8,address,uint64,uint64)"), "rotation topic");
+        assertEq(logs[0].data, abi.encode(uint8(1), address(0xBEEF), uint64(4), uint64(t + 86400)), "rotation data");
+        vm.prank(ctrl);
+        a.cancelPending();
+        t = block.timestamp;
+        vm.recordLogs();
+        vm.prank(ctrl);
+        a.proposeControllerChange(address(0xD00D));
+        logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "one controller log");
+        assertEq(logs[0].topics[0], keccak256("ActionProposed(uint8,address,uint64,uint64)"), "controller topic");
+        assertEq(logs[0].data, abi.encode(uint8(2), address(0xD00D), uint64(0), uint64(t + 86400)), "controller data");
+        assertEq(a.ROTATION_DELAY(), 86400, "delay is one day");
+    }
+
+    function test_C15_controller_change_cannot_replace_a_rotation() public {
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.ActionPending.selector);
+        a.proposeControllerChange(address(0xD00D));
+        vm.warp(eta);
+        vm.recordLogs();
+        vm.prank(ctrl);
+        a.executePending();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "one log");
+        assertEq(logs[0].topics[0], keccak256("CheckpointKeyRotated(uint64,address,address)"), "rotation event");
+        assertEq(logs[0].data, abi.encode(uint64(2), cp, address(0xBEEF)), "rotation data");
+        assertEq(a.checkpoint(), address(0xBEEF), "rotated");
+        assertEq(a.controller(), ctrl, "controller");
+        assertEq(uint256(a.checkpointVersion()), 2, "version");
+    }
+
+    function test_C16_rotation_after_controller_change_waits_again() public {
+        address neu = address(0xD00D);
+        vm.prank(ctrl);
+        a.proposeControllerChange(neu);
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.ActionPending.selector);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
+        assertEq(a.controller(), neu, "controller");
+        uint256 t = block.timestamp;
+        assertTrue(_ok(neu, abi.encodeCall(ChitAnchor.proposeRotation, (address(0xBEEF), uint64(2)))), "fresh propose");
+        (uint8 kind,,, uint64 nextEta) = a.pendingAction();
+        assertEq(uint256(kind), 1, "kind");
+        assertEq(uint256(nextEta), t + 86400, "fresh day");
+        vm.warp(uint256(nextEta) - 1);
+        assertFalse(_ok(neu, abi.encodeCall(ChitAnchor.executePending, ())), "not the old eta");
+        vm.warp(nextEta);
+        assertTrue(_ok(neu, abi.encodeCall(ChitAnchor.executePending, ())), "own eta");
+        assertEq(a.checkpoint(), address(0xBEEF), "rotated");
+        assertEq(uint256(a.checkpointVersion()), 2, "version");
+        assertEq(a.controller(), neu, "controller stays");
+    }
+
+    function test_C17_cancelled_rotation_does_not_lend_its_eta() public {
+        uint256 t0 = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 cancelled) = a.pendingAction();
+        assertEq(uint256(cancelled), t0 + 86400, "cancelled eta");
+        vm.warp(t0 + 10);
+        vm.prank(ctrl);
+        a.cancelPending();
+        uint256 t1 = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeControllerChange(address(0xD00D));
+        (uint8 kind, address addr,, uint64 eta) = a.pendingAction();
+        assertEq(uint256(kind), 2, "kind");
+        assertEq(addr, address(0xD00D), "addr");
+        assertEq(uint256(eta), t1 + 86400, "own eta");
+        assertTrue(uint256(eta) != uint256(cancelled), "etas differ");
+        vm.warp(cancelled);
+        assertFalse(_ok(ctrl, abi.encodeCall(ChitAnchor.executePending, ())), "cancelled eta is too early");
+        assertEq(a.controller(), ctrl, "controller");
+        assertEq(a.checkpoint(), cp, "checkpoint");
+        vm.warp(eta);
+        assertTrue(_ok(ctrl, abi.encodeCall(ChitAnchor.executePending, ())), "own eta");
+        assertEq(a.controller(), address(0xD00D), "controller moved");
+        assertEq(a.checkpoint(), cp, "checkpoint stays");
+        assertEq(uint256(a.checkpointVersion()), 1, "version stays");
+    }
+
+    function test_C18_each_kind_changes_only_its_own_key() public {
+        address neu = address(0xD00D);
+        _seal(1, bytes32(uint256(1)));
+        (uint64 epoch, uint64 hour, uint64 size, bytes32 root, bytes32 state) = a.latest();
+        _controllerTo(neu);
+        assertEq(a.checkpoint(), cp, "checkpoint");
+        assertEq(uint256(a.checkpointVersion()), 1, "version");
+        (uint64 e2, uint64 h2, uint64 s2, bytes32 r2, bytes32 st2) = a.latest();
+        assertEq(uint256(e2), uint256(epoch), "epoch");
+        assertEq(uint256(h2), uint256(hour), "hour");
+        assertEq(uint256(s2), uint256(size), "size");
+        assertEq(r2, root, "root");
+        assertEq(st2, state, "state");
+        vm.prank(neu);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.warp(eta);
+        vm.prank(neu);
+        a.executePending();
+        assertEq(a.controller(), neu, "controller");
+        assertEq(a.checkpoint(), address(0xBEEF), "checkpoint");
+        assertEq(uint256(a.checkpointVersion()), 2, "version");
+        (e2, h2, s2, r2, st2) = a.latest();
+        assertEq(uint256(e2), uint256(epoch), "epoch after rotation");
+        assertEq(r2, root, "root after rotation");
+    }
+
+    function test_AH15_execute_does_not_write_heads() public {
+        _seal(1, bytes32(uint256(1)));
+        _seal(2, bytes32(uint256(2)));
+        ChitAnchor.Head memory g = a.headAt(0);
+        ChitAnchor.Head memory h1 = a.headAt(1);
+        ChitAnchor.Head memory h2 = a.headAt(2);
+        uint64 tip = a.latestEpoch();
+        _rotateTo(address(0xBEEF), 2);
+        assertTrue(_sameHead(a.headAt(0), g), "genesis");
+        assertTrue(_sameHead(a.headAt(1), h1), "epoch 1");
+        assertTrue(_sameHead(a.headAt(2), h2), "epoch 2");
+        assertEq(a.latestEpoch(), tip, "latestEpoch");
+        assertEq(a.headAt(3).anchorBlock, 0, "no new head");
+        vm.prank(ctrl);
+        a.proposeControllerChange(address(0xD00D));
+        (,,, uint64 eta) = a.pendingAction();
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
+        assertTrue(_sameHead(a.headAt(0), g), "genesis after controller");
+        assertTrue(_sameHead(a.headAt(1), h1), "epoch 1 after controller");
+        assertTrue(_sameHead(a.headAt(2), h2), "epoch 2 after controller");
+        assertEq(a.latestEpoch(), tip, "latestEpoch after controller");
+        assertEq(a.headAt(3).anchorBlock, 0, "still no new head");
+    }
+
+    function test_gas_propose() public {
+        vm.pauseGasMetering();
+        vm.resumeGasMetering();
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        vm.pauseGasMetering();
     }
 
     function test_gas_anchor_genesis() public {
@@ -719,10 +1182,78 @@ contract ChitAnchorTest is Test {
 
     function test_gas_rotate() public {
         vm.pauseGasMetering();
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.warp(eta);
         vm.resumeGasMetering();
-        vm.prank(cp);
-        a.rotateCheckpointKey(address(0xBEEF), 2);
+        vm.prank(ctrl);
+        a.executePending();
         vm.pauseGasMetering();
+    }
+
+    function _rotateTo(address next, uint64 version) internal {
+        vm.prank(ctrl);
+        a.proposeRotation(next, version);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
+    }
+
+    function _controllerTo(address next) internal {
+        vm.prank(ctrl);
+        a.proposeControllerChange(next);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
+    }
+
+    function _cancelThenFresh(uint8 wantKind, address next, uint64 version) internal {
+        uint256 t0 = block.timestamp;
+        assertTrue(_propose(wantKind, next, version), "propose");
+        (,,, uint64 oldEta) = a.pendingAction();
+        assertEq(uint256(oldEta), t0 + 86400, "old eta");
+        vm.recordLogs();
+        vm.prank(ctrl);
+        a.cancelPending();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "cancel log");
+        assertEq(logs[0].topics[0], keccak256("ActionCancelled(uint8)"), "cancel topic");
+        assertEq(logs[0].data, abi.encode(wantKind), "cancel data");
+        vm.warp(oldEta);
+        assertFalse(_ok(ctrl, abi.encodeCall(ChitAnchor.executePending, ())), "cleared");
+        uint256 t1 = block.timestamp;
+        assertTrue(_propose(wantKind, next, version), "fresh propose");
+        (uint8 kind, address addr, uint64 ver, uint64 eta) = a.pendingAction();
+        assertEq(uint256(kind), uint256(wantKind), "kind");
+        assertEq(addr, next, "addr");
+        assertEq(uint256(ver), uint256(version), "version");
+        assertEq(uint256(eta), t1 + 86400, "fresh eta");
+        assertTrue(uint256(eta) != uint256(oldEta), "not the cancelled eta");
+        vm.prank(ctrl);
+        a.cancelPending();
+    }
+
+    function _propose(uint8 kind, address next, uint64 version) internal returns (bool ok) {
+        bytes memory data = kind == 1
+            ? abi.encodeCall(ChitAnchor.proposeRotation, (next, version))
+            : abi.encodeCall(ChitAnchor.proposeControllerChange, (next));
+        return _ok(ctrl, data);
+    }
+
+    function _ok(address who, bytes memory data) internal returns (bool ok) {
+        vm.prank(who);
+        (ok,) = address(a).call(data);
+    }
+
+    function _selector(bytes memory code, bytes4 sel) internal pure returns (bool) {
+        if (code.length < 4) return false;
+        for (uint256 i = 0; i <= code.length - 4; i++) {
+            if (code[i] == sel[0] && code[i + 1] == sel[1] && code[i + 2] == sel[2] && code[i + 3] == sel[3]) return true;
+        }
+        return false;
     }
 
     function _hex(bytes32 v) private pure returns (string memory) {
