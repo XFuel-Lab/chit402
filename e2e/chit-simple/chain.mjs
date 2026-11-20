@@ -27,6 +27,8 @@ export const CHAIN_ID = 84532;
 export const USDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
 /** Well-known Hardhat account 0. A public development key, not a secret. */
 export const DEV_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+/** Hardhat account 3. Distinct from the checkpoint. A public development address. */
+export const DEV_CONTROLLER = '0x90f79bf6eb2c4f870365e785982e1f101e93b906';
 
 function compileMock() {
   const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'MockUSDC.sol'), 'utf8');
@@ -217,11 +219,14 @@ async function rawNonce(provider, address) {
   return Number(value);
 }
 
-export async function deployAnchor(wallet, checkpoint) {
+export async function deployAnchor(wallet, checkpoint, controller) {
+  if (!checkpoint || !controller || String(checkpoint).toLowerCase() === String(controller).toLowerCase()) {
+    throw new Error('checkpoint and controller must be distinct');
+  }
   const artifact = JSON.parse(readFileSync(join(REPO, 'artifacts/contracts/chit-simple/ChitAnchor.sol/ChitAnchor.json'), 'utf8'));
   const factory = new ContractFactory(artifact.abi, artifact.bytecode, wallet);
   const nonce = await rawNonce(wallet.provider, wallet.address);
-  const contract = await factory.deploy(checkpoint, { nonce });
+  const contract = await factory.deploy(checkpoint, controller, { nonce });
   const mined = await contract.deploymentTransaction().wait();
   if (!mined || mined.status !== 1) throw new Error('anchor deploy reverted');
   const address = (await contract.getAddress()).toLowerCase();

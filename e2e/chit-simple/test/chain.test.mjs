@@ -13,7 +13,7 @@ import { PAYMENT_SLOT_MISSING, treeSizeFromHead } from '../../../packages/verify
 import { buildAnchorCalldata } from '../../../services/chit-sealer/calldata.js';
 import { recover } from '../../../services/chit-sealer/close.js';
 import { fetchReceipt } from '../../../services/chit-store/store.js';
-import { CHAIN_ID, deployAnchor, rpc } from '../chain.mjs';
+import { CHAIN_ID, DEV_CONTROLLER, deployAnchor, rpc } from '../chain.mjs';
 import {
   coreLine,
   listenAnchored,
@@ -119,7 +119,7 @@ describe('p0-9 local chain', () => {
       assert.equal(held.committed, true, held.reason);
       const commit = loop.sealer.state.commits.at(-1);
       const proof = proofWords(commit.calldata);
-      const other = await deployAnchor(loop.chain.wallet, ACCOUNT2);
+      const other = await deployAnchor(loop.chain.wallet, ACCOUNT2, DEV_CONTROLLER);
       await anchorTuple(other.address, ACCOUNT2, commit, proof);
       const foreign = await listenAnchored(loop);
       assert.equal(foreign.released, false);
@@ -358,15 +358,27 @@ describe('p0-9 local chain', () => {
       delete saltOnly.saltedBook;
       await check('T16c', 2, saltOnly, /payment_unchecked/, PAYMENT_SLOT_MISSING);
 
-      const rotateData = loop.anchor.contract.interface.encodeFunctionData('rotateCheckpointKey', [ACCOUNT2, 2]);
-      const rotateHash = await rpc('eth_sendTransaction', [{
-        from: loop.address,
+      const proposeData = loop.anchor.contract.interface.encodeFunctionData('proposeRotation', [ACCOUNT2, 2]);
+      const proposeHash = await rpc('eth_sendTransaction', [{
+        from: DEV_CONTROLLER,
         to: loop.anchor.address,
-        data: rotateData,
+        data: proposeData,
         gas: '0x100000',
       }]);
-      const rotateRec = await rpc('eth_getTransactionReceipt', [rotateHash]);
-      assert.equal(rotateRec.status, '0x1');
+      const proposeRec = await rpc('eth_getTransactionReceipt', [proposeHash]);
+      assert.equal(proposeRec.status, '0x1', 'proposeRotation');
+      const proposed = await rpc('eth_getBlockByNumber', [proposeRec.blockNumber, false]);
+      const eta = Number(proposed.timestamp) + 86400;
+      await rpc('evm_setNextBlockTimestamp', [eta]);
+      const executeData = loop.anchor.contract.interface.encodeFunctionData('executePending', []);
+      const executeHash = await rpc('eth_sendTransaction', [{
+        from: DEV_CONTROLLER,
+        to: loop.anchor.address,
+        data: executeData,
+        gas: '0x100000',
+      }]);
+      const executeRec = await rpc('eth_getTransactionReceipt', [executeHash]);
+      assert.equal(executeRec.status, '0x1', 'executePending');
       const rotatedHour = loop.firstHour + 26 * HOUR;
       loop.clock.now = Math.max(loop.clock.now, rotatedHour + HOUR + 40);
       loop.sealer.signer.address = ACCOUNT2;

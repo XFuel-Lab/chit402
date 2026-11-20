@@ -7,7 +7,7 @@ contract DoctorForkTest is Test {
     function test_fork_from_other_prefix_refused() public {
         vm.chainId(84532);
         address cp = address(0xC0FFEE);
-        ChitAnchor a = new ChitAnchor(cp);
+        ChitAnchor a = new ChitAnchor(cp, address(0xC0117011));
         bytes32 dom = a.domain();
         bytes32[] memory A = new bytes32[](3);
         for (uint256 i = 0; i < 3; i++) A[i] = bytes32(uint256(i + 1));
@@ -29,7 +29,7 @@ contract DoctorForkTest is Test {
     function test_empty_proof_at_three_leaves_refused() public {
         vm.chainId(84532);
         address cp = address(0xC0FFEE);
-        ChitAnchor a = new ChitAnchor(cp);
+        ChitAnchor a = new ChitAnchor(cp, address(0xC0117011));
         bytes32 dom = a.domain();
         bytes32[] memory leaves = new bytes32[](3);
         for (uint256 i = 0; i < 3; i++) leaves[i] = bytes32(uint256(i + 1));

@@ -7,9 +7,7 @@ const SKIP = new Set(['out', 'cache', 'broadcast']);
 
 // Pinned hashes and topic0 values. A 64-hex string outside this set is rejected.
 const ALLOW_64 = [
-  'dc28530bf79fbdfc06e4865a7e007a9eaa882e0566b55cd47df4509c93ba212d',
-  '4c07cbb9113af81253522e8085b5865a81910dacc34945a58f2f9223ed3a8971',
-  'cd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080',
+  'b7ad0c729af141a19695bc89d09bd0a04a8d9ab9668373a066cba94f13aee45c',
   'bc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e',
   '95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3',
   'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',

@@ -16,7 +16,7 @@ import { buildAnchorCalldata } from '../../services/chit-sealer/calldata.js';
 import { fetchReceipt, noteAnchored, openStore } from '../../services/chit-store/store.js';
 import { checkReceiptInput } from '../../packages/verify/dist/check-input.js';
 import { ANCHORED_TOPIC, ROTATE_TOPIC, admitListenerLogs, startingCheckpoint } from './anchored.mjs';
-import { CHAIN_ID, USDC, deployAnchor, installUsdc, rpc, startChain } from './chain.mjs';
+import { CHAIN_ID, DEV_CONTROLLER, USDC, deployAnchor, installUsdc, rpc, startChain } from './chain.mjs';
 import { makeSnapshot } from './snapshot.mjs';
 
 const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -126,7 +126,7 @@ export async function openLoop() {
   if (address.toLowerCase() !== '0x70997970c51812dc3a010c7d01b50e0d17dc79c8') {
     throw new Error('dev key address does not match the Hardhat account');
   }
-  const anchor = await deployAnchor(chain.wallet, address);
+  const anchor = await deployAnchor(chain.wallet, address, DEV_CONTROLLER);
   const usdc = await installUsdc(chain.wallet);
   const latest = await rpc('eth_getBlockByNumber', ['latest', false]);
   const firstHour = Math.ceil((Number(latest.timestamp) + 10) / HOUR) * HOUR;

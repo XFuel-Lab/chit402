@@ -1,0 +1,36 @@
+{
+  "pinnedSingleton": "0x29fcb43b46531bca003ddc8fcb67ffe91900c762",
+  "proxyRuntime": "0x608060405273ffffffffffffffffffffffffffffffffffffffff600054167fa619486e0000000000000000000000000000000000000000000000000000000060003514156050578060005260206000f35b3660008037600080366000845af43d6000803e60008114156070573d6000fd5b3d6000f3fea264697066735822122003d1488ee65e08fa41e58e888a9865554c535f2c77126a82cb4c0f917f31441364736f6c63430007060033",
+  "owners3": [
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "0xcccccccccccccccccccccccccccccccccccccccc"
+  ],
+  "owners4": [
+    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "0xcccccccccccccccccccccccccccccccccccccccc",
+    "0xdddddddddddddddddddddddddddddddddddddddd"
+  ],
+  "fallbackHandler": "0xfd0732dc9e303f09fcef3a7388ad10a83459ec99",
+  "zeroGuard": "0x0000000000000000000000000000000000000000",
+  "rpcGlue": {
+    "threshold": "2 [2e0]",
+    "owners": "[0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, 0xcccccccccccccccccccccccccccccccccccccccc]",
+    "modules": "[]\n0x0000000000000000000000000000000000000001",
+    "moduleHit": "[0x1111111111111111111111111111111111111111]\n0x0000000000000000000000000000000000000001"
+  },
+  "cases": [
+    { "id": "ok", "expect": "" },
+    { "id": "eoa", "code": "0x", "expect": "EOA" },
+    { "id": "not-proxy", "code": "0x60016000f3", "expect": "Safe proxy" },
+    { "id": "threshold-1", "threshold": 1, "expect": "threshold" },
+    { "id": "threshold-3", "threshold": 3, "expect": "threshold" },
+    { "id": "owners-2", "ownerCount": 2, "expect": "owners" },
+    { "id": "owners-4", "owners": "owners4", "expect": "owners" },
+    { "id": "unpinned-singleton", "singleton": "0x41675c099f32341bf84bfc5382af534df5c7461a", "expect": "singleton" },
+    { "id": "module", "modules": ["0x1111111111111111111111111111111111111111"], "expect": "module" },
+    { "id": "guard", "guard": "0x2222222222222222222222222222222222222222", "expect": "guard" },
+    { "id": "fallback", "fallbackHandler": "0x3333333333333333333333333333333333333333", "expect": "fallback" }
+  ]
+}

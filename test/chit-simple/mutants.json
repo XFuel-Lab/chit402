@@ -1,5 +1,5 @@
 {
-  "about": "ChitAnchor on Base Sepolia, v0. Run from the repo root: node scripts/mutants/run-mutants.mjs . --list test/chit-simple/mutants.json --timeout-sec 180. Score is KILLED / (KILLED + SURVIVED). forge and node must be on PATH. The suite runs pretest.sh, then forge test --force, skipping invariant fuzz and test_example_runtime_code_hash. R19 matches the inner shift at 20-space indent.",
+  "about": "ChitAnchor on Base Sepolia. Run from the repo root: node scripts/mutants/run-mutants.mjs . --list test/chit-simple/mutants.json --timeout-sec 180. Score is KILLED / (KILLED + SURVIVED). forge and node must be on PATH. The anchor suite runs pretest.sh, then forge test --force, skipping invariant fuzz and test_example_runtime_code_hash. The checkDeploy suite runs the offline Safe check. A2 and A13-A16 are retired in the retired list. R19 matches the inner shift at 20-space indent.",
   "timeoutSec": 180,
   "suites": {
     "anchor": {
@@ -8,6 +8,17 @@
         "sh",
         "-c",
         "sh pretest.sh >/dev/null && forge test --force --offline --no-match-contract Invariant --no-match-test test_example_runtime_code_hash"
+      ],
+      "env": {
+        "FOUNDRY_DISABLE_NIGHTLY_WARNING": "1"
+      }
+    },
+    "checkDeploy": {
+      "cwd": "deploy/chit-simple/sepolia-pack",
+      "argv": [
+        "node",
+        "--test",
+        "check-deploy.test.mjs"
       ],
       "env": {
         "FOUNDRY_DISABLE_NIGHTLY_WARNING": "1"
@@ -27,11 +38,47 @@
     {
       "id": "A2_rotate_sender_inverted",
       "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "if \\(msg\\.sender != checkpoint\\) revert NotCheckpoint\\(\\);",
-      "replace": "if (msg.sender == checkpoint) revert NotCheckpoint();",
-      "nth": 2,
+      "find": "if \\(msg\\.sender != controller\\) revert NotController\\(\\);",
+      "replace": "if (msg.sender == controller) revert NotController();",
+      "nth": 1,
       "suite": "anchor",
-      "note": "rotation accepts only the checkpoint"
+      "note": "proposeRotation accepts only the controller"
+    },
+    {
+      "id": "A13_rotate_accepts_zero",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newAddr == address\\(0\\)\\) revert ZeroCheckpoint\\(\\);",
+      "replace": "if (newAddr == address(1)) revert ZeroCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "rotation refuses the zero address"
+    },
+    {
+      "id": "A14_rotate_same_key",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newAddr == checkpoint\\) revert SameCheckpoint\\(\\);",
+      "replace": "if (newAddr == address(1)) revert SameCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "rotation must change the key"
+    },
+    {
+      "id": "A15_version_replay",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(version <= checkpointVersion\\) revert BadVersion\\(\\);",
+      "replace": "if (version < checkpointVersion) revert BadVersion();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "version must be strictly higher"
+    },
+    {
+      "id": "A16_rotate_does_not_stick",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "checkpoint = newAddr;",
+      "replace": "checkpoint = old;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "rotation stores the new key"
     },
     {
       "id": "A3_domain_inverted",
@@ -122,42 +169,6 @@
       "nth": 1,
       "suite": "anchor",
       "note": "the constructor refuses the zero address"
-    },
-    {
-      "id": "A13_rotate_accepts_zero",
-      "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "if \\(newAddr == address\\(0\\)\\) revert ZeroCheckpoint\\(\\);",
-      "replace": "if (newAddr == address(1)) revert ZeroCheckpoint();",
-      "nth": 1,
-      "suite": "anchor",
-      "note": "rotation refuses the zero address"
-    },
-    {
-      "id": "A14_rotate_same_key",
-      "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "if \\(newAddr == checkpoint\\) revert SameCheckpoint\\(\\);",
-      "replace": "if (newAddr == address(1)) revert SameCheckpoint();",
-      "nth": 1,
-      "suite": "anchor",
-      "note": "rotation must change the key"
-    },
-    {
-      "id": "A15_version_replay",
-      "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "if \\(version <= checkpointVersion\\) revert BadVersion\\(\\);",
-      "replace": "if (version < checkpointVersion) revert BadVersion();",
-      "nth": 1,
-      "suite": "anchor",
-      "note": "version must be strictly higher"
-    },
-    {
-      "id": "A16_rotate_does_not_stick",
-      "file": "contracts/chit-simple/ChitAnchor.sol",
-      "find": "checkpoint = newAddr;",
-      "replace": "checkpoint = old;",
-      "nth": 1,
-      "suite": "anchor",
-      "note": "rotation stores the new key"
     },
     {
       "id": "A17_domain_is_keccak",
@@ -418,6 +429,259 @@
       "replace": "",
       "nth": 1,
       "suite": "anchor"
+    },
+    {
+      "id": "CS1_propose_checks_checkpoint",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(msg\\.sender != controller\\) revert NotController\\(\\);",
+      "replace": "if (msg.sender != checkpoint) revert NotController();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "proposeRotation is authorized by the controller"
+    },
+    {
+      "id": "CS2_propose_guard_removed",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(msg\\.sender != controller\\) revert NotController\\(\\);\\n",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "proposeRotation reverts for every non-controller"
+    },
+    {
+      "id": "CS3_controller_change_unguarded",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(msg\\.sender != controller\\) revert NotController\\(\\);\\n",
+      "replace": "",
+      "nth": 2,
+      "suite": "anchor",
+      "note": "proposeControllerChange is authorized by the controller"
+    },
+    {
+      "id": "CS4_controller_change_accepts_zero",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newController == address\\(0\\)\\) revert ZeroCheckpoint\\(\\);",
+      "replace": "if (newController == address(1)) revert ZeroCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a controller change rejects the zero address"
+    },
+    {
+      "id": "CS5_constructor_drops_controller",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "controller = controller_;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the constructor stores the controller"
+    },
+    {
+      "id": "CS6_controller_change_does_not_stick",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "controller = pendingAddr;",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "an executed controller change stores the new controller"
+    },
+    {
+      "id": "CS7_version_check_not_strict",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(version <= checkpointVersion\\) revert BadVersion\\(\\);",
+      "replace": "if (version < checkpointVersion) revert BadVersion();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a rotation version is strictly higher"
+    },
+    {
+      "id": "CS8_rotate_writes_head",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "checkpoint = newAddr;",
+      "replace": "checkpoint = newAddr; heads[latestEpoch].hourStart = 1;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a rotation does not write head storage"
+    },
+    {
+      "id": "CS9_threshold_compare_inverted",
+      "file": "deploy/chit-simple/sepolia-pack/check-deploy.mjs",
+      "find": "if \\(threshold !== 2n\\) return 'threshold is not 2';",
+      "replace": "if (threshold === 2n) return 'threshold is not 2';",
+      "nth": 1,
+      "suite": "checkDeploy",
+      "note": "threshold 2 is the only accepted Safe threshold"
+    },
+    {
+      "id": "CS10_singleton_pin_skipped",
+      "file": "deploy/chit-simple/sepolia-pack/check-deploy.mjs",
+      "find": "if \\(singleton !== SAFE_SINGLETON\\) return 'singleton is not the pinned Safe version';",
+      "replace": "if (false) return 'singleton is not the pinned Safe version';",
+      "nth": 1,
+      "suite": "checkDeploy",
+      "note": "the controller singleton must be the pinned SafeL2 version"
+    },
+    {
+      "id": "TL1_eta_check_removed",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(block\\.timestamp < eta\\) revert TooEarly\\(\\);\\n",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "executePending waits until eta"
+    },
+    {
+      "id": "TL2_delay_is_one_hour",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "uint256 public constant ROTATION_DELAY = 24 hours;",
+      "replace": "uint256 public constant ROTATION_DELAY = 1 hours;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "the delay is 24 hours"
+    },
+    {
+      "id": "TL3_eta_boundary_shifted",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(block\\.timestamp < eta\\) revert TooEarly\\(\\);",
+      "replace": "if (block.timestamp <= eta + 1) revert TooEarly();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "executePending succeeds at exactly eta"
+    },
+    {
+      "id": "TL4_execute_skips_filled_check",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(kind == 0\\) revert NoPendingAction\\(\\);\\n",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "executePending requires a filled slot"
+    },
+    {
+      "id": "TL5_direct_rotate_left_in",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "function executePending\\(\\) external \\{",
+      "replace": "function rotateCheckpointKey(address newAddr, uint64 version) external { if (msg.sender != checkpoint) revert NotCheckpoint(); checkpoint = newAddr; checkpointVersion = version; emit CheckpointKeyRotated(version, checkpoint, newAddr); }\n    function executePending() external {",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "there is no direct rotation function"
+    },
+    {
+      "id": "TL6_cancel_does_not_clear",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "delete pendingAction;\\n",
+      "replace": "",
+      "nth": 2,
+      "suite": "anchor",
+      "note": "cancelPending clears the slot"
+    },
+    {
+      "id": "TL7_cancel_unguarded",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(msg\\.sender != controller\\) revert NotController\\(\\);\\n",
+      "replace": "",
+      "nth": 4,
+      "suite": "anchor",
+      "note": "cancelPending is authorized by the controller"
+    },
+    {
+      "id": "TL8_propose_replaces_filled_slot",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(pendingAction\\.kind != 0\\) revert ActionPending\\(\\);\\n",
+      "replace": "",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a second propose does not replace a filled slot"
+    },
+    {
+      "id": "TL9_execute_callable_by_anyone",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(msg\\.sender != controller\\) revert NotController\\(\\);\\n",
+      "replace": "",
+      "nth": 3,
+      "suite": "anchor",
+      "note": "executePending is authorized by the controller"
+    },
+    {
+      "id": "TL10_direct_set_controller_left_in",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "function cancelPending\\(\\) external \\{",
+      "replace": "function setController(address newController) external { controller = newController; }\n    function cancelPending() external {",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "there is no direct controller setter"
+    },
+    {
+      "id": "TL11_controller_change_skips_eta",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(block\\.timestamp < eta\\) revert TooEarly\\(\\);",
+      "replace": "if (kind == 1 && block.timestamp < eta) revert TooEarly();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a controller change waits until eta"
+    },
+    {
+      "id": "TL12_controller_change_leaves_slot",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "delete pendingAction;",
+      "replace": "if (kind == 1) delete pendingAction;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "executing a controller change clears the slot"
+    },
+    {
+      "id": "TL13_kind_ignored_on_execute",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(kind == 1\\) \\{",
+      "replace": "if (kind != 0) {",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "executePending applies the slot kind"
+    },
+    {
+      "id": "TL14_controller_propose_skips_pending",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(pendingAction\\.kind != 0\\) revert ActionPending\\(\\);\\n",
+      "replace": "",
+      "nth": 2,
+      "suite": "anchor",
+      "note": "a controller change cannot replace a pending rotation"
+    },
+    {
+      "id": "TL15_old_controller_still_accepted",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "controller = pendingAddr;",
+      "replace": "controller = oldController;",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "after a controller change only the new controller is accepted"
+    },
+    {
+      "id": "CS11_rotation_to_controller",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newAddr == controller\\) revert RotationToController\\(\\);",
+      "replace": "if (newAddr == address(1)) revert RotationToController();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a rotation cannot target the controller"
+    },
+    {
+      "id": "CS12_controller_is_checkpoint",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(newController == checkpoint\\) revert ControllerIsCheckpoint\\(\\);",
+      "replace": "if (newController == address(1)) revert ControllerIsCheckpoint();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a controller change cannot target the checkpoint"
+    },
+    {
+      "id": "CS13_version_above_uint32",
+      "file": "contracts/chit-simple/ChitAnchor.sol",
+      "find": "if \\(version > type\\(uint32\\)\\.max\\) revert BadVersion\\(\\);",
+      "replace": "if (version > type(uint64).max) revert BadVersion();",
+      "nth": 1,
+      "suite": "anchor",
+      "note": "a rotation version cannot exceed uint32 max"
     }
-  ]
+  ],
+  "retired": []
 }
