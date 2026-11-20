@@ -864,6 +864,13 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (parsed.receipt.epoch === 0) return fail(1, 'bad_epoch', world, { anchor: 'fail' }, messageOf('bad_epoch'));
   if (world.headAbsent) return fail(2, 'not_anchored', world, { anchor: 'could_not_check' }, messageOf('not_anchored'));
   const mine = world.events.filter((event) => event.address.toLowerCase() === parsed.receipt.contract);
+  const stored = mine.filter((event) => event.epoch === BigInt(parsed.receipt.epoch) && event.blockNumber <= (world.finalizedNumber as number));
+  stored.sort((a, b) => a.logIndex - b.logIndex);
+  // An anchored head whose tree does not contain the index is invalid.
+  // The epoch was written once; a later leaf is a later epoch, not this one.
+  if (stored[0] && BigInt(parsed.receipt.index) >= stored[0].size) {
+    return fail(1, 'not_first_anchor', world, { anchor: 'fail', log_inclusion: 'fail' }, messageOf('not_first_anchor'));
+  }
   const earliest = firstCovering(mine, parsed.receipt.index, world.finalizedNumber);
   const claimed = firstCovering(
     mine.filter((event) => event.epoch === BigInt(parsed.receipt.epoch)),
@@ -895,11 +902,9 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (head.epoch > 0n && prior && prior.size > BigInt(parsed.receipt.index)) {
     return fail(1, 'not_first_anchor', world, { anchor: 'fail' }, messageOf('not_first_anchor'));
   }
-  if (world.checkpointVersion != null) {
-    const allowed = pin.checkpointVersions ?? [1];
-    if (!allowed.includes(world.checkpointVersion)) {
-      return fail(2, 'checkpoint_version', world, { anchor: 'could_not_check' }, messageOf('checkpoint_version'));
-    }
+  const allowedVersions = pin.checkpointVersions ?? [1];
+  if (world.checkpointVersion == null || !allowedVersions.includes(world.checkpointVersion)) {
+    return fail(2, 'checkpoint_version', world, { anchor: 'could_not_check' }, messageOf('checkpoint_version'));
   }
   if (!world.codeHash) return fail(2, 'code_unreadable', world, { anchor: 'could_not_check' }, messageOf('code_unreadable'));
   if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {

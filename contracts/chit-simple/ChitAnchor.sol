@@ -104,7 +104,7 @@ contract ChitAnchor {
     ) external {
         if (msg.sender != checkpoint) revert NotCheckpoint();
         if (domain_ != domain) revert BadDomain();
-        Head memory prev = heads[latestEpoch];
+        Head storage prev = heads[latestEpoch];
         if (epoch_ != latestEpoch + 1) revert BadEpoch();
         if (hourStart_ % 3600 != 0) revert BadHour();
         if (hourStart_ <= prev.hourStart) revert HourNotIncreasing();
@@ -116,6 +116,10 @@ contract ChitAnchor {
             revert BadConsistency();
         }
 
+        // A head stores the version in uint32. A larger value must revert here,
+        // not truncate, so a later read cannot return a different version.
+        // The rotation proposal cap lands with the controller timelock.
+        if (checkpointVersion > type(uint32).max) revert BadVersion();
         Head memory next;
         next.hourStart = uint40(hourStart_);
         next.size = size_;
@@ -134,6 +138,7 @@ contract ChitAnchor {
         if (newAddr == address(0)) revert ZeroCheckpoint();
         if (newAddr == checkpoint) revert SameCheckpoint();
         if (version <= checkpointVersion) revert BadVersion();
+        if (version > type(uint32).max) revert BadVersion();
         address old = checkpoint;
         checkpoint = newAddr;
         checkpointVersion = version;

@@ -634,6 +634,7 @@ function world(line, eventPatch = {}) {
       ...eventPatch,
     }],
     codeHash: pin.codeHash,
+    checkpointVersion: 1,
     anchorFrom: DUMMY_ADDRESS,
     anchorTo: CONTRACT,
     successor: 'not_required',

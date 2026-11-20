@@ -849,6 +849,7 @@ test('a fast root proves when the slot is present, and stays pending until the h
     anchorTo: CONTRACT,
     successor: 'not_required',
     chainGenesis: null,
+    checkpointVersion: 1,
     line: {
       chainId: 84532, blockHash: `0x${built.payment.blockHash}`, blockNumber: 100, blockTime: 1_700_000_000,
       txIndex: 0, localLogIndex: 1, txHash: `0x${built.payment.txHash}`, token: USDC,
@@ -1018,6 +1019,7 @@ test('a head size above the cap is refused and the cap itself is passed to inclu
     anchorTo: CONTRACT,
     successor: 'not_required',
     chainGenesis: null,
+    checkpointVersion: 1,
     line: view,
     lineReason: null,
     rotatedTo: OTHER,
@@ -1119,9 +1121,19 @@ function sceneHandler(s) {
         logs: [],
       };
     }
-    if (method === 'eth_getCode') return s.code ?? CODE;
+    if (method === 'eth_getCode') {
+      if ((s.codeSplit && second) || (s.keyedCode && keyed)) return '0x60ff';
+      return s.code ?? CODE;
+    }
     if (method === 'eth_call' && typeof params[0]?.data === 'string' && params[0].data.startsWith(HEADS_FOR)) {
-      return headsReturn(s, Number(BigInt(`0x${params[0].data.slice(10)}`)));
+      const encoded = headsReturn(s, Number(BigInt(`0x${params[0].data.slice(10)}`)));
+      if ((s.headsSplit && second) || (s.keyedHeads && keyed)) {
+        const body = encoded.slice(2);
+        const at = 5 * 64;
+        const flipped = body[at] === 'a' ? 'b' : 'a';
+        return `0x${body.slice(0, at)}${flipped}${body.slice(at + 1)}`;
+      }
+      return encoded;
     }
     if (method === 'eth_call') {
       const data = params[0]?.data;
@@ -1290,8 +1302,8 @@ test('the anchor transaction to, the receipt epoch, and a size equal to the inde
   assert.equal(epoch.v.exit_code, 2);
   assert.equal(epoch.v.reason, 'not_anchored');
   const bound = await runScene({ payment: built.payment, logs: [okLog(built, { size: 0 })] }, v13Receipt(built), (u) => optionsFor(key, doc, u));
-  assert.equal(bound.v.exit_code, 2);
-  assert.equal(bound.v.reason, 'pre_anchor');
+  assert.equal(bound.v.exit_code, 1);
+  assert.equal(bound.v.reason, 'not_first_anchor');
 });
 
 test('an earlier finalized epoch that already covers the index is not the first anchor', () => {
@@ -1371,6 +1383,7 @@ test('an earlier finalized epoch that already covers the index is not the first 
     anchorTo: CONTRACT,
     successor: 'not_required',
     chainGenesis: null,
+    checkpointVersion: 1,
     line: view,
     lineReason: null,
     rotatedTo: null,
@@ -3038,4 +3051,196 @@ test('T18 a fake key in the URL path and query is not printed', async () => {
     console.error = origErr;
     await server.close();
   }
+});
+
+test('agreed finalized hash with different heads, code, or calls is rpc_disagreement', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const receipt = v13Receipt(built);
+  const heads = await runScene({ payment: built.payment, logs: [okLog(built)], headsSplit: true }, receipt, (u) => optionsFor(key, doc, u));
+  assert.equal(heads.v.exit_code, 2);
+  assert.equal(heads.v.reason, 'rpc_disagreement');
+  const code = await runScene({ payment: built.payment, logs: [okLog(built)], codeSplit: true }, receipt, (u) => optionsFor(key, doc, u));
+  assert.equal(code.v.exit_code, 2);
+  assert.equal(code.v.reason, 'rpc_disagreement');
+  const call = await runScene({ payment: built.payment, logs: [okLog(built)], genesisDisagree: true }, receipt, (u) => optionsFor(key, doc, u));
+  assert.equal(call.v.exit_code, 2);
+  assert.equal(call.v.reason, 'rpc_disagreement');
+  const { h } = sceneHandler({ payment: built.payment, logs: [okLog(built)], keyedHeads: true });
+  const server = await listen(h);
+  const port = new URL(server.url).port;
+  try {
+    const keyed = await verifyV13Document(receipt, {
+      ...optionsFor(key, doc, server.url),
+      rpcUrls: [`http://127.0.0.1:${port}`, `http://127.0.0.2:${port}`],
+      env: { BASE_RPC_URL: `http://127.0.0.3:${port}/v1/fakeKeyZZ9?api_key=fakeKeyZZ9` },
+    });
+    assert.equal(keyed.exit_code, 2);
+    assert.equal(keyed.reason, 'rpc_disagreement');
+    assert.ok(!JSON.stringify(keyed).includes('fakeKeyZZ9'));
+  } finally {
+    await server.close();
+  }
+});
+
+test('an index outside the anchored range is exit 1', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const past = await runScene({ payment: built.payment, logs: [okLog(built, { size: 1 })] }, v13Receipt(built, { fields: { index: 1 } }), (u) => optionsFor(key, doc, u));
+  assert.equal(past.v.exit_code, 1);
+  assert.equal(past.v.reason, 'not_first_anchor');
+});
+
+test('a missing checkpoint version does not skip the pin', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const payload = JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  const missing = runV13(v13Receipt(built), {
+    history: { ok: true, reason: null, source: 'bundled', headHash: doc.head_hash, entryCount: 1, asOf: null },
+    snapshotSigned: true,
+    bundledPayload: payload,
+    narrowing: [],
+    liveExtension: null,
+    rpcConfigured: true,
+    finalizedNumber: 110,
+    events: [{
+      epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: built.stateRoot,
+      kind: 0, blockNumber: 105, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+      logIndex: 0, address: CONTRACT,
+    }],
+    codeHash: pinOf().codeHash,
+    anchorFrom: CHECKPOINT,
+    anchorTo: CONTRACT,
+    successor: 'not_required',
+    chainGenesis: null,
+    checkpointVersion: null,
+    line: {
+      chainId: 84532, blockHash: `0x${built.payment.blockHash}`, blockNumber: 100, blockTime: 1_700_000_000,
+      txIndex: 0, localLogIndex: 1, txHash: `0x${built.payment.txHash}`, token: USDC,
+      from: `0x${built.payment.from}`, to: `0x${built.payment.to}`, value: 1000000n, method: 1,
+      authorizer: `0x${built.payment.authorizer}`, nonce: `0x${built.payment.nonce}`, bytes: built.line,
+    },
+    lineReason: null,
+    rotatedTo: null,
+    payment: null,
+    canonical: 'ok',
+  }, {
+    leafHash, verifyInclusion: () => ({ ok: true }), stateOk: () => true, paymentOk: () => ({ ok: true, exit: 0, reason: null }),
+  });
+  assert.equal(missing.exit, 2);
+  assert.equal(missing.reason, 'checkpoint_version');
+});
+
+test('a head one block past finalized is not accepted', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const payload = JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  const out = runV13(v13Receipt(built), {
+    history: { ok: true, reason: null, source: 'bundled', headHash: doc.head_hash, entryCount: 1, asOf: null },
+    snapshotSigned: true,
+    bundledPayload: payload,
+    narrowing: [],
+    liveExtension: null,
+    rpcConfigured: true,
+    finalizedNumber: 110,
+    checkpointVersion: 1,
+    events: [{
+      epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: built.stateRoot,
+      kind: 0, blockNumber: 111, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+      logIndex: 0, address: CONTRACT,
+    }],
+    codeHash: pinOf().codeHash,
+    anchorFrom: CHECKPOINT,
+    anchorTo: CONTRACT,
+    successor: 'not_required',
+    chainGenesis: null,
+    line: {
+      chainId: 84532, blockHash: `0x${built.payment.blockHash}`, blockNumber: 100, blockTime: 1_700_000_000,
+      txIndex: 0, localLogIndex: 1, txHash: `0x${built.payment.txHash}`, token: USDC,
+      from: `0x${built.payment.from}`, to: `0x${built.payment.to}`, value: 1000000n, method: 1,
+      authorizer: `0x${built.payment.authorizer}`, nonce: `0x${built.payment.nonce}`, bytes: built.line,
+    },
+    lineReason: null,
+    rotatedTo: null,
+    payment: null,
+    canonical: 'ok',
+  }, { leafHash, verifyInclusion: () => ({ ok: true }), stateOk: () => true, paymentOk: () => ({ ok: true, exit: 0, reason: null }) });
+  assert.equal(out.exit, 2);
+  assert.equal(out.reason, 'pre_anchor');
+});
+
+test('the receipt epoch is the anchored epoch, and the hourly state root is the one that proves', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const payload = JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  const line = {
+    chainId: 84532, blockHash: `0x${built.payment.blockHash}`, blockNumber: 100, blockTime: 1_700_000_000,
+    txIndex: 0, localLogIndex: 1, txHash: `0x${built.payment.txHash}`, token: USDC,
+    from: `0x${built.payment.from}`, to: `0x${built.payment.to}`, value: 1000000n, method: 1,
+    authorizer: `0x${built.payment.authorizer}`, nonce: `0x${built.payment.nonce}`, bytes: built.line,
+  };
+  const base = {
+    history: { ok: true, reason: null, source: 'bundled', headHash: doc.head_hash, entryCount: 1, asOf: null },
+    snapshotSigned: true,
+    bundledPayload: payload,
+    narrowing: [],
+    liveExtension: null,
+    rpcConfigured: true,
+    finalizedNumber: 110,
+    checkpointVersion: 1,
+    codeHash: pinOf().codeHash,
+    anchorFrom: CHECKPOINT,
+    anchorTo: CONTRACT,
+    successor: 'not_required',
+    chainGenesis: null,
+    line,
+    lineReason: null,
+    rotatedTo: null,
+    payment: {
+      blockHash: line.blockHash, txIndexMatch: true, txTo: USDC, input: '0x',
+      chainNumber: 100, chainTime: 1_700_000_000,
+      logs: [
+        { index: 0, address: USDC, topics: ['0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5', `0x${'0'.repeat(24)}${built.payment.authorizer}`, `0x${built.payment.nonce}`], data: '0x' },
+        { index: 1, address: USDC, topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef', `0x${'0'.repeat(24)}${built.payment.from}`, `0x${'0'.repeat(24)}${built.payment.to}`], data: `0x${word(built.payment.value)}` },
+      ],
+    },
+    canonical: 'ok',
+  };
+  const hooks = {
+    leafHash,
+    verifyInclusion: () => ({ ok: true }),
+    stateOk: (root) => (root === built.stateRoot ? true : { ok: false, reason: 'not_in_state', exit: 1 }),
+    paymentOk: () => ({ ok: true, exit: 0, reason: null }),
+  };
+  const otherEpoch = runV13(v13Receipt(built, { epoch: 2 }), {
+    ...base,
+    events: [{
+      epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: built.stateRoot,
+      kind: 0, blockNumber: 105, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+      logIndex: 0, address: CONTRACT,
+    }],
+  }, hooks);
+  assert.equal(otherEpoch.exit, 1);
+  assert.equal(otherEpoch.reason, 'not_first_anchor');
+  const proved = runV13(v13Receipt(built), {
+    ...base,
+    events: [
+      {
+        epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: '00'.repeat(32),
+        kind: 1, blockNumber: 105, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+        logIndex: 0, address: CONTRACT,
+      },
+      {
+        epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: built.stateRoot,
+        kind: 0, blockNumber: 105, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+        logIndex: 1, address: CONTRACT,
+      },
+    ],
+  }, hooks);
+  assert.equal(proved.exit, 0, proved.reason);
 });

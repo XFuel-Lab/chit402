@@ -536,7 +536,8 @@ contract ChitAnchorTest is Test {
 
     function _allowedHex(bytes memory b, uint256 start) private pure returns (bool) {
         bytes32 word = _parseHex(b, start);
-        return word == hex"4c07cbb9113af81253522e8085b5865a81910dacc34945a58f2f9223ed3a8971"
+        return word == hex"dc28530bf79fbdfc06e4865a7e007a9eaa882e0566b55cd47df4509c93ba212d"
+            || word == hex"4c07cbb9113af81253522e8085b5865a81910dacc34945a58f2f9223ed3a8971"
             || word == hex"cd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080"
             || word == hex"bc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e"
             || word == hex"95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3"
@@ -678,6 +679,21 @@ contract ChitAnchorTest is Test {
         assertEq(root, h.root, "root");
         assertEq(state, h.stateRoot, "state");
         assertEq(uint256(h.checkpointVersion), 1, "version");
+    }
+
+    function test_checkpoint_version_does_not_truncate() public {
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.BadVersion.selector);
+        a.rotateCheckpointKey(address(0xBEEF), uint64(type(uint32).max) + 1);
+        assertEq(a.checkpointVersion(), 1, "unchanged");
+        vm.prank(cp);
+        a.rotateCheckpointKey(address(0xBEEF), uint64(type(uint32).max));
+        (bytes32 root,,) = _roots(1);
+        vm.warp(HOUR + HOUR);
+        vm.prank(address(0xBEEF));
+        a.anchor(dom, 1, uint64(HOUR), 1, root, bytes32(uint256(1)), new bytes32[](0));
+        assertEq(a.headAt(1).checkpointVersion, type(uint32).max, "full width");
+        assertEq(a.checkpointVersion(), uint64(type(uint32).max), "stored version");
     }
 
     function test_gas_anchor_genesis() public {
