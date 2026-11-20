@@ -17,12 +17,6 @@
   ],
   "mutants": [
     {
-      "id": "trust_rotation",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "return pin.checkpoint;",
-      "replace": "return rotatedTo || pin.checkpoint;"
-    },
-    {
       "id": "cap_inclusive",
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "size > BigInt(MAX_TREE_SIZE)",
@@ -73,8 +67,8 @@
     {
       "id": "pending_is_final",
       "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "if (!proof.ok && !hourly)",
-      "replace": "if (false && !proof.ok && !hourly)"
+      "find": "if (!proof.ok && !hourly && proof.exit === 1)",
+      "replace": "if (false && !proof.ok && !hourly && proof.exit === 1)"
     },
     {
       "id": "ignore_revoke",
@@ -107,12 +101,6 @@
       "replace": "if (!included.ok) return fail(0, 'not_in_log'"
     },
     {
-      "id": "ignore_sender",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "world.anchorFrom.toLowerCase() !== sender.toLowerCase()",
-      "replace": "false"
-    },
-    {
       "id": "tampered_snapshot_ok",
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "if (!world.snapshotSigned)",
@@ -123,12 +111,6 @@
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "if (!world.rpcConfigured) return fail(2, 'rpc_unconfigured'",
       "replace": "if (!world.rpcConfigured) return fail(0, 'rpc_unconfigured'"
-    },
-    {
-      "id": "drop_epoch_topic",
-      "file": "packages/verify/src/v13/verify.ts",
-      "find": "topics: [ANCHORED_TOPIC0, topic]",
-      "replace": "topics: [ANCHORED_TOPIC0]"
     },
     {
       "id": "D-covers-final-plus1",
@@ -151,8 +133,8 @@
     {
       "id": "D-pending-flip",
       "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "if (!proof.ok && !hourly)",
-      "replace": "if (!proof.ok && hourly)"
+      "find": "if (!proof.ok && !hourly && proof.exit === 1)",
+      "replace": "if (!proof.ok && hourly && proof.exit === 1)"
     },
     {
       "id": "D-pending-exit1",
@@ -169,8 +151,8 @@
     {
       "id": "D-canon-skip-number-hash",
       "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "if (!input.canonicalHash || input.canonicalHash.toLowerCase() !== input.block.hash.toLowerCase()) return 'reorged';",
-      "replace": ""
+      "find": "if (input.canonicalHash.toLowerCase() !== input.block.hash.toLowerCase()) return 'reorged';",
+      "replace": "if (false) return 'reorged';"
     },
     {
       "id": "D-canon-skip-want",
@@ -187,8 +169,8 @@
     {
       "id": "D-read-by-number",
       "file": "packages/verify/src/v13/verify.ts",
-      "find": "rpc(urls, 'eth_getBlockByHash', [line.blockHash, false])",
-      "replace": "rpc(urls, 'eth_getBlockByNumber', [hexQty(line.blockNumber), false])"
+      "find": "rpc(slots, 'eth_getBlockByHash', [line.blockHash, false])",
+      "replace": "rpc(slots, 'eth_getBlockByNumber', [hexQty(line.blockNumber), false])"
     },
     {
       "id": "D-finalized-to-latest",
@@ -251,12 +233,6 @@
       "replace": "if (false) {"
     },
     {
-      "id": "D-ignore-anchor-to",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "|| world.anchorTo.toLowerCase() !== pin.address)",
-      "replace": ")"
-    },
-    {
       "id": "D-ignore-codehash",
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {",
@@ -311,12 +287,6 @@
       "replace": "fail(0, 'block_not_final'"
     },
     {
-      "id": "D-pin-extra-keys",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "keys.length !== PIN_KEYS.length || ",
-      "replace": ""
-    },
-    {
       "id": "D-narrow-unknown-keys",
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "if (!NARROW_KEYS.has(key)) return { ok: false, reason: 'extension_widens_pin' };",
@@ -347,33 +317,9 @@
       "replace": ""
     },
     {
-      "id": "D-sigma-always",
-      "file": "packages/verify/src/v13/verify.ts",
-      "find": "ecdsa.yParityByTrial(opened.sigmaDigest, decoded.sigma.sigma, point.uncompressed, ecdsa.P256);\n    return true;",
-      "replace": "return true;"
-    },
-    {
-      "id": "D-slotproof-always",
-      "file": "packages/verify/src/v13/verify.ts",
-      "find": "return bytesToHex(acc) === stateRoot.toLowerCase();",
-      "replace": "return true;"
-    },
-    {
       "id": "D-schema-sniff",
       "file": "packages/verify/src/v13/core/decide.ts",
       "find": "if (value.schema !== V13_SCHEMA) return false;",
-      "replace": ""
-    },
-    {
-      "id": "D-topic0-unchecked",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "if (!sameTopic(log.topics[0], ANCHORED_TOPIC0)) return null;",
-      "replace": ""
-    },
-    {
-      "id": "D-anchor-from-unchecked",
-      "file": "packages/verify/src/v13/core/decide.ts",
-      "find": "world.anchorFrom.toLowerCase() !== sender.toLowerCase() ||",
       "replace": ""
     },
     {
@@ -381,6 +327,50 @@
       "file": "packages/verify/src/index.ts",
       "find": "overall: exit === 0 ? 'verified' : exit === 1 ? 'failed' : 'partial',",
       "replace": "overall: exit === 1 ? 'failed' : 'verified',"
+    },
+    {
+      "id": "drop_rpc_compare",
+      "file": "packages/verify/src/v13/verify.ts",
+      "find": "if (JSON.stringify(answer) !== first) throw rpcError('rpc_disagreement');",
+      "replace": "if (false) throw rpcError('rpc_disagreement');"
+    }
+  ],
+  "retired": [
+    {
+      "id": "trust_rotation",
+      "reason": "The anchor sender is no longer read. A rotation log cannot change who is trusted."
+    },
+    {
+      "id": "ignore_sender",
+      "reason": "The anchor transaction from address is no longer read."
+    },
+    {
+      "id": "drop_epoch_topic",
+      "reason": "eth_getLogs anchor scans were removed. Epoch heads are read with headsFor."
+    },
+    {
+      "id": "D-ignore-anchor-to",
+      "reason": "The anchor transaction to address is no longer read."
+    },
+    {
+      "id": "D-topic0-unchecked",
+      "reason": "Anchored logs are no longer decoded on the v13 path."
+    },
+    {
+      "id": "D-anchor-from-unchecked",
+      "reason": "The anchor transaction from address is no longer read."
+    },
+    {
+      "id": "D-pin-extra-keys",
+      "reason": "Unknown pin keys are already refused, and a missing required key fails the PIN_KEYS presence check, so dropping the length clause does not accept another pin."
+    },
+    {
+      "id": "D-sigma-always",
+      "reason": "The v13 path does not trial-recover a seller sigma in verify.ts."
+    },
+    {
+      "id": "D-slotproof-always",
+      "reason": "Slot membership is smt.verifyProof. The hand-rolled accumulator comparison is not on this path."
     }
   ]
 }

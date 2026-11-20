@@ -86,6 +86,28 @@ contract ChitAnchorInvariantTest is Test {
     function invariant_I11_noEthHeld() public view {
         assert(address(anchor).balance == 0);
     }
+
+    /// @notice A written heads[e] never changes, including across rotation.
+    function invariant_I12_writtenHeadsNeverChange() public view {
+        ChitAnchor.Head memory g = anchor.headAt(0);
+        assert(g.root == handler.genesisRoot());
+        assert(g.size == 0);
+        assert(g.checkpointVersion == 1);
+        assert(g.anchorBlock == handler.deployBlock());
+        assert(g.stateRoot == bytes32(0));
+        uint256 n = handler.stepCount();
+        for (uint256 i = 0; i < n; i++) {
+            ChitAnchor.Head memory was = handler.frozenAt(i);
+            ChitAnchor.Head memory nowH = anchor.headAt(uint64(i + 1));
+            assert(was.hourStart == nowH.hourStart);
+            assert(was.size == nowH.size);
+            assert(was.checkpointVersion == nowH.checkpointVersion);
+            assert(was.anchorBlock == nowH.anchorBlock);
+            assert(was.anchorTime == nowH.anchorTime);
+            assert(was.root == nowH.root);
+            assert(was.stateRoot == nowH.stateRoot);
+        }
+    }
 }
 
 contract Handler {
@@ -104,6 +126,9 @@ contract Handler {
     ChitAnchor public anchor;
     address public expectedCheckpoint;
     bytes32 public domainSeen;
+    bytes32 public genesisRoot;
+    uint64 public deployBlock;
+    ChitAnchor.Head[] internal frozen;
     bytes32[] internal leaves;
     uint64[] public epochs;
     Step[] public steps;
@@ -113,6 +138,13 @@ contract Handler {
         anchor = anchor_;
         expectedCheckpoint = anchor_.checkpoint();
         domainSeen = anchor_.domain();
+        ChitAnchor.Head memory g = anchor_.headAt(0);
+        genesisRoot = g.root;
+        deployBlock = g.anchorBlock;
+    }
+
+    function frozenAt(uint256 i) external view returns (ChitAnchor.Head memory) {
+        return frozen[i];
     }
 
     receive() external payable {}
@@ -139,6 +171,7 @@ contract Handler {
         bytes32 dom = anchor.domain();
         vm.prank(who);
         anchor.anchor(dom, ep + 1, hour, uint64(all.length), newRoot, state, proof);
+        frozen.push(anchor.headAt(ep + 1));
         epochs.push(ep + 1);
         steps.push(Step({
             prevSize: sz,

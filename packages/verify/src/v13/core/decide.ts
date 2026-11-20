@@ -23,6 +23,9 @@ export const ANCHORED_SIGNATURE = 'Anchored(uint64,uint64,uint64,bytes32,bytes32
 export const ANCHORED_TOPIC0 = '0xbc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e';
 
 export const KIND_HOURLY = 0;
+
+/** Same bound as ChitAnchor.MAX_ANCHOR_LAG. An anchor after hour end plus this is late. */
+export const MAX_ANCHOR_LAG = 5400;
 export const TRANSFER_TOPIC0 = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 export const AUTHORIZATION_USED_TOPIC0 = '0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5';
 export const METHOD_3009 = 1;
@@ -68,6 +71,8 @@ export interface ContractPin {
   checkpoint: string;
   genesisHourStart: number;
   retireHourStart: number | null;
+  /** Absent means [1]. Present means this list only. */
+  checkpointVersions?: readonly number[];
 }
 
 export interface NarrowRow {
@@ -188,6 +193,14 @@ export interface V13World {
   getterReason?: string | null;
   /** The rotation log answer was not an array, so a sender change could not be checked. */
   rotationUnreadable?: boolean;
+  /** The epoch head's anchorBlock was 0 at the agreed block. */
+  headAbsent?: boolean;
+  /** checkpointVersion from heads[e]. Absent skips the pin-list check. */
+  checkpointVersion?: number | null;
+  /** heads[e].anchorTime. Absent skips the lateness line. */
+  anchorTime?: number | null;
+  /** Hostnames of the RPCs that were asked. No path, query, or userinfo. */
+  rpcHosts?: readonly string[];
   payment: PaymentView | null;
   canonical: 'ok' | 'unreachable' | 'unknown_block' | 'not_final' | 'reorged' | 'finality_unavailable';
 }
@@ -316,6 +329,9 @@ const MESSAGES: Record<string, string> = {
   rpc_unconfigured: 'No RPC is configured for this chain. The v13 anchor could not be checked.',
   rpc_unreachable: 'The RPC did not answer. The receipt could not be checked.',
   pre_anchor: 'pre-anchor',
+  not_anchored: 'The epoch is not anchored at the agreed block.',
+  bad_epoch: 'Epoch 0 is the genesis head.',
+  checkpoint_version: 'The anchor checkpoint version is not in the pin.',
   tree_size_above_cap: 'The anchored tree size is above the verifier cap.',
   anchor_sender_mismatch: 'anchor sender mismatch',
   code_hash_mismatch: 'The contract code hash does not match the pin.',
@@ -523,8 +539,13 @@ export function contractsFromPayload(payload: unknown): { ok: true; pins: Contra
   for (const item of list) {
     if (!isPlain(item)) return { ok: false, reason: 'snapshot_contracts_invalid' };
     const keys = Object.keys(item);
-    if (keys.length !== PIN_KEYS.length || PIN_KEYS.some((key) => !hasOwn(item, key))) {
+    if (keys.some((key) => key !== 'checkpointVersions' && !PIN_KEYS.includes(key))) {
       return { ok: false, reason: 'snapshot_contracts_invalid' };
+    }
+    if (keys.length !== PIN_KEYS.length || PIN_KEYS.some((key) => !hasOwn(item, key))) {
+      if (!hasOwn(item, 'checkpointVersions') || keys.length !== PIN_KEYS.length + 1) {
+        return { ok: false, reason: 'snapshot_contracts_invalid' };
+      }
     }
     const chainId = safeUint(item.chainId);
     const address = typeof item.address === 'string' ? normHex(item.address, 20) : null;
@@ -541,8 +562,18 @@ export function contractsFromPayload(payload: unknown): { ok: true; pins: Contra
       return { ok: false, reason: 'snapshot_contracts_invalid' };
     }
     if (retire != null && retire < genesis) return { ok: false, reason: 'snapshot_contracts_invalid' };
+    let checkpointVersions: number[] | undefined;
+    if (hasOwn(item, 'checkpointVersions')) {
+      if (!Array.isArray(item.checkpointVersions)) return { ok: false, reason: 'snapshot_contracts_invalid' };
+      checkpointVersions = [];
+      for (const version of item.checkpointVersions) {
+        const n = safeUint(version);
+        if (n == null) return { ok: false, reason: 'snapshot_contracts_invalid' };
+        checkpointVersions.push(n);
+      }
+    }
     pins.push({
-      chainId, address, codeHash, predecessor, checkpoint, genesisHourStart: genesis, retireHourStart: retire,
+      chainId, address, codeHash, predecessor, checkpoint, genesisHourStart: genesis, retireHourStart: retire, checkpointVersions,
     });
   }
   return { ok: true, pins };
@@ -786,6 +817,13 @@ function safeHour(value: bigint): number | null {
   return Number(value);
 }
 
+function anchorTiming(hourStart: number, anchorTime: number): string {
+  const deadline = hourStart + 3600 + MAX_ANCHOR_LAG;
+  if (anchorTime <= deadline) return 'anchored on time';
+  const mins = Math.ceil((anchorTime - deadline) / 60);
+  return `anchored late (+${mins} min)`;
+}
+
 export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13Result {
   const parsed = parseV13Receipt(receipt);
   if (!parsed.ok) {
@@ -823,7 +861,16 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (world.getterReason) return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
   if (world.canonical === 'unreachable') return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
   if (world.finalizedNumber == null) return fail(2, 'finality_unavailable', world, { anchor: 'could_not_check' }, messageOf('finality_unavailable'));
+  if (parsed.receipt.epoch === 0) return fail(1, 'bad_epoch', world, { anchor: 'fail' }, messageOf('bad_epoch'));
+  if (world.headAbsent) return fail(2, 'not_anchored', world, { anchor: 'could_not_check' }, messageOf('not_anchored'));
   const mine = world.events.filter((event) => event.address.toLowerCase() === parsed.receipt.contract);
+  const stored = mine.filter((event) => event.epoch === BigInt(parsed.receipt.epoch) && event.blockNumber <= (world.finalizedNumber as number));
+  stored.sort((a, b) => a.logIndex - b.logIndex);
+  // An anchored head whose tree does not contain the index is invalid.
+  // The epoch was written once; a later leaf is a later epoch, not this one.
+  if (stored[0] && BigInt(parsed.receipt.index) >= stored[0].size) {
+    return fail(1, 'not_first_anchor', world, { anchor: 'fail', log_inclusion: 'fail' }, messageOf('not_first_anchor'));
+  }
   const earliest = firstCovering(mine, parsed.receipt.index, world.finalizedNumber);
   const claimed = firstCovering(
     mine.filter((event) => event.epoch === BigInt(parsed.receipt.epoch)),
@@ -855,22 +902,13 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (head.epoch > 0n && prior && prior.size > BigInt(parsed.receipt.index)) {
     return fail(1, 'not_first_anchor', world, { anchor: 'fail' }, messageOf('not_first_anchor'));
   }
-  const sender = trustedSender(pin, world.rotatedTo);
-  if (!world.anchorFrom || !world.anchorTo || world.anchorFrom.toLowerCase() !== sender.toLowerCase() || world.anchorTo.toLowerCase() !== pin.address) {
-    if (!world.anchorFrom || !world.anchorTo) {
-      return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
-    }
-    if (world.rotationUnreadable) {
-      return fail(2, 'rpc_unreachable', world, { anchor: 'could_not_check' }, messageOf('rpc_unreachable'));
-    }
-    if (world.anchorTo.toLowerCase() === pin.address && world.rotationExplains === true) {
-      return fail(2, 'checkpoint_rotated', world, { anchor: 'could_not_check' }, 'update chit402-verify');
-    }
-    return fail(1, 'anchor_sender_mismatch', world, { anchor: 'fail' }, messageOf('anchor_sender_mismatch'));
+  const allowedVersions = pin.checkpointVersions ?? [1];
+  if (world.checkpointVersion == null || !allowedVersions.includes(world.checkpointVersion)) {
+    return fail(2, 'checkpoint_version', world, { anchor: 'could_not_check' }, messageOf('checkpoint_version'));
   }
   if (!world.codeHash) return fail(2, 'code_unreadable', world, { anchor: 'could_not_check' }, messageOf('code_unreadable'));
   if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {
-    return fail(1, 'code_hash_mismatch', world, { anchor: 'fail' }, messageOf('code_hash_mismatch'));
+    return fail(2, 'code_hash_mismatch', world, { anchor: 'could_not_check' }, messageOf('code_hash_mismatch'));
   }
   // A genesisHourStart() revert is v0 (no getter). The pin's bounds stand.
   if (world.chainGenesis != null && world.chainGenesis !== pin.genesisHourStart) {
@@ -953,6 +991,8 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
       'uniqueness: see statement',
       `hour: ${hour}`,
       `window: [${world.line.blockNumber}, ${head.blockNumber}]`,
+      ...(world.anchorTime == null ? [] : [anchorTiming(hour, world.anchorTime)]),
+      ...((world.rpcHosts ?? []).map((host) => `rpc: ${host}`)),
     ],
     liveExtension: world.liveExtension,
     checks: {

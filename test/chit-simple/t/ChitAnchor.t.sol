@@ -536,7 +536,9 @@ contract ChitAnchorTest is Test {
 
     function _allowedHex(bytes memory b, uint256 start) private pure returns (bool) {
         bytes32 word = _parseHex(b, start);
-        return word == hex"cd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080"
+        return word == hex"dc28530bf79fbdfc06e4865a7e007a9eaa882e0566b55cd47df4509c93ba212d"
+            || word == hex"4c07cbb9113af81253522e8085b5865a81910dacc34945a58f2f9223ed3a8971"
+            || word == hex"cd66271f37f16d9a2b526a63c539875ed3b56904cd2014ba0e1cd4aa33a0e080"
             || word == hex"bc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e"
             || word == hex"95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3"
             || word == hex"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -552,6 +554,146 @@ contract ChitAnchorTest is Test {
             else v = d - 55;
             word = (word << 4) | bytes32(uint256(v));
         }
+    }
+
+    function _sameHead(ChitAnchor.Head memory left, ChitAnchor.Head memory right) internal pure returns (bool) {
+        return left.hourStart == right.hourStart
+            && left.size == right.size
+            && left.checkpointVersion == right.checkpointVersion
+            && left.anchorBlock == right.anchorBlock
+            && left.anchorTime == right.anchorTime
+            && left.root == right.root
+            && left.stateRoot == right.stateRoot;
+    }
+
+    function test_F1_anchor_writes_all_seven_head_fields() public {
+        (bytes32 root,,) = _roots(1);
+        bytes32 state = bytes32(uint256(0x51a7e));
+        vm.warp(HOUR + HOUR);
+        uint64 bn = uint64(block.number);
+        uint40 ts = uint40(block.timestamp);
+        assertTrue(bn != uint64(ts), "block and time differ");
+        vm.prank(cp);
+        a.anchor(dom, 1, uint64(HOUR), 1, root, state, new bytes32[](0));
+        ChitAnchor.Head memory h = a.headAt(1);
+        assertEq(h.hourStart, uint40(HOUR), "hourStart");
+        assertEq(h.size, 1, "size");
+        assertEq(h.checkpointVersion, 1, "version");
+        assertEq(h.anchorBlock, bn, "anchorBlock");
+        assertEq(h.anchorTime, ts, "anchorTime");
+        assertEq(h.root, root, "root");
+        assertEq(h.stateRoot, state, "stateRoot");
+        assertTrue(h.root != h.stateRoot, "root is not stateRoot");
+    }
+
+    function test_F2_headAt_unwritten_is_zero() public view {
+        ChitAnchor.Head memory z = a.headAt(9);
+        assertEq(z.hourStart, 0, "hour");
+        assertEq(z.size, 0, "size");
+        assertEq(z.checkpointVersion, 0, "version");
+        assertEq(z.anchorBlock, 0, "anchorBlock");
+        assertEq(z.anchorTime, 0, "anchorTime");
+        assertEq(z.root, bytes32(0), "root");
+        assertEq(z.stateRoot, bytes32(0), "state");
+    }
+
+    function test_F3_reanchor_reverts_and_head_is_unchanged() public {
+        _seal(1, bytes32(uint256(1)));
+        ChitAnchor.Head memory before = a.headAt(1);
+        (bytes32 root, bytes32[] memory proof,) = _roots(3);
+        vm.warp(5 * HOUR);
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.BadEpoch.selector);
+        a.anchor(dom, 1, uint64(3 * HOUR), 3, root, bytes32(uint256(9)), proof);
+        assertTrue(_sameHead(a.headAt(1), before), "byte-identical");
+        assertEq(a.latestEpoch(), 1, "latest");
+    }
+
+    function test_F5_rotation_leaves_past_heads_and_stamps_the_next() public {
+        _seal(1, bytes32(uint256(1)));
+        ChitAnchor.Head memory past = a.headAt(1);
+        ChitAnchor.Head memory genesis = a.headAt(0);
+        vm.prank(cp);
+        a.rotateCheckpointKey(address(0xBEEF), 2);
+        assertTrue(_sameHead(a.headAt(1), past), "epoch 1");
+        assertTrue(_sameHead(a.headAt(0), genesis), "genesis");
+        assertEq(a.headAt(1).checkpointVersion, 1, "old version");
+        (bytes32 root, bytes32[] memory proof,) = _roots(2);
+        vm.warp(3 * HOUR);
+        vm.prank(address(0xBEEF));
+        a.anchor(dom, 2, uint64(2 * HOUR), 2, root, bytes32(uint256(2)), proof);
+        assertEq(a.headAt(2).checkpointVersion, 2, "new version");
+        assertTrue(_sameHead(a.headAt(1), past), "epoch 1 after");
+        assertEq(a.headAt(1).checkpointVersion, 1, "old version after");
+    }
+
+    function test_F6_genesis_head() public {
+        vm.chainId(84532);
+        vm.warp(1234);
+        uint64 bn = uint64(block.number);
+        ChitAnchor fresh = new ChitAnchor(cp);
+        ChitAnchor.Head memory g = fresh.headAt(0);
+        assertEq(g.root, sha256(""), "empty root");
+        assertEq(g.size, 0, "size");
+        assertEq(g.checkpointVersion, 1, "version");
+        assertEq(g.hourStart, 0, "hour");
+        assertEq(g.stateRoot, bytes32(0), "state");
+        assertEq(g.anchorBlock, bn, "deploy block");
+        assertEq(g.anchorTime, 1234, "deploy time");
+        assertEq(fresh.latestEpoch(), 0, "latest");
+        (uint64 epoch, uint64 hour, uint64 size, bytes32 root, bytes32 state) = fresh.latest();
+        assertEq(epoch, 0, "latest epoch");
+        assertEq(hour, 0, "latest hour");
+        assertEq(size, 0, "latest size");
+        assertEq(root, g.root, "latest root");
+        assertEq(state, bytes32(0), "latest state");
+    }
+
+    function test_F7_headsFor_pairs_the_previous_head() public {
+        _seal(1, bytes32(uint256(1)));
+        _seal(2, bytes32(uint256(2)));
+        (ChitAnchor.Head memory cur, ChitAnchor.Head memory prior, uint64 latest) = a.headsFor(2);
+        assertTrue(_sameHead(cur, a.headAt(2)), "current");
+        assertTrue(_sameHead(prior, a.headAt(1)), "prior");
+        assertEq(latest, a.latestEpoch(), "latest");
+        (ChitAnchor.Head memory g, ChitAnchor.Head memory zero, uint64 latest0) = a.headsFor(0);
+        assertTrue(_sameHead(g, a.headAt(0)), "genesis");
+        assertEq(zero.anchorBlock, 0, "prior of 0");
+        assertEq(zero.root, bytes32(0), "prior root");
+        assertEq(zero.size, 0, "prior size");
+        assertEq(latest0, 2, "latest still");
+        (ChitAnchor.Head memory missing,,) = a.headsFor(9);
+        assertEq(missing.anchorBlock, 0, "unwritten");
+    }
+
+    function test_F9_latest_matches_heads_after_five_anchors() public {
+        for (uint256 i = 1; i <= 5; i++) {
+            _seal(i, bytes32(i));
+        }
+        assertEq(a.latestEpoch(), 5, "latestEpoch");
+        (uint64 epoch, uint64 hour, uint64 size, bytes32 root, bytes32 state) = a.latest();
+        ChitAnchor.Head memory h = a.headAt(5);
+        assertEq(epoch, 5, "epoch");
+        assertEq(hour, h.hourStart, "hour");
+        assertEq(size, h.size, "size");
+        assertEq(root, h.root, "root");
+        assertEq(state, h.stateRoot, "state");
+        assertEq(uint256(h.checkpointVersion), 1, "version");
+    }
+
+    function test_checkpoint_version_does_not_truncate() public {
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.BadVersion.selector);
+        a.rotateCheckpointKey(address(0xBEEF), uint64(type(uint32).max) + 1);
+        assertEq(a.checkpointVersion(), 1, "unchanged");
+        vm.prank(cp);
+        a.rotateCheckpointKey(address(0xBEEF), uint64(type(uint32).max));
+        (bytes32 root,,) = _roots(1);
+        vm.warp(HOUR + HOUR);
+        vm.prank(address(0xBEEF));
+        a.anchor(dom, 1, uint64(HOUR), 1, root, bytes32(uint256(1)), new bytes32[](0));
+        assertEq(a.headAt(1).checkpointVersion, type(uint32).max, "full width");
+        assertEq(a.checkpointVersion(), uint64(type(uint32).max), "stored version");
     }
 
     function test_gas_anchor_genesis() public {

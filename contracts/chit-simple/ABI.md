@@ -16,7 +16,7 @@ Illustrative check (not a deployment): contract `0x33333333333333333333333333333
 
 `constructor(address checkpoint)`
 
-Reverts if `checkpoint` is the zero address. Stores that address at version 1 and emits `CheckpointKeyRotated(1, address(0), checkpoint)`. Initial head: epoch 0, hourStart 0, size 0, root = SHA-256("") (`0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), stateRoot 0.
+Reverts if `checkpoint` is the zero address. Stores that address at version 1 and emits `CheckpointKeyRotated(1, address(0), checkpoint)`. Writes `heads[0]` once: hourStart 0, size 0, checkpointVersion 1, anchorBlock = the deploy block, anchorTime = the deploy timestamp, root = SHA-256("") (`0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), stateRoot 0. `latestEpoch` starts at 0.
 
 ## anchor
 
@@ -30,14 +30,14 @@ Checks, in order:
 |---|---|---|
 | 1 | `msg.sender == checkpoint` | `NotCheckpoint()` |
 | 2 | `domain` equals the immutable domain | `BadDomain()` |
-| 3 | `epoch == stored epoch + 1` | `BadEpoch()` |
+| 3 | `epoch == latestEpoch + 1` | `BadEpoch()` |
 | 4 | `hourStart % 3600 == 0` | `BadHour()` |
-| 5 | `hourStart > stored hourStart` | `HourNotIncreasing()` |
+| 5 | `hourStart > heads[latestEpoch].hourStart` | `HourNotIncreasing()` |
 | 6 | `hourStart + 3600 <= block.timestamp` (finished hour) | `HourNotFinished()` |
-| 7 | `size > stored size` | `SizeNotIncreasing()` |
-| 8 | RFC 9162 consistency of `(stored size, stored root)` to `(size, root)`, genesis when stored size is 0 | `BadConsistency()` |
+| 7 | `size > heads[latestEpoch].size` | `SizeNotIncreasing()` |
+| 8 | RFC 9162 consistency of `(prior size, prior root)` to `(size, root)`, genesis when prior size is 0 | `BadConsistency()` |
 
-Then it stores the new head and emits Anchored with `kind = 0`.
+Then it writes `heads[epoch]` once, with `anchorBlock = block.number`, `anchorTime = block.timestamp`, and `checkpointVersion` equal to the version stored at that call. It sets `latestEpoch` to `epoch` and emits Anchored with `kind = 0`. A later call does not rewrite an earlier head. `rotateCheckpointKey` does not write `heads`.
 
 `size` is the uint64 wire field. The off-chain 2^53−1 cap is not a contract rule.
 
@@ -78,12 +78,27 @@ Byte layout is pinned in `vectors/anchored-topic0.json`.
 - no indexed fields
 - data: `abi.encode(version, oldAddr, newAddr)`
 
+## Head
+
+```
+Head { uint40 hourStart; uint64 size; uint32 checkpointVersion; uint64 anchorBlock; uint40 anchorTime; bytes32 root; bytes32 stateRoot }
+```
+
+`heads[e]` is write-once. An unwritten epoch reads as the zero head (`anchorBlock == 0`).
+
+`MAX_ANCHOR_LAG` is the uint64 constant 5400. An anchor whose `anchorTime` is after `hourStart + 3600 + MAX_ANCHOR_LAG` is late. The contract still stores it. The verifier prints that lateness.
+
 ## Views
 
 - `checkpoint() → address`
 - `checkpointVersion() → uint64`
+- `latestEpoch() → uint64`
 - `domain() → bytes32`
-- `latest() → (uint64 epoch, uint64 hourStart, uint64 size, bytes32 root, bytes32 stateRoot)`
+- `MAX_ANCHOR_LAG() → uint64` (constant 5400)
+- `latest() → (uint64 epoch, uint64 hourStart, uint64 size, bytes32 root, bytes32 stateRoot)` reads `heads[latestEpoch]`
+- `headAt(uint64 e) → Head` (zero head when unwritten; never reverts)
+- `headsFor(uint64 e) → (Head current, Head prior, uint64 latestEpoch)` prior is the zero head when `e == 0`
+- `heads(uint64 e) → Head` the mapping getter
 
 ## Errors
 

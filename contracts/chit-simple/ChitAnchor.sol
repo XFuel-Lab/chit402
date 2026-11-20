@@ -7,21 +7,29 @@ import {Rfc9162} from "./Rfc9162.sol";
 /// @notice Base Sepolia v0 hourly log anchor. The checkpoint address is the only
 ///         sender. A finished hour is one whose whole 3600 seconds are already
 ///         in the past. Kind 0 is the only kind this deployment emits.
+///         Every epoch head is written once. A later anchor does not rewrite it.
 contract ChitAnchor {
     uint8 internal constant KIND_HOURLY = 0;
 
+    /// @notice An anchor later than hour end plus this many seconds is late.
+    ///         The verifier prints that. The anchor still stores.
+    uint64 public constant MAX_ANCHOR_LAG = 5400;
+
     struct Head {
-        uint64 epoch;
-        uint64 hourStart;
+        uint40 hourStart;
         uint64 size;
+        uint32 checkpointVersion;
+        uint64 anchorBlock;
+        uint40 anchorTime;
         bytes32 root;
         bytes32 stateRoot;
     }
 
     address public checkpoint;
     uint64 public checkpointVersion;
+    uint64 public latestEpoch;
     bytes32 public immutable domain;
-    Head private _head;
+    mapping(uint64 => Head) public heads;
 
     error NotCheckpoint();
     error BadDomain();
@@ -50,7 +58,15 @@ contract ChitAnchor {
         if (checkpoint_ == address(0)) revert ZeroCheckpoint();
         checkpoint = checkpoint_;
         checkpointVersion = 1;
-        _head.root = Rfc9162.EMPTY_ROOT;
+        heads[0] = Head({
+            hourStart: 0,
+            size: 0,
+            checkpointVersion: 1,
+            anchorBlock: uint64(block.number),
+            anchorTime: uint40(block.timestamp),
+            root: Rfc9162.EMPTY_ROOT,
+            stateRoot: bytes32(0)
+        });
         domain = sha256(abi.encodePacked("chit402-checkpoint-v1", uint64(block.chainid), address(this)));
         emit CheckpointKeyRotated(1, address(0), checkpoint_);
     }
@@ -60,8 +76,21 @@ contract ChitAnchor {
         view
         returns (uint64 epoch, uint64 hourStart, uint64 size, bytes32 root, bytes32 stateRoot)
     {
-        Head memory h = _head;
-        return (h.epoch, h.hourStart, h.size, h.root, h.stateRoot);
+        Head memory h = heads[latestEpoch];
+        return (latestEpoch, h.hourStart, h.size, h.root, h.stateRoot);
+    }
+
+    /// @notice The head at epoch e. An unwritten epoch is the zero head
+    ///         (anchorBlock == 0). This never reverts.
+    function headAt(uint64 e) external view returns (Head memory) {
+        return heads[e];
+    }
+
+    /// @notice Head e, the previous head (zero when e == 0), and latestEpoch.
+    function headsFor(uint64 e) external view returns (Head memory current, Head memory prior, uint64 tip) {
+        current = heads[e];
+        if (e > 0) prior = heads[e - 1];
+        tip = latestEpoch;
     }
 
     function anchor(
@@ -75,22 +104,32 @@ contract ChitAnchor {
     ) external {
         if (msg.sender != checkpoint) revert NotCheckpoint();
         if (domain_ != domain) revert BadDomain();
-        if (epoch_ != _head.epoch + 1) revert BadEpoch();
+        Head storage prev = heads[latestEpoch];
+        if (epoch_ != latestEpoch + 1) revert BadEpoch();
         if (hourStart_ % 3600 != 0) revert BadHour();
-        if (hourStart_ <= _head.hourStart) revert HourNotIncreasing();
+        if (hourStart_ <= prev.hourStart) revert HourNotIncreasing();
         // A clock hour may close only after it has ended.
         if (uint256(hourStart_) + 3600 > block.timestamp) revert HourNotFinished();
-        if (size_ <= _head.size) revert SizeNotIncreasing();
+        if (size_ <= prev.size) revert SizeNotIncreasing();
 
-        if (Rfc9162.verifyConsistency(_head.size, size_, _head.root, root_, consistencyProof) != Rfc9162.OK) {
+        if (Rfc9162.verifyConsistency(prev.size, size_, prev.root, root_, consistencyProof) != Rfc9162.OK) {
             revert BadConsistency();
         }
 
-        _head.epoch = epoch_;
-        _head.hourStart = hourStart_;
-        _head.size = size_;
-        _head.root = root_;
-        _head.stateRoot = stateRoot_;
+        // A head stores the version in uint32. A larger value must revert here,
+        // not truncate, so a later read cannot return a different version.
+        // The rotation proposal cap lands with the controller timelock.
+        if (checkpointVersion > type(uint32).max) revert BadVersion();
+        Head memory next;
+        next.hourStart = uint40(hourStart_);
+        next.size = size_;
+        next.checkpointVersion = uint32(checkpointVersion);
+        next.anchorBlock = uint64(block.number);
+        next.anchorTime = uint40(block.timestamp);
+        next.root = root_;
+        next.stateRoot = stateRoot_;
+        heads[epoch_] = next;
+        latestEpoch = epoch_;
         emit Anchored(epoch_, hourStart_, size_, root_, stateRoot_, KIND_HOURLY);
     }
 
@@ -99,6 +138,7 @@ contract ChitAnchor {
         if (newAddr == address(0)) revert ZeroCheckpoint();
         if (newAddr == checkpoint) revert SameCheckpoint();
         if (version <= checkpointVersion) revert BadVersion();
+        if (version > type(uint32).max) revert BadVersion();
         address old = checkpoint;
         checkpoint = newAddr;
         checkpointVersion = version;

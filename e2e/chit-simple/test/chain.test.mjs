@@ -269,7 +269,7 @@ describe('p0-9 local chain', () => {
       await check('T5', 1, base(), /reorged/);
       clearMutate(loop);
 
-      await check('T6', 2, { ...base(), index: 999999 }, /pre_anchor/);
+      await check('T6', 1, { ...base(), index: 999999 }, /not_first_anchor/);
       await check('T7', 1, { ...base(), leaf: `0x${'ab'.repeat(32)}` }, /caller_supplied_leaf/);
       await check('T8', 1, { ...base(), treeSize: 128 }, /caller_supplied_tree_size/);
       const over = treeSizeFromHead(1n << 53n);

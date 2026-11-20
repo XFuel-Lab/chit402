@@ -6,7 +6,7 @@ The script compiles `contracts/chit-simple/ChitAnchor.sol` and `Rfc9162.sol` in 
 
 Chain: Base Sepolia, chain id 84532. Constructor argument: the checkpoint address, in `constructor-args.json`.
 
-In v0 on Base Sepolia, `rotateCheckpointKey` is authorized by the checkpoint key alone, so a rotation is not a trust event. The 2-of-3 secp256k1 controller path (SIMPLE §S6) is required before any mainnet deploy.
+Each epoch is one write-once `heads[epoch]`. `latest()` reads `heads[latestEpoch]`. `rotateCheckpointKey` does not write `heads`. In v0 on Base Sepolia, `rotateCheckpointKey` is authorized by the checkpoint key alone, so a rotation is not a trust event. A later change adds a 24 hour timelock on key rotation and controller change. One Sepolia redeploy covers both, and that redeploy is run by the owner. Nothing in this pack is a mainnet step.
 
 The runtime code hash does not depend on the checkout path. It does depend on the chain id and the deployed address, because the domain is part of the bytecode. `expected-runtime.json` is the check for one example: deployer `0x1111111111111111111111111111111111111111`, nonce 0, checkpoint `0x2222222222222222222222222222222222222222`.
 

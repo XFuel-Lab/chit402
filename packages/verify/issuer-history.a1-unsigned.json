@@ -1,0 +1,14 @@
+{
+  "unsigned": true,
+  "signed": false,
+  "note": "Draft issuer-history entry for ChitAnchor A-1. Not signed. Not sealed. Not a snapshot and not a release. checkpointVersions on a contract pin defaults to [1] until a later signed snapshot says otherwise.",
+  "alg": "ES256",
+  "kid": "IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q",
+  "status": "active",
+  "not_before": null,
+  "not_after": null,
+  "revoked_at": null,
+  "reason": "ChitAnchor stores one head per epoch. The pin key checkpointVersions defaults to [1].",
+  "custody": "Unchanged. This file does not hold a key.",
+  "prev_hash": "349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e"
+}
