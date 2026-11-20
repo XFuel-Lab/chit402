@@ -5,7 +5,7 @@
 import { createServer } from 'node:http';
 import { setDefaultResultOrder } from 'node:dns';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -3011,16 +3011,28 @@ test('T18 a fake key in the URL path and query is not printed', async () => {
   console.log = (...args) => logs.push(args.map(String).join(' '));
   console.error = (...args) => logs.push(args.map(String).join(' '));
   try {
+    const keyed = `http://127.0.0.3:${port}/v1/${secret}?api_key=${secret}`;
+    const publics = [`http://127.0.0.1:${port}`, `http://127.0.0.2:${port}`];
     const verdict = await verifyV13Document(v13Receipt(built), {
       ...optionsFor(key, doc, server.url),
-      rpcUrls: [`http://127.0.0.1:${port}`, `http://127.0.0.2:${port}`],
-      env: { HOME: home },
+      rpcUrls: publics,
+      env: { BASE_RPC_URL: keyed, HOME: home },
     });
     const dumped = `${logs.join('\n')}\n${JSON.stringify(verdict)}\n${(verdict.prints || []).join('\n')}`;
     const re = new RegExp(secret);
     assert.ok(!re.test(dumped));
     assert.match(dumped, /127\.0\.0\.3/);
     assert.equal(verdict.exit_code, 0, verdict.reason);
+    if ((statSync(file).mode & 0o777) === 0o600) {
+      const fromFile = await verifyV13Document(v13Receipt(built), {
+        ...optionsFor(key, doc, server.url),
+        rpcUrls: publics,
+        env: { HOME: home },
+      });
+      assert.equal(fromFile.exit_code, 0, fromFile.reason);
+      assert.ok(fromFile.prints.includes('rpc: 127.0.0.3'));
+      assert.ok(!re.test(JSON.stringify(fromFile)));
+    }
   } finally {
     console.log = origLog;
     console.error = origErr;
