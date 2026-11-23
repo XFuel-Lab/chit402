@@ -230,6 +230,8 @@ export async function houseSettlementIdentity({
   const auth = readEvmAuthorization(paymentHeader);
   const domain = decoded?.payload?.authorization?.domain
     || decoded?.authorization?.domain
+    || decoded?.payload?.domain
+    || decoded?.domain
     || null;
   const network = challenge?.network || null;
   const solana = isSolanaNetwork(network);
@@ -242,7 +244,10 @@ export async function houseSettlementIdentity({
       chainId = expectedEvmChainId(network);
     }
   }
-  const token = lineHex(domain?.verifyingContract, 20) || lineHex(chain?.asset, 20);
+  const token = lineHex(domain?.verifyingContract, 20)
+    || lineHex(decoded?.accepted?.asset, 20)
+    || lineHex(decoded?.asset, 20)
+    || lineHex(chain?.asset, 20);
   const authorizer = lineHex(auth?.from, 20) || lineHex(chain?.authorizer, 20) || lineHex(chain?.payer, 20);
   const nonce = lineHex(auth?.nonce, 32);
   const flags = v13Flags(env);

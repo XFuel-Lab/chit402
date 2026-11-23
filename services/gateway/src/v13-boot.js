@@ -18,7 +18,7 @@ import { createPublicKey } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { KMSClient } from '@aws-sdk/client-kms';
-import { ethereumAddress } from '../../packages/cs2-core/ecdsa/index.js';
+import { ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
 import { broadcastCommittedAnchor, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
 import { MAINNET_CHECKPOINT, normHex } from '../../chit-sealer/mainnet-pin.js';
 import { openStore } from '../../chit-store/store.js';
@@ -156,7 +156,7 @@ function pointFromGetPublicKey(out) {
 
 function seenAddress(point, env, deps) {
   const real = normHex(ethereumAddress(point));
-  if (deps?.testInjection === true && testSwitchesOn(env) && typeof deps.addressOf === 'function') {
+  if (deps?.testInjection === true && testSwitchesOn(process.env) && typeof deps.addressOf === 'function') {
     return normHex(deps.addressOf(point));
   }
   return real;
