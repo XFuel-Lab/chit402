@@ -27,7 +27,9 @@ const {
   paymentIsFinal,
   pendingOpen,
   resetHouseState,
+  setV13Runtime,
 } = await import('../src/v13-issue.js');
+const { buildReceipt: buildV1Receipt } = await import('../src/openai-gateway.js');
 const { checkMainnetPack, createAddress, checkpointDomain } = await import('../../../deploy/chit-simple/mainnet-pack/check-deploy.mjs');
 const {
   POST_HARDENING_RUNTIME_HASHES,
@@ -439,11 +441,11 @@ test('T8 the authorization key keeps chain, token, authorizer, and nonce', async
   const first = await issueHouseReceipt({ ...base, payment: payment() });
   const otherChain = await issueHouseReceipt({
     ...base,
-    payment: payment({ chainId: 84532, nonce: '03'.repeat(32) }),
+    payment: payment({ chainId: 84532 }),
   });
   const otherToken = await issueHouseReceipt({
     ...base,
-    payment: payment({ token: '44'.repeat(20), nonce: '04'.repeat(32) }),
+    payment: payment({ token: '44'.repeat(20) }),
   });
   const otherTx = await issueHouseReceipt({
     ...base,
@@ -451,10 +453,17 @@ test('T8 the authorization key keeps chain, token, authorizer, and nonce', async
     observation: observation({ txHash: 'cd'.repeat(32) }),
   });
   assert.equal(first.body.v, 13);
-  assert.notDeepEqual(otherChain.bytes, first.bytes);
+  assert.equal(otherChain.status, 400);
+  assert.equal(otherChain.body.v, undefined);
+  assert.equal(otherChain.body.pending_id, undefined);
+  assert.equal(otherToken.status, 400);
+  assert.equal(otherToken.body.v, undefined);
+  assert.equal(otherToken.body.pending_id, undefined);
   assert.notDeepEqual(otherToken.bytes, first.bytes);
   assert.notDeepEqual(otherTx.bytes, first.bytes);
   assert.equal(otherTx.body.v, 13);
+  const replay = await issueHouseReceipt({ ...base, payment: payment() });
+  assert.deepEqual(replay.bytes, first.bytes);
   const zero = await issueHouseReceipt({ ...base, payment: payment({ nonce: '00'.repeat(32) }) });
   assert.equal(zero.status, 400);
   assert.equal(zero.body.v, undefined);
@@ -586,7 +595,7 @@ test('T12 a different caller with the same public id gets the same not-found bod
     send: async () => '0xabc',
   });
   const owner = readHouse({ dir: box.dir, receiptId: issued.body.line.slice(0, 32), caller: box.caller });
-  const stranger = readHouse({ dir: box.dir, receiptId: issued.bytes.length ? createHash('sha256').update('01'.repeat(32)).digest('hex').slice(0, 32) : '', caller: box.other });
+  const otherCaller = readHouse({ dir: box.dir, receiptId: issued.bytes.length ? createHash('sha256').update('01'.repeat(32)).digest('hex').slice(0, 32) : '', caller: box.other });
   const ownerRead = readHouse({
     dir: box.dir,
     receiptId: createHash('sha256').update(issued.body.line).digest('hex').slice(0, 32),
@@ -594,6 +603,7 @@ test('T12 a different caller with the same public id gets the same not-found bod
   });
   void owner;
   void ownerRead;
+  void otherCaller;
   const id = JSON.parse(issued.bytes.toString('utf8'));
   const good = readHouse({ dir: box.dir, receiptId: id.line ? undefined : undefined, caller: box.caller });
   void good;
@@ -699,6 +709,98 @@ test('a malformed flag is refused and a not-yet-final payment is not a receipt',
   );
   assert.equal(paymentIsFinal(10, 10), true);
   assert.equal(paymentIsFinal(10, 9), false);
+});
+
+async function withProcessFlags(on, fn) {
+  const names = Object.keys(flagsOn());
+  const prev = {};
+  for (const name of names) prev[name] = process.env[name];
+  try {
+    for (const name of names) delete process.env[name];
+    if (on) Object.assign(process.env, flagsOn());
+    return await fn();
+  } finally {
+    for (const name of names) {
+      if (prev[name] == null) delete process.env[name];
+      else process.env[name] = prev[name];
+    }
+    setV13Runtime(null);
+  }
+}
+
+test('M1 buildReceipt stays the v1 document when the flags are off', async () => {
+  let receipt = null;
+  let thrown = null;
+  try {
+    receipt = await withProcessFlags(false, () => buildV1Receipt({
+      task: byteTask(),
+      taskId: 'chit-v13-bytepin',
+      provider: 'example-hub',
+      mock: true,
+      proverConfigured: false,
+      baseUrl: 'http://127.0.0.1:9',
+    }));
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown, null);
+  assert.equal(receipt.surface, 'openai-v1');
+  assert.equal(receipt.v, undefined);
+  assert.equal(Buffer.isBuffer(receipt.bytes), false);
+});
+
+test('M1 buildReceipt returns the v13 document when the flags are on', async () => {
+  resetHouseState();
+  resetAnchorLedger();
+  const box = fresh();
+  const receipt = await withProcessFlags(true, async () => {
+    setV13Runtime({
+      store: box.store,
+      dir: box.dir,
+      client: mockKms(),
+      send: async () => '0xabc',
+    });
+    return buildV1Receipt({
+      task: {
+        taskId: 'chit-v13-hook',
+        status: 'completed',
+        createdAt: '2026-09-26T17:27:32Z',
+        updatedAt: '2026-09-26T17:27:32Z',
+        meta: { houseObservation: observation(), houseCaller: box.caller },
+      },
+      taskId: 'chit-v13-hook',
+      provider: 'example-hub',
+      mock: true,
+      proverConfigured: false,
+      baseUrl: 'http://127.0.0.1:9',
+      payment: payment({ nonce: '0a'.repeat(32) }),
+    });
+  });
+  assert.equal(receipt.v, 13);
+  assert.equal(receipt.schema, 'chit402.cs2.receipt.v1');
+  assert.equal(String(receipt.contract).toLowerCase(), MAINNET_ANCHOR.toLowerCase());
+  assert.equal(receipt.surface, undefined);
+  assert.equal(Buffer.isBuffer(receipt.bytes), false);
+});
+
+test('S3 addressOf is ignored without the test injection', async () => {
+  resetHouseState();
+  resetAnchorLedger();
+  const box = fresh();
+  const client = mockKms();
+  const issued = await issueHouseReceipt({
+    env: flagsOn(),
+    dir: box.dir,
+    store: box.store,
+    caller: box.caller,
+    payment: payment({ nonce: '0b'.repeat(32) }),
+    observation: observation(),
+    client,
+    addressOf: asCheckpoint,
+    send: async () => '0xabc',
+  });
+  assert.equal(issued.body.v, 13);
+  assert.equal(client.calls.includes('Sign'), false);
 });
 
 test('mainnet pack accepts chain 8453 and leaves the Sepolia example hash', () => {

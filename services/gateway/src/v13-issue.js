@@ -24,6 +24,16 @@ import {
 
 const tails = new Map();
 const pendings = new Map();
+let houseRuntime = null;
+
+/** Server-side v13 deps. Not read from a request body. */
+export function setV13Runtime(next) {
+  houseRuntime = next && typeof next === 'object' ? next : null;
+}
+
+export function readV13Runtime() {
+  return houseRuntime;
+}
 
 function note(input, code) {
   const sink = input && input.log;
@@ -193,6 +203,7 @@ function coreLine(payment) {
     throw err;
   }
   const line = new Uint8Array(encoded.line);
+  // A core line has a zero sigma. This sealer does not attach a seller signature.
   line.fill(0, LAYOUT.sigma, LAYOUT.sigma + LAYOUT.sigmaBytes);
   return line;
 }
@@ -263,13 +274,14 @@ async function issueV13(input) {
     }
     const final = paymentIsFinal(observation.blockNumber, observation.finalizedNumber);
     if (!final) return closed(402, 'settle_unconfirmed');
-    paid = true;
     const payment = input.payment;
     const key = houseAuthorizationKey(payment);
     if (!key.ok) return closed(400, 'verify_failed');
+    if (Number(payment.chainId) !== 8453) return closed(400, 'verify_failed');
     if (normHex(payment.token) !== normHex(MAINNET_USDC).replace(/^0x/, '')) {
-      return pendingPaid(key.hex, input.baseUrl, input.caller);
+      return closed(400, 'verify_failed');
     }
+    paid = true;
     const dir = input.dir;
     if (!dir) return pendingPaid(key.hex, input.baseUrl, input.caller);
     return await withLock(key.hex, async () => {
@@ -341,7 +353,7 @@ async function issueV13(input) {
             client: input.client,
             send: input.send,
             digest: hexBytes(record.root),
-            addressOf: input.addressOf,
+            addressOf: testAddressOf(input),
           });
         } catch (err) {
           note(input, err?.code || 'anchor_pending');
@@ -377,6 +389,12 @@ export function readHouse(input) {
 export function pendingOpen(id) {
   const row = pendings.get(id);
   return !!(row && row.open === true);
+}
+
+function testAddressOf(input) {
+  if (input?.testInjection !== true) return undefined;
+  if (process.env.NODE_ENV !== 'test') return undefined;
+  return typeof input.addressOf === 'function' ? input.addressOf : undefined;
 }
 
 export function clearPending(id) {

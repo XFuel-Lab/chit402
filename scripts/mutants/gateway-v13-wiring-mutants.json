@@ -142,6 +142,34 @@
       "note": "live hash removed from the post-hardening list"
     },
     {
+      "id": "M1",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "if (issuanceEnabled(process.env) && mainnetSealerEnabled(process.env) && storeEnabled(process.env)) {",
+      "replace": "if (true) {",
+      "note": "v1 buildReceipt always takes the v13 hook"
+    },
+    {
+      "id": "S1",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "if (Number(payment.chainId) !== 8453) return closed(400, 'verify_failed');",
+      "replace": "if (false) return closed(400, 'verify_failed');",
+      "note": "chain 84532 is accepted for the mainnet anchor"
+    },
+    {
+      "id": "S2",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "if (normHex(payment.token) !== normHex(MAINNET_USDC).replace(/^0x/, '')) {\n      return closed(400, 'verify_failed');\n    }",
+      "replace": "if (false) {\n      return closed(400, 'verify_failed');\n    }",
+      "note": "a swapped token is still issued"
+    },
+    {
+      "id": "S3",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "addressOf: testAddressOf(input),",
+      "replace": "addressOf: input.addressOf,",
+      "note": "the test address stand-in is forwarded"
+    },
+    {
       "id": "DW20",
       "file": "services/gateway/src/v13-issue.js",
       "find": "      bindAuthorization(dir, key.hex, saved);",
