@@ -175,6 +175,118 @@
       "find": "      bindAuthorization(dir, key.hex, saved);",
       "replace": "      void saved;",
       "note": "authorization binding is not written"
+    },
+    {
+      "id": "DX7",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "function testAddressOf(input) {\n  if (input?.testInjection !== true) return undefined;\n  if (!testSwitchesOn(process.env)) return undefined;\n  return typeof input.addressOf === 'function' ? input.addressOf : undefined;\n}",
+      "replace": "function testAddressOf(input) {\n  if (input?.testInjection !== true) return undefined;\n  return typeof input.addressOf === 'function' ? input.addressOf : undefined;\n}",
+      "note": "B9 — testAddressOf skips testSwitchesOn but still requires testInjection"
+    },
+    {
+      "id": "DX9",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "    if (issued?.body?.v === 13) return issued.body;\n    const err = new Error('v13 house receipt was not issued');\n    err.code = issued?.body?.code || 'verify_failed';\n    if (issued?.body?.pending_id) {\n      err.pending_id = issued.body.pending_id;\n      err.verify_url = issued.body.verify_url;\n    }\n    throw err;",
+      "replace": "    return issued.body;",
+      "note": "B7 — hook returns issued.body when v is not 13. Find includes the pending_id copy added so the paid catch can see a hold."
+    },
+    {
+      "id": "BW1",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (normHex(recovered) !== normHex(MAINNET_CHECKPOINT)) {\n    noteCheckpoint(env, deps);\n    throw bootRefused();\n  }",
+      "replace": "  if (false) throw bootRefused();",
+      "note": "B4 — GetPublicKey address compare removed"
+    },
+    {
+      "id": "BW2",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (flags.issuance === true) return guardListen(env, deps);",
+      "replace": "  if (false) return guardListen(env, deps);",
+      "note": "B3 — listen guard skipped when only CHIT_V13_ISSUANCE is on"
+    },
+    {
+      "id": "BW3",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (flags.mainnetSealer === true) return guardListen(env, deps);",
+      "replace": "  if (false) return guardListen(env, deps);",
+      "note": "B3 — listen guard skipped when only CHIT_V13_MAINNET_SEALER is on"
+    },
+    {
+      "id": "BW4",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (flags.store === true) return guardListen(env, deps);",
+      "replace": "  if (false) return guardListen(env, deps);",
+      "note": "B3 — listen guard skipped when only CHIT_V13_STORE is on"
+    },
+    {
+      "id": "BW5",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function runtimeComplete(runtime) {\n  if (!runtime || typeof runtime !== 'object') return false;\n  if (!runtime.store) return false;\n  if (!runtime.dir) return false;\n  if (!runtime.client || typeof runtime.client.send !== 'function') return false;\n  if (typeof runtime.send !== 'function') return false;\n  return true;\n}",
+      "replace": "function runtimeComplete(runtime) {\n  void runtime;\n  return true;\n}",
+      "note": "B3 — missing store, dir, client, or send is treated as complete"
+    },
+    {
+      "id": "BW6",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "    if (!issuanceRuntimeReady(input)) {\n      const err = new Error('v13 boot refused');\n      err.code = 'v13_boot_refused';\n      throw err;\n    }\n    paid = true;",
+      "replace": "    paid = true;\n    if (!issuanceRuntimeReady(input)) {\n      const err = new Error('v13 boot refused');\n      err.code = 'v13_boot_refused';\n      throw err;\n    }",
+      "note": "B6 — paid is set before the missing-runtime throw, so the catch opens a hold"
+    },
+    {
+      "id": "BW7",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "export function v13PaidHookFailure(err, payment) {\n  const raw = err?.code;\n  const code = V13_HOOK_CODES.has(raw) ? raw : 'verify_failed';\n  const pendingId = typeof err?.pending_id === 'string' && err.pending_id ? err.pending_id : null;\n  const body = {\n    error: { code, type: 'server_error' },\n    code,\n    retryable: true,\n  };\n  if (payment?.ref) body.payment_ref = payment.ref;\n  if (pendingId) {\n    body.pending_id = pendingId;\n    body.verify_url = err.verify_url || null;\n  }\n  const status = pendingId ? 202 : 503;\n  return { status, body };\n}",
+      "replace": "export function v13PaidHookFailure(err, payment) {\n  void err;\n  void payment;\n  return { status: 500, body: { error: 'pay again' } };\n}",
+      "note": "B8 — hook failure becomes a bare 500 and invites a second payment"
+    },
+    {
+      "id": "BW8",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "  const status = pendingId ? 202 : 503;",
+      "replace": "  const status = 200;",
+      "note": "B8 — paid failure status is 200 instead of 202 or 503"
+    },
+    {
+      "id": "BW9",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "  return typeof input.addressOf === 'function' ? input.addressOf : undefined;",
+      "replace": "  return undefined;",
+      "note": "B9 — address stand-in is never honored"
+    },
+    {
+      "id": "BW10",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "      payment: settleHousePayment(payment),\n      observation: settleHouseObservation(payment),\n      store: runtime?.store,\n      dir: runtime?.dir,\n      caller: runtime?.caller || null,",
+      "replace": "      payment: task?.meta?.housePayment || settleHousePayment(payment),\n      observation: task?.meta?.houseObservation || settleHouseObservation(payment),\n      store: runtime?.store,\n      dir: runtime?.dir,\n      caller: task?.meta?.houseCaller || runtime?.caller || null,",
+      "note": "B10 — task.meta house fields override the settle path"
+    },
+    {
+      "id": "BW11",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "    chainId: decision.chainId ?? null,\n    nonce: decision.nonce ?? null,",
+      "replace": "    token: decision.token ?? null,",
+      "note": "B10 — chainId and nonce omitted from metering.payment"
+    },
+    {
+      "id": "BW12",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function envFileModeOk(mode) {\n  return (permissionBits(mode) & ~0o600) === 0;\n}",
+      "replace": "function envFileModeOk(mode) {\n  void mode;\n  return true;\n}",
+      "note": "B11 — env-file mode check skipped"
+    },
+    {
+      "id": "BW13",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function dirModeOk(mode) {\n  return (permissionBits(mode) & ~0o700) === 0;\n}",
+      "replace": "function dirModeOk(mode) {\n  void mode;\n  return true;\n}",
+      "note": "B12 — store or bind dir mode check skipped"
+    },
+    {
+      "id": "BW14",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  const fields = { checkpointKey: present ? 'set' : 'missing' };",
+      "replace": "  const fields = { checkpointKey: env.CHIT_CHECKPOINT_KMS_KEY_ID };",
+      "note": "B13 — the log includes the key id value"
     }
   ]
 }
