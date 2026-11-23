@@ -21,6 +21,7 @@ import {
   mainnetSealerEnabled,
   storeEnabled,
 } from './v13-flags.js';
+import { testSwitchesOn } from './test-switch.js';
 
 const tails = new Map();
 const pendings = new Map();
@@ -393,7 +394,7 @@ export function pendingOpen(id) {
 
 function testAddressOf(input) {
   if (input?.testInjection !== true) return undefined;
-  if (process.env.NODE_ENV !== 'test') return undefined;
+  if (!testSwitchesOn(process.env)) return undefined;
   return typeof input.addressOf === 'function' ? input.addressOf : undefined;
 }
 
