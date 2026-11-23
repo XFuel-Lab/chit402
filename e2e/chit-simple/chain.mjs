@@ -226,7 +226,8 @@ export async function deployAnchor(wallet, checkpoint, controller) {
   const artifact = JSON.parse(readFileSync(join(REPO, 'artifacts/contracts/chit-simple/ChitAnchor.sol/ChitAnchor.json'), 'utf8'));
   const factory = new ContractFactory(artifact.abi, artifact.bytecode, wallet);
   const nonce = await rawNonce(wallet.provider, wallet.address);
-  const contract = await factory.deploy(checkpoint, controller, { nonce });
+  // ChitAnchor.DEFAULT_MAX_GROWTH. The runtime code hash depends on it.
+  const contract = await factory.deploy(checkpoint, controller, 1_000_000, { nonce });
   const mined = await contract.deploymentTransaction().wait();
   if (!mined || mined.status !== 1) throw new Error('anchor deploy reverted');
   const address = (await contract.getAddress()).toLowerCase();

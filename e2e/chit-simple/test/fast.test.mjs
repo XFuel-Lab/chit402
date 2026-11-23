@@ -634,6 +634,10 @@ function world(line, eventPatch = {}) {
       ...eventPatch,
     }],
     codeHash: pin.codeHash,
+    // A pin that is not on the pre-hardening allowlist must show a decoded
+    // freeze and cutoff. This world is that read: not frozen, not retired.
+    frozen: 'no',
+    keyCutoff: { retired: false, epoch: 0 },
     checkpointVersion: 1,
     anchorFrom: DUMMY_ADDRESS,
     anchorTo: CONTRACT,

@@ -51,7 +51,7 @@ contract Rfc9162VectorTest is Test {
     function test_vector_chain_anchors_on_the_contract() public {
         vm.chainId(84532);
         address cp = address(0xC0FFEE);
-        ChitAnchor anchor = new ChitAnchor(cp, address(0xC0117011));
+        ChitAnchor anchor = new ChitAnchor(cp, address(0xC0117011), uint64(1_000_000));
         bytes memory data = blob;
         bytes32 dom = anchor.domain();
         bytes32 prev = harness.emptyRoot();

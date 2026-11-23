@@ -7,7 +7,13 @@
  *
  * A v0 checkpoint-key rotation is not a trust event. The anchor sender is
  * the checkpoint address in the bundled pin. An on-chain rotation does not
- * add a trusted sender.
+ * add a trusted sender. A retired checkpoint version is untrusted after
+ * its cutoff epoch. An anchor that names that version after the cutoff is
+ * invalid. An anchor after a freeze is invalid. A failed read of either
+ * state is could_not_check. A revert of frozen() or keyRetired() is "not
+ * frozen" only for an allowlisted pre-hardening runtime. Every other
+ * runtime, including one whose hash matches the pin but is not on that
+ * list, fails closed. The code-hash pin is checked before that decision.
  */
 
 export const V13_SCHEMA = 'chit402.cs2.receipt.v1';
@@ -17,6 +23,44 @@ export const UNAUDITED_NOTE = 'anchor contract unaudited';
 
 /** Implementation limit. Not a wire field. */
 export const MAX_TREE_SIZE = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Runtime image of the example post-hardening deploy (chain 84532,
+ * deployer 0x1111… nonce 0, checkpoint 0x2222…, MAX_GROWTH 1000000).
+ * Filled after the bytecode is pinned. A matching hash must decode
+ * frozen() and keyRetired(); a revert is not "not frozen".
+ */
+export const POST_HARDENING_RUNTIME_HASHES: readonly string[] = Object.freeze([
+  '0x6006ad8cd474ca5093ce41d2cc0f99e4c6a036563712ecf301ab6d37f02091ed',
+]);
+
+/**
+ * Runtime images from before freeze() and keyRetired() existed.
+ * A revert of those getters is the pre-hardening contract, not a spoof.
+ * Example preview on 7770a893, same deployer, nonce, and checkpoint.
+ */
+export const PRE_HARDENING_RUNTIME_HASHES: readonly string[] = Object.freeze([
+  '0xb7ad0c729af141a19695bc89d09bd0a04a8d9ab9668373a066cba94f13aee45c',
+]);
+
+export type RuntimeClass = 'post' | 'pre' | 'unknown';
+
+export function runtimeClass(codeHash: string | null | undefined): RuntimeClass {
+  const hash = String(codeHash || '').toLowerCase();
+  if (POST_HARDENING_RUNTIME_HASHES.some((item) => item.toLowerCase() === hash)) return 'post';
+  if (PRE_HARDENING_RUNTIME_HASHES.some((item) => item.toLowerCase() === hash)) return 'pre';
+  return 'unknown';
+}
+
+/** True when frozen() and keyRetired() both returned a decoded value. */
+export function anchorStateDecoded(world: Pick<V13World, 'frozen' | 'frozenEpoch' | 'keyCutoff'>): boolean {
+  if (world.frozen !== 'yes' && world.frozen !== 'no') return false;
+  if (world.frozen === 'yes' && (!isJsonInteger(world.frozenEpoch) || (world.frozenEpoch as number) < 0)) return false;
+  const cut = world.keyCutoff;
+  if (!cut || typeof cut === 'string') return false;
+  if (typeof cut.retired !== 'boolean' || !isJsonInteger(cut.epoch) || cut.epoch < 0) return false;
+  return true;
+}
 
 export const ANCHORED_EVENT = 'Anchored(uint64 indexed epoch, uint64 indexed hourStart, uint64 size, bytes32 root, bytes32 stateRoot, uint8 kind)';
 export const ANCHORED_SIGNATURE = 'Anchored(uint64,uint64,uint64,bytes32,bytes32,uint8)';
@@ -197,6 +241,18 @@ export interface V13World {
   headAbsent?: boolean;
   /** checkpointVersion from heads[e]. Absent skips the pin-list check. */
   checkpointVersion?: number | null;
+  /**
+   * Freeze flag at the agreed block. `unreadable` is a failed read.
+   * Omitted, or `no`, means anchor is not halted.
+   */
+  frozen?: 'no' | 'yes' | 'unreadable';
+  /** latestEpoch stored by freeze(). Required when frozen is `yes`. */
+  frozenEpoch?: number | null;
+  /**
+   * Cutoff for the head's checkpoint version. `unreadable` is a failed read.
+   * Omitted or null means that version has not been rotated out.
+   */
+  keyCutoff?: { retired: boolean; epoch: number } | 'unreadable' | null;
   /** heads[e].anchorTime. Absent skips the lateness line. */
   anchorTime?: number | null;
   /** Hostnames of the RPCs that were asked. No path, query, or userinfo. */
@@ -334,6 +390,9 @@ const MESSAGES: Record<string, string> = {
   checkpoint_version: 'The anchor checkpoint version is not in the pin.',
   tree_size_above_cap: 'The anchored tree size is above the verifier cap.',
   anchor_sender_mismatch: 'anchor sender mismatch',
+  anchor_frozen: 'The anchor epoch is after the contract was frozen.',
+  key_retired: 'The checkpoint key was retired before this epoch.',
+  anchor_state_unreadable: 'The freeze and key-cutoff state could not be read.',
   code_hash_mismatch: 'The contract code hash does not match the pin.',
   code_unreadable: 'The contract code could not be read.',
   hour_outside_coverage: 'The receipt hour is outside the contract coverage.',
@@ -817,6 +876,31 @@ function safeHour(value: bigint): number | null {
   return Number(value);
 }
 
+/**
+ * Freeze and key-retirement gate. A missing field is not a halt: the
+ * pre-hardening bytecode has no getter, and the chain reader leaves the
+ * field unset when that getter reverts. `unreadable` is a failed read.
+ */
+export function anchorHalt(
+  world: Pick<V13World, 'frozen' | 'frozenEpoch' | 'keyCutoff'>,
+  epoch: number,
+): { ok: true } | { ok: false; exit: 1 | 2; reason: 'anchor_frozen' | 'key_retired' | 'anchor_state_unreadable' } {
+  if (world.frozen === 'unreadable' || world.keyCutoff === 'unreadable') {
+    return { ok: false, exit: 2, reason: 'anchor_state_unreadable' };
+  }
+  if (world.frozen === 'yes') {
+    const at = world.frozenEpoch;
+    if (!isJsonInteger(at) || at < 0) return { ok: false, exit: 2, reason: 'anchor_state_unreadable' };
+    if (epoch > at) return { ok: false, exit: 1, reason: 'anchor_frozen' };
+  }
+  const cut = world.keyCutoff;
+  if (cut && cut.retired) {
+    if (!isJsonInteger(cut.epoch) || cut.epoch < 0) return { ok: false, exit: 2, reason: 'anchor_state_unreadable' };
+    if (epoch > cut.epoch) return { ok: false, exit: 1, reason: 'key_retired' };
+  }
+  return { ok: true };
+}
+
 function anchorTiming(hourStart: number, anchorTime: number): string {
   const deadline = hourStart + 3600 + MAX_ANCHOR_LAG;
   if (anchorTime <= deadline) return 'anchored on time';
@@ -906,9 +990,20 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (world.checkpointVersion == null || !allowedVersions.includes(world.checkpointVersion)) {
     return fail(2, 'checkpoint_version', world, { anchor: 'could_not_check' }, messageOf('checkpoint_version'));
   }
+  // Code hash before freeze or retirement. A spoofed revert must not pass
+  // as "not frozen" and then reach a later pin check.
   if (!world.codeHash) return fail(2, 'code_unreadable', world, { anchor: 'could_not_check' }, messageOf('code_unreadable'));
   if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {
     return fail(2, 'code_hash_mismatch', world, { anchor: 'could_not_check' }, messageOf('code_hash_mismatch'));
+  }
+  if (runtimeClass(world.codeHash) !== 'pre' && !anchorStateDecoded(world)) {
+    return fail(2, 'anchor_state_unreadable', world, { anchor: 'could_not_check' }, messageOf('anchor_state_unreadable'));
+  }
+  const halted = anchorHalt(world, parsed.receipt.epoch);
+  if (!halted.ok) {
+    return fail(halted.exit, halted.reason, world, {
+      anchor: halted.exit === 1 ? 'fail' : 'could_not_check',
+    }, messageOf(halted.reason));
   }
   // A genesisHourStart() revert is v0 (no getter). The pin's bounds stand.
   if (world.chainGenesis != null && world.chainGenesis !== pin.genesisHourStart) {

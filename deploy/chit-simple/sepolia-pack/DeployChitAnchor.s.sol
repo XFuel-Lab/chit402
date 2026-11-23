@@ -13,6 +13,8 @@ import {ChitAnchor} from "chit-simple/ChitAnchor.sol";
 ///           --rpc-url <base-sepolia-rpc> --account <name> --broadcast
 ///
 ///         Set CHIT_ANCHOR_CHECKPOINT and CHIT_ANCHOR_CONTROLLER first.
+///         The script passes GROWTH (1000000), ChitAnchor.DEFAULT_MAX_GROWTH.
+///         That value is part of the runtime code hash.
 ///         The controller is a Safe (threshold 2, three owners) whose
 ///         singleton is SafeL2 1.4.1. The owner creates that Safe outside
 ///         this repo. Chain id must be 84532. Without --broadcast nothing
@@ -34,6 +36,9 @@ contract DeployChitAnchor {
     /// @dev Code-hash preview only. Runtime bytecode does not embed this address.
     address internal constant PREVIEW_CONTROLLER = 0x4444444444444444444444444444444444444444;
 
+    /// @dev Equal to ChitAnchor.DEFAULT_MAX_GROWTH. The runtime hash embeds it.
+    uint64 internal constant GROWTH = 1_000_000;
+
     /// @notice Read-only. Prints nothing itself; the caller reads the return values.
     ///         Sets chain id 84532 locally and does not broadcast. The preview
     ///         controller is PREVIEW_CONTROLLER because the code hash does not
@@ -48,7 +53,7 @@ contract DeployChitAnchor {
         vm.setNonce(deployer, uint64(nonce));
         predicted = vm.computeCreateAddress(deployer, nonce);
         vm.prank(deployer);
-        ChitAnchor deployed = new ChitAnchor(checkpoint_, PREVIEW_CONTROLLER);
+        ChitAnchor deployed = new ChitAnchor(checkpoint_, PREVIEW_CONTROLLER, GROWTH);
         require(address(deployed) == predicted, "create");
         codeHash = keccak256(address(deployed).code);
     }
@@ -63,7 +68,7 @@ contract DeployChitAnchor {
         require(checkpoint_ != address(0) && controller_ != address(0), "address");
         require(controller_ != checkpoint_, "controller");
         vm.startBroadcast();
-        deployed = new ChitAnchor(checkpoint_, controller_);
+        deployed = new ChitAnchor(checkpoint_, controller_, GROWTH);
         vm.stopBroadcast();
     }
 }

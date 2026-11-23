@@ -14,11 +14,11 @@ Illustrative check (not a deployment): contract `0x33333333333333333333333333333
 
 ## Constructor
 
-`constructor(address checkpoint, address controller)`
+`constructor(address checkpoint, address controller, uint64 maxGrowth)`
 
-Reverts `ZeroCheckpoint` if either address is zero. Reverts `SameCheckpoint` if they are equal. Stores the checkpoint at version 1, stores the controller, and emits `CheckpointKeyRotated(1, address(0), checkpoint)`. Writes `heads[0]` once: hourStart 0, size 0, checkpointVersion 1, anchorBlock = the deploy block, anchorTime = the deploy timestamp, root = SHA-256("") (`0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), stateRoot 0. `latestEpoch` starts at 0. The pending slot is empty (`kind = 0`).
+Reverts `ZeroCheckpoint` if either address is zero. Reverts `SameCheckpoint` if they are equal. Reverts `ZeroGrowth` if `maxGrowth` is 0. Reverts `GrowthBound` if `maxGrowth >= MAX_TREE_SIZE` (2^53 − 1). The largest cap is `MAX_TREE_SIZE - 1`. Stores `maxGrowth` as the immutable `MAX_GROWTH`. The deploy default is `DEFAULT_MAX_GROWTH` = 1,000,000. Stores the checkpoint at version 1, stores the controller, and emits `CheckpointKeyRotated(1, address(0), checkpoint)`. Writes `heads[0]` once: hourStart 0, size 0, checkpointVersion 1, anchorBlock = the deploy block, anchorTime = the deploy timestamp, root = SHA-256("") (`0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), stateRoot 0. `latestEpoch` starts at 0. The pending slot is empty (`kind = 0`). `frozen` starts false.
 
-`ROTATION_DELAY` is `24 hours` (86400 seconds).
+`ROTATION_DELAY` is `24 hours` (86400 seconds). `MAX_TREE_SIZE` is 2^53 − 1.
 
 ## anchor
 
@@ -31,17 +31,20 @@ Checks, in order:
 | Order | Check | Error |
 |---|---|---|
 | 1 | `msg.sender == checkpoint` | `NotCheckpoint()` |
-| 2 | `domain` equals the immutable domain | `BadDomain()` |
-| 3 | `epoch == latestEpoch + 1` | `BadEpoch()` |
-| 4 | `hourStart % 3600 == 0` | `BadHour()` |
-| 5 | `hourStart > heads[latestEpoch].hourStart` | `HourNotIncreasing()` |
-| 6 | `hourStart + 3600 <= block.timestamp` (finished hour) | `HourNotFinished()` |
-| 7 | `size > heads[latestEpoch].size` | `SizeNotIncreasing()` |
-| 8 | RFC 9162 consistency of `(prior size, prior root)` to `(size, root)`, genesis when prior size is 0 | `BadConsistency()` |
+| 2 | `frozen` is false | `AnchorFrozen()` |
+| 3 | `domain` equals the immutable domain | `BadDomain()` |
+| 4 | `epoch == latestEpoch + 1` | `BadEpoch()` |
+| 5 | `hourStart % 3600 == 0` | `BadHour()` |
+| 6 | `hourStart > heads[latestEpoch].hourStart` | `HourNotIncreasing()` |
+| 7 | `hourStart + 3600 <= block.timestamp` (finished hour) | `HourNotFinished()` |
+| 8 | `size > heads[latestEpoch].size` | `SizeNotIncreasing()` |
+| 9 | `size <= MAX_TREE_SIZE` (2^53 − 1) | `SizeAboveCap()` |
+| 10 | `size - heads[latestEpoch].size <= MAX_GROWTH` | `GrowthCap()` |
+| 11 | RFC 9162 consistency of `(prior size, prior root)` to `(size, root)`, genesis when prior size is 0 | `BadConsistency()` |
 
 Then it writes `heads[epoch]` once, with `anchorBlock = block.number`, `anchorTime = block.timestamp`, and `checkpointVersion` equal to the version stored at that call. It sets `latestEpoch` to `epoch` and emits Anchored with `kind = 0`. A later call does not rewrite an earlier head. `executePending` does not write `heads`. If the stored `checkpointVersion` is above the uint32 max, anchor reverts `BadVersion` and does not truncate.
 
-`size` is the uint64 wire field. The off-chain 2^53−1 cap is not a contract rule.
+`size` is still a uint64 on the wire. The contract refuses a size above 2^53 − 1, and it refuses a step larger than `MAX_GROWTH`. Skipped hours do not raise that step. One anchor that set the size to 2^64 − 1 would make every later anchor revert, and rotating the checkpoint key would not undo the head.
 
 Genesis (stored size 0) accepts an empty proof once. The stored root starts as the empty-tree root. A later anchor has stored size > 0, so genesis cannot run again.
 
@@ -81,7 +84,15 @@ Stores kind 2, version 0, and the same `eta`. Emits `ActionProposed`.
 
 `cancelPending()` — only the current controller. Clears a filled slot at any time before execution and emits `ActionCancelled`. A later `executePending` reverts `NoPendingAction`. The next propose starts a new 24 hour delay.
 
-While a rotation is waiting, the old checkpoint can still anchor. After execution only the new checkpoint can. `checkpointVersion` changes when the rotation executes.
+While a rotation is waiting, the old checkpoint can still anchor. That anchor emits `Anchored` and `AnchoredDuringRotation`. `rotation()` is the public view of that wait: pending, the current key, the pending key, both versions, and eta. A controller change does not set `rotation().pending`. After execution only the new checkpoint can anchor. `checkpointVersion` changes when the rotation executes. Execution also stores `keyRetired(oldVersion) = (true, latestEpoch)`. An anchor that names the old version at a later epoch is not trusted. An anchor at that epoch was written before the rotation and stays trusted. `executePending` emits `CheckpointKeyRetired` and then `CheckpointKeyRotated`. It still does not write `heads`. While `frozen` is true, kind 1 and kind 2 revert `FrozenAction` and the slot stays. Kind 3 (unfreeze) still executes. A queued rotation has to be cancelled before an unfreeze can be proposed, because there is one pending slot.
+
+## Freeze
+
+`freeze()` — the controller, with no delay. The checkpoint signer cannot call it. A third party cannot. Authorization is `_mayFreeze`. That function refuses the checkpoint key. An attestor role, if one is added later, belongs in `_mayFreeze` and must not be the checkpoint key. There is no attestor in this deployment, and `_mayFreeze` does not unfreeze.
+
+`freeze` sets `frozen`, stores `frozenEpoch = latestEpoch`, and emits `Frozen(epoch, size, hourStart, timestamp)`. A second freeze reverts `AlreadyFrozen`. Freeze does not use the pending slot, so it lands while a rotation is waiting. `anchor` then reverts `AnchorFrozen`.
+
+`proposeUnfreeze()` — kind 3, controller only, and only while frozen. The pending slot must be empty (`ActionPending` otherwise). `eta` is `block.timestamp + ROTATION_DELAY`. There is no `unfreeze()`. `executePending` of kind 3 clears `frozen` and emits `Unfrozen(epoch, timestamp)`. Before eta, `executePending` reverts `TooEarly` and `anchor` still reverts.
 
 ## Events
 
@@ -120,6 +131,27 @@ Byte layout is pinned in `vectors/anchored-topic0.json`.
 - no indexed fields
 - data: `abi.encode(oldController, newController)`
 
+`CheckpointKeyRetired(uint64 version, address key, uint64 cutoffEpoch)`
+
+- no indexed fields
+- data: `abi.encode(version, key, cutoffEpoch)`
+- `version` is the version that stopped. `cutoffEpoch` is `latestEpoch` at execution.
+
+`AnchoredDuringRotation(uint64 indexed epoch, address currentKey, uint64 currentVersion, address pendingKey, uint64 pendingVersion, uint64 eta)`
+
+- topic1: epoch
+- data: `abi.encode(currentKey, currentVersion, pendingKey, pendingVersion, eta)`
+
+`Frozen(uint64 epoch, uint64 size, uint64 hourStart, uint64 timestamp)`
+
+- no indexed fields
+- data: `abi.encode(epoch, size, hourStart, timestamp)`
+
+`Unfrozen(uint64 epoch, uint64 timestamp)`
+
+- no indexed fields
+- data: `abi.encode(epoch, timestamp)`
+
 ## Head
 
 ```
@@ -144,10 +176,17 @@ Head { uint40 hourStart; uint64 size; uint32 checkpointVersion; uint64 anchorBlo
 - `headsFor(uint64 e) → (Head current, Head prior, uint64 latestEpoch)` prior is the zero head when `e == 0`
 - `heads(uint64 e) → Head` the mapping getter
 - `pendingAction() → (uint8 kind, address addr, uint64 version, uint64 eta)`
+- `MAX_GROWTH() → uint64` (immutable, constructor argument)
+- `DEFAULT_MAX_GROWTH() → uint64` (constant 1000000)
+- `MAX_TREE_SIZE() → uint64` (constant 2^53 − 1)
+- `frozen() → bool`
+- `frozenEpoch() → uint64`
+- `rotation() → (bool pending, address current, address next, uint64 currentVersion, uint64 nextVersion, uint64 eta)`
+- `keyRetired(uint64 version) → (bool retired, uint64 cutoffEpoch)`
 
 ## Errors
 
-`NotCheckpoint()`, `BadDomain()`, `BadEpoch()`, `BadHour()`, `HourNotIncreasing()`, `HourNotFinished()`, `SizeNotIncreasing()`, `BadConsistency()`, `ZeroCheckpoint()`, `SameCheckpoint()`, `BadVersion()`, `NotController()`, `ActionPending()`, `NoPendingAction()`, `TooEarly()`, `RotationToController()`, `ControllerIsCheckpoint()`.
+`NotCheckpoint()`, `BadDomain()`, `BadEpoch()`, `BadHour()`, `HourNotIncreasing()`, `HourNotFinished()`, `SizeNotIncreasing()`, `BadConsistency()`, `ZeroCheckpoint()`, `SameCheckpoint()`, `BadVersion()`, `NotController()`, `ActionPending()`, `NoPendingAction()`, `TooEarly()`, `RotationToController()`, `ControllerIsCheckpoint()`, `SizeAboveCap()`, `GrowthCap()`, `AnchorFrozen()`, `AlreadyFrozen()`, `NotFrozen()`, `ZeroGrowth()`, `GrowthBound()`, `FrozenAction()`.
 
 ## Consistency
 

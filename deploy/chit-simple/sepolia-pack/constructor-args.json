@@ -3,7 +3,7 @@
   "network": "base-sepolia",
   "contract": "ChitAnchor",
   "constructor": {
-    "signature": "constructor(address checkpoint, address controller)",
+    "signature": "constructor(address checkpoint, address controller, uint64 maxGrowth)",
     "args": [
       {
         "name": "checkpoint",
@@ -16,6 +16,12 @@
         "type": "address",
         "example": "0x4444444444444444444444444444444444444444",
         "note": "Example address used only for the code-hash preview. The deployed controller is a Safe proxy: SafeL2 1.4.1 singleton, threshold 2, three owners. The owner creates that Safe outside this repo."
+      },
+      {
+        "name": "maxGrowth",
+        "type": "uint64",
+        "example": "1000000",
+        "note": "ChitAnchor.DEFAULT_MAX_GROWTH. Most new leaves one anchor may append. The runtime code hash depends on this value. Tiers today are 128 lines an hour and are moving toward 256. One million is about four thousand 256-line hours."
       }
     ]
   }

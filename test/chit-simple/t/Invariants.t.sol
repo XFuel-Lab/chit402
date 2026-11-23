@@ -15,7 +15,7 @@ contract ChitAnchorInvariantTest is Test {
     function setUp() public {
         vm.chainId(84532);
         address cp = address(0xC0FFEE);
-        anchor = new ChitAnchor(cp, address(0xC0117011));
+        anchor = new ChitAnchor(cp, address(0xC0117011), uint64(1_000_000));
         harness = new Rfc9162Harness();
         handler = new Handler(anchor);
         vm.deal(address(handler), 1 ether);
@@ -249,6 +249,35 @@ contract Handler {
         uint64 version = anchor.checkpointVersion() + 1;
         vm.prank(who);
         try anchor.proposeRotation(next, version) {} catch {}
+    }
+
+    /// @dev The controller can halt anchors. A later seal reverts until unfreeze.
+    function freezeAnchor() external {
+        vm.prank(anchor.controller());
+        try anchor.freeze() {} catch {}
+    }
+
+    /// @dev Kind 3 only. A pending key change is cancelled first so the one
+    ///      slot can hold the unfreeze, then the timelock is waited out.
+    function unfreezeAnchor() external {
+        address who = anchor.controller();
+        (uint8 kind,,,) = anchor.pendingAction();
+        if (kind != 0 && kind != 3) {
+            vm.prank(who);
+            try anchor.cancelPending() {} catch {}
+        }
+        if (!anchor.frozen()) return;
+        (uint8 nowKind,,,) = anchor.pendingAction();
+        if (nowKind == 0) {
+            vm.prank(who);
+            try anchor.proposeUnfreeze() {} catch {
+                return;
+            }
+        }
+        (,,, uint64 eta) = anchor.pendingAction();
+        if (block.timestamp < eta) vm.warp(eta);
+        vm.prank(who);
+        try anchor.executePending() {} catch {}
     }
 
     function pay() external {
