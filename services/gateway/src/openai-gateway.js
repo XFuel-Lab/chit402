@@ -2468,6 +2468,37 @@ function priceForCatalogModel(m) {
   return publishedPrice(m.id, rateForModel(m));
 }
 
+const V13_HOOK_CODES = new Set([
+  'v13_boot_refused',
+  'v13_flag_invalid',
+  'settle_unconfirmed',
+  'verify_failed',
+  'settle_pending',
+  'gateway_not_configured',
+]);
+
+/**
+ * Retryable JSON after a paid buildReceipt throw.
+ * Does not call buildReceipt again and does not open a hold.
+ */
+export function v13PaidHookFailure(err, payment) {
+  const raw = err?.code;
+  const code = V13_HOOK_CODES.has(raw) ? raw : 'verify_failed';
+  const pendingId = typeof err?.pending_id === 'string' && err.pending_id ? err.pending_id : null;
+  const body = {
+    error: { code, type: 'server_error' },
+    code,
+    retryable: true,
+  };
+  if (payment?.ref) body.payment_ref = payment.ref;
+  if (pendingId) {
+    body.pending_id = pendingId;
+    body.verify_url = err.verify_url || null;
+  }
+  const status = pendingId ? 202 : 503;
+  return { status, body };
+}
+
 export function registerOpenAIRoutes(app, {
   rateLimit, authenticate, isAuthorised, ledger = null, registry = null,
   sessionStore = null, bookPolicy = null, spendHolds = null,
@@ -2521,6 +2552,27 @@ export function registerOpenAIRoutes(app, {
     }
     return recorded;
   };
+
+  // A hook throw after payment. respondPaidV1Failure calls buildReceipt again.
+  async function paidReceipt(req, res, metering, settleRecord, task, build) {
+    try {
+      return await bookSpend(req, settleRecord, task, build);
+    } catch (err) {
+      const failure = v13PaidHookFailure(err, metering?.payment || null);
+      res.status(failure.status).json(failure.body);
+      return null;
+    }
+  }
+
+  async function plainReceipt(res, build) {
+    try {
+      return await build();
+    } catch (err) {
+      const failure = v13PaidHookFailure(err, null);
+      res.status(failure.status).json(failure.body);
+      return null;
+    }
+  }
 
   // ── GET /v1/models ───────────────────────────────────────────────────────
   app.get('/v1/models', async (req, res) => {
@@ -3025,13 +3077,14 @@ export function registerOpenAIRoutes(app, {
     }
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = await bookSpend(req, settleRecord, task, async () => await buildReceipt({
+    const receipt = await paidReceipt(req, res, metering, settleRecord, task, async () => await buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
     }));
+    if (!receipt) return undefined;
 
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
@@ -3494,13 +3547,14 @@ export function registerOpenAIRoutes(app, {
     await startTaskProof(task, proveAllowed);
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = await bookSpend(req, settleRecord, task, async () => await buildReceipt({
+    const receipt = await paidReceipt(req, res, metering, settleRecord, task, async () => await buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
     }));
+    if (!receipt) return undefined;
 
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
@@ -3561,7 +3615,7 @@ export function registerOpenAIRoutes(app, {
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = await buildReceipt({
+    const receipt = await plainReceipt(res, async () => await buildReceipt({
       task,
       taskId,
       provider: inference.provider,
@@ -3573,7 +3627,8 @@ export function registerOpenAIRoutes(app, {
       requestedModel: model,
       resolvedModel: inference.resolvedModel,
       reqHost,
-    });
+    }));
+    if (!receipt) return undefined;
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/images/generations'));
 
     const count = Math.min(Math.max(Number(n) || 1, 1), 4);
@@ -3627,7 +3682,7 @@ export function registerOpenAIRoutes(app, {
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = await buildReceipt({
+    const receipt = await plainReceipt(res, async () => await buildReceipt({
       task,
       taskId,
       provider: inference.provider,
@@ -3639,7 +3694,8 @@ export function registerOpenAIRoutes(app, {
       requestedModel: model || 'theta/whisper',
       resolvedModel: inference.resolvedModel,
       reqHost,
-    });
+    }));
+    if (!receipt) return undefined;
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/audio/transcriptions'));
     return res.json({
       text: inference.text || '',
