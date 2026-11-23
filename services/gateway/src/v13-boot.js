@@ -399,7 +399,7 @@ function assertStoredHouseSalt(dir, bookId) {
   if (!row || !saltHexOk(row.bookSalt)) throw bootRefused('store_book');
 }
 
-function openDurableStore(dir, deps) {
+function openDurableStore(dir, env, deps) {
   const state = path.join(dir, 'store-state.json');
   let st;
   try {
@@ -408,8 +408,12 @@ function openDurableStore(dir, deps) {
     return null;
   }
   if (!st.isFile()) return null;
+  const house = readHouseBook(env, deps);
+  assertStoredHouseSalt(dir, house.id);
   const open = typeof deps.openStore === 'function' ? deps.openStore : openStore;
-  return open(dir);
+  const book = { id: house.id, token: house.token, bookPk: house.bookPk };
+  if (Array.isArray(house.wallets)) book.wallets = house.wallets;
+  return open(dir, { books: [book] });
 }
 
 async function guardListen(env, deps) {
@@ -419,8 +423,9 @@ async function guardListen(env, deps) {
   let store = null;
   if (storeDir) {
     try {
-      store = openDurableStore(storeDir, deps);
-    } catch {
+      store = openDurableStore(storeDir, env, deps);
+    } catch (err) {
+      if (err?.code === 'v13_boot_refused') throw err;
       throw bootRefused();
     }
   }
