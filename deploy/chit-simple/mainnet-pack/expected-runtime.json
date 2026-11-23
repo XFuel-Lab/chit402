@@ -1,0 +1,17 @@
+{
+  "solc": "0.8.24",
+  "viaIR": true,
+  "optimizerRuns": 200,
+  "evmVersion": "cancun",
+  "bytecodeHash": "none",
+  "cborMetadata": false,
+  "note": "Runtime bytecode embeds the domain immutable and MAX_GROWTH, so the hash depends on chain id, the deployed address, and the growth cap. This file is the chain 8453 preview for the live deployer at nonce 0. It does not replace deploy/chit-simple/sepolia-pack/expected-runtime.json.",
+  "chainId": 8453,
+  "deployer": "0x2d051Fd6f21B521b846cFaF35c1A69E76De907a3",
+  "nonce": 0,
+  "checkpoint": "0x7a8D6426e1057535A5442Ba526eC9f317a9d9026",
+  "controller": "0x1860E5fe0637eff7e09Ed2a1198450019b2038f0",
+  "contract": "0xC16010f028A00A3addb37609c38D010ec1dF93b1",
+  "runtimeCodeHash": "0xbaad531853ab89c65eeddee489d0290f41a623f785ded9855e80aefee9fb087f",
+  "domain": "0x20f93e4243618b814c019ba52bbe3412019a48a22a9a21180ac5155af06ca3cd"
+}

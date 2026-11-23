@@ -1,0 +1,10 @@
+{
+  "chainId": 8453,
+  "address": "0xc16010f028a00a3addb37609c38d010ec1df93b1",
+  "codeHash": "0xbaad531853ab89c65eeddee489d0290f41a623f785ded9855e80aefee9fb087f",
+  "predecessor": "0x0000000000000000000000000000000000000000",
+  "checkpoint": "0x7a8d6426e1057535a5442ba526ec9f317a9d9026",
+  "genesisHourStart": 1700006400,
+  "retireHourStart": null,
+  "checkpointVersions": [1]
+}

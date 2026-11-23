@@ -24,6 +24,7 @@ import { getWebhookRegistry, WebhookDispatcher, WEBHOOK_EVENTS } from './webhook
 import { resolveRail, runX402Handshake, priceUSDCResolved, quoteResolved, resolvePricingModel, extractPaymentHeader, extractPaymentNonce, withStampAttempt } from './x402-server.js';
 import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter, stampFailureBody, decisionHoldResult, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
+import { assertV13Boot } from './v13-flags.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { holdPageForReceiptId, holdPagePayload, terminalStampHold } from './hold-handle.js';
@@ -6171,6 +6172,12 @@ export async function startServer() {
     assertX402Boot(config.x402);
   } catch (err) {
     logger.error({ err: err.message }, 'x402 boot refused');
+    throw err;
+  }
+  try {
+    assertV13Boot(process.env);
+  } catch (err) {
+    logger.error({ code: 'v13_boot_refused' }, 'v13 boot refused');
     throw err;
   }
   if (config.x402?.enabled) {

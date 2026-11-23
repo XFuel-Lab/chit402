@@ -1,0 +1,180 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": [
+      "node",
+      "--test",
+      "services/gateway/test/v13-wiring.test.mjs"
+    ]
+  },
+  "mutants": [
+    {
+      "id": "DW1",
+      "file": "services/gateway/src/v13-flags.js",
+      "find": "export function issuanceEnabled(env) {\n  return readClosedFlag(env, V13_ISSUANCE_FLAG) === true;\n}",
+      "replace": "export function issuanceEnabled(env) {\n  void env;\n  return true;\n}",
+      "note": "unset issuance flag treated as on"
+    },
+    {
+      "id": "DW2",
+      "file": "services/gateway/src/v13-flags.js",
+      "find": "export function mainnetSealerEnabled(env) {\n  return readClosedFlag(env, V13_SEALER_FLAG) === true;\n}",
+      "replace": "export function mainnetSealerEnabled(env) {\n  void env;\n  return true;\n}",
+      "note": "unset sealer flag treated as on"
+    },
+    {
+      "id": "DW3",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "if (issuanceEnabled(env) !== true) {",
+      "replace": "if (false) {",
+      "note": "flags off still takes the v13 path"
+    },
+    {
+      "id": "DW4",
+      "file": "services/chit-sealer/anchor-mainnet.js",
+      "find": "if (!sameBytes(lowered, raw)) throw coded('checkpoint sign invalid', 'checkpoint_sign_invalid');",
+      "replace": "if (false) throw coded('checkpoint sign invalid', 'checkpoint_sign_invalid');",
+      "note": "high-S accepted"
+    },
+    {
+      "id": "DW5",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "      let yParity;\n      try {\n        yParity = yParityByTrial(message, raw, material.publicKey, CURVE);\n      } catch {\n        throw invalid();\n      }",
+      "replace": "      const yParity = 0;",
+      "note": "y-parity trial skipped"
+    },
+    {
+      "id": "DW6",
+      "file": "services/chit-sealer/anchor-mainnet.js",
+      "find": "  if (recovered !== normHex(MAINNET_CHECKPOINT)) {\n    throw coded('checkpoint address does not match', 'checkpoint_address_mismatch');\n  }",
+      "replace": "  if (false) {\n    throw coded('checkpoint address does not match', 'checkpoint_address_mismatch');\n  }",
+      "note": "broadcast when recovery is not the checkpoint"
+    },
+    {
+      "id": "DW7",
+      "file": "services/chit-sealer/anchor-mainnet.js",
+      "find": "  if (derived !== normHex(MAINNET_CHECKPOINT)) {\n    throw coded('checkpoint address does not match', 'checkpoint_address_mismatch');\n  }",
+      "replace": "  if (false) {\n    throw coded('checkpoint address does not match', 'checkpoint_address_mismatch');\n  }",
+      "note": "sign when GetPublicKey is not the checkpoint"
+    },
+    {
+      "id": "DW8",
+      "file": "services/chit-sealer/mainnet-pin.js",
+      "find": "if (Number(pin.chainId) !== 8453) throw pinError();",
+      "replace": "if (Number(pin.chainId) !== 8453 && Number(pin.chainId) !== 84532) throw pinError();",
+      "note": "chain 84532 accepted as the mainnet pin"
+    },
+    {
+      "id": "DW9",
+      "file": "services/chit-sealer/mainnet-pin.js",
+      "find": "if (normHex(pin.address) !== normHex(MAINNET_ANCHOR)) throw pinError();",
+      "replace": "if (false) throw pinError();",
+      "note": "a different anchor address is accepted"
+    },
+    {
+      "id": "DW10",
+      "file": "services/chit-sealer/mainnet-pin.js",
+      "find": "if (normHex(pin.codeHash) !== normHex(MAINNET_CODE_HASH)) throw pinError();",
+      "replace": "if (!normHex(pin.codeHash).startsWith(normHex(MAINNET_CODE_HASH).slice(0, 10))) throw pinError();",
+      "note": "code hash compared by prefix"
+    },
+    {
+      "id": "DW11",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "return blockNumber <= finalizedNumber;",
+      "replace": "return blockNumber < finalizedNumber;",
+      "note": "the finalized block itself is treated as not final"
+    },
+    {
+      "id": "DW12",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "  return authorizationKey({\n    chainId: payment.chainId,\n    token: payment.token,\n    authorizer: payment.authorizer,\n    nonce: payment.nonce,\n  });",
+      "replace": "  return authorizationKey({\n    chainId: payment.chainId,\n    token: payment.token,\n    authorizer: payment.authorizer,\n    nonce: payment.txHash || payment.nonce,\n  });",
+      "note": "idempotency key uses the tx hash"
+    },
+    {
+      "id": "DW13",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "  return authorizationKey({\n    chainId: payment.chainId,\n    token: payment.token,\n    authorizer: payment.authorizer,\n    nonce: payment.nonce,\n  });",
+      "replace": "  return authorizationKey({\n    token: payment.token,\n    authorizer: payment.authorizer,\n    nonce: payment.nonce,\n  });",
+      "note": "chainId dropped from the authorization key"
+    },
+    {
+      "id": "DW14",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "      if (existing) {",
+      "replace": "      if (false && existing) {",
+      "note": "a second settle mints again"
+    },
+    {
+      "id": "DW15",
+      "file": "services/chit-sealer/anchor-mainnet.js",
+      "find": "  if (prior) return { ok: true, resent: false, tx: prior };",
+      "replace": "  if (false) return { ok: true, resent: false, tx: prior };",
+      "note": "identical anchor sends again"
+    },
+    {
+      "id": "DW16",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "        stored = input.store.commitEpoch(record);\n      } catch (err) {\n        note(input, 'store_not_committed');\n        return pendingPaid(key.hex, input.baseUrl, input.caller);\n      }",
+      "replace": "        stored = input.store.commitEpoch(record);\n      } catch (err) {\n        stored = { ok: true };\n      }",
+      "note": "commit throw ignored and a receipt is returned"
+    },
+    {
+      "id": "DW17",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "      } catch (err) {\n        note(input, 'store_not_committed');\n        return pendingPaid(key.hex, input.baseUrl, input.caller);\n      }\n      if (!stored || stored.ok !== true) {",
+      "replace": "      } catch (err) {\n        note(input, 'store_not_committed');\n        return { status: 500, body: { error: 'internal' } };\n      }\n      if (!stored || stored.ok !== true) {",
+      "note": "store failure returns a bare 500"
+    },
+    {
+      "id": "DW18",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "async function armIfSealer(env, input) {\n  if (mainnetSealerEnabled(env) === true) await armSealer(input);\n}",
+      "replace": "async function armIfSealer(env, input) {\n  void env;\n  await armSealer(input);\n}",
+      "note": "flags off still calls the sealer"
+    },
+    {
+      "id": "DW19",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "  '0xbaad531853ab89c65eeddee489d0290f41a623f785ded9855e80aefee9fb087f',\n",
+      "replace": "",
+      "note": "live hash removed from the post-hardening list"
+    },
+    {
+      "id": "M1",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "if (issuanceEnabled(process.env) && mainnetSealerEnabled(process.env) && storeEnabled(process.env)) {",
+      "replace": "if (true) {",
+      "note": "v1 buildReceipt always takes the v13 hook"
+    },
+    {
+      "id": "S1",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "if (Number(payment.chainId) !== 8453) return closed(400, 'verify_failed');",
+      "replace": "if (false) return closed(400, 'verify_failed');",
+      "note": "chain 84532 is accepted for the mainnet anchor"
+    },
+    {
+      "id": "S2",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "if (normHex(payment.token) !== normHex(MAINNET_USDC).replace(/^0x/, '')) {\n      return closed(400, 'verify_failed');\n    }",
+      "replace": "if (false) {\n      return closed(400, 'verify_failed');\n    }",
+      "note": "a swapped token is still issued"
+    },
+    {
+      "id": "S3",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "addressOf: testAddressOf(input),",
+      "replace": "addressOf: input.addressOf,",
+      "note": "the test address stand-in is forwarded"
+    },
+    {
+      "id": "DW20",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "      bindAuthorization(dir, key.hex, saved);",
+      "replace": "      void saved;",
+      "note": "authorization binding is not written"
+    }
+  ]
+}

@@ -10,6 +10,8 @@ import { settlementProofEnabled } from './settlement-proof-flag.js';
 import {
   buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt, mergeReceiptView, privacyOf,
 } from './receipt.js';
+import { issuanceEnabled, mainnetSealerEnabled, storeEnabled } from './v13-flags.js';
+import { issueHouseReceipt, readV13Runtime } from './v13-issue.js';
 import {
   resolvePrivateSpendContext,
   bodyForPrivacyPricing,
@@ -1676,11 +1678,32 @@ async function chargeServedInference({
  * unsigned presentation fields are added after signing — never a field in
  * `canonicalSignedPayload`.
  */
-async function buildReceipt({
+export async function buildReceipt({
   task, taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason,
   baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
   reqHost = null,
 }) {
+  if (issuanceEnabled(process.env) && mainnetSealerEnabled(process.env) && storeEnabled(process.env)) {
+    const runtime = readV13Runtime() || {};
+    const housePayment = payment?.chainId != null && payment?.nonce ? payment : task?.meta?.housePayment;
+    const issued = await issueHouseReceipt({
+      env: process.env,
+      task,
+      receiptOpts: { baseUrl, reqHost },
+      baseUrl,
+      payment: housePayment,
+      observation: task?.meta?.houseObservation || null,
+      store: runtime.store,
+      dir: runtime.dir,
+      caller: task?.meta?.houseCaller || runtime.caller || null,
+      client: runtime.client,
+      send: runtime.send,
+    });
+    if (issued?.body?.v === 13) return issued.body;
+    const err = new Error('v13 house receipt was not issued');
+    err.code = issued?.body?.code || 'verify_failed';
+    throw err;
+  }
   const requestedForSub = requestedModel
     || task?.meta?.requestedModel
     || task?.intent?.requestedModel
