@@ -18,7 +18,8 @@ import {
 } from './x402-flags.js';
 import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
 import { testSwitchesOn } from './test-switch.js';
-import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusalDetail, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
+import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusalDetail, evmFinality, expectedEvmChainId, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
+import { v13Flags } from './v13-flags.js';
 import { recordReceiptFailure, refusalNetworkName, refusalSubReason } from './receipt-failures.js';
 import { arcAssetAllowed, arcRefused, evmRpcUrlFor, isArcId } from './arc-rail.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
@@ -204,6 +205,74 @@ function signedRecipients(decoded) {
   return found;
 }
 
+function lineHex(value, width) {
+  if (value == null) return null;
+  const raw = String(value).trim().toLowerCase().replace(/^0x/, '');
+  if (raw.length !== width * 2 || !/^[0-9a-f]+$/.test(raw)) return null;
+  return raw;
+}
+
+/**
+ * Payment identity and finality observation for a settled transfer.
+ * Chain, token, authorizer, and nonce come from the EIP-3009 authorization
+ * and the server challenge. Finality is read with evmFinality only when a
+ * v13 flag is on, so a flags-off settle does not open a new RPC.
+ */
+export async function houseSettlementIdentity({
+  paymentHeader,
+  challenge = null,
+  chain = null,
+  txRef = null,
+  cfg = {},
+  env = process.env,
+} = {}) {
+  const decoded = decodePaymentHeader(paymentHeader);
+  const auth = readEvmAuthorization(paymentHeader);
+  const domain = decoded?.payload?.authorization?.domain
+    || decoded?.authorization?.domain
+    || null;
+  const network = challenge?.network || null;
+  const solana = isSolanaNetwork(network);
+  let chainId = null;
+  if (!solana) {
+    if (domain?.chainId != null && String(domain.chainId).trim() !== '') {
+      const n = Number(domain.chainId);
+      chainId = Number.isFinite(n) ? n : null;
+    } else {
+      chainId = expectedEvmChainId(network);
+    }
+  }
+  const token = lineHex(domain?.verifyingContract, 20) || lineHex(chain?.asset, 20);
+  const authorizer = lineHex(auth?.from, 20) || lineHex(chain?.authorizer, 20) || lineHex(chain?.payer, 20);
+  const nonce = lineHex(auth?.nonce, 32);
+  const flags = v13Flags(env);
+  const live = flags.issuance === true || flags.mainnetSealer === true || flags.store === true;
+  let fin = { finalized: false, blockTimestamp: null, blockHash: null };
+  if (live && !solana && chain?.blockNumber != null) {
+    try {
+      const next = await evmFinality(evmRpcUrlFor(network, cfg || {}), chain.blockNumber);
+      if (next && typeof next === 'object') fin = next;
+    } catch {
+      fin = { finalized: false, blockTimestamp: null, blockHash: null };
+    }
+  }
+  const blockTime = Number.isFinite(fin.blockTimestamp) ? fin.blockTimestamp : null;
+  const blockNumber = chain?.blockNumber != null && Number.isFinite(Number(chain.blockNumber))
+    ? Number(chain.blockNumber)
+    : null;
+  const observation = blockNumber == null ? null : {
+    blockNumber,
+    finalizedNumber: fin.finalized === true ? blockNumber : null,
+    blockHash: fin.blockHash || chain?.blockHash || null,
+    blockTime,
+    txIndex: chain?.transactionIndex != null ? Number(chain.transactionIndex) : null,
+    localLogIndex: chain?.logIndex != null ? Number(chain.logIndex) : null,
+    txHash: txRef || chain?.transaction || null,
+    hourStart: blockTime != null ? blockTime - (blockTime % 3600) : null,
+  };
+  return { chainId, token, authorizer, nonce, observation };
+}
+
 function declaredEvmAsset(decoded) {
   if (!decoded || typeof decoded !== 'object') return null;
   const candidates = [
@@ -262,6 +331,11 @@ function settlementReplay(rec, resourceHave) {
       logIndex: settlement.logIndex ?? null,
       slot: settlement.slot ?? null,
     },
+    chainId: settlement.chainId ?? null,
+    nonce: settlement.authNonce ?? null,
+    token: settlement.token ?? null,
+    authorizer: settlement.authorizer ?? null,
+    observation: settlement.observation || null,
   };
 }
 
@@ -1099,6 +1173,13 @@ export async function settleBoundPayment({
     return held;
   }
 
+  const house = await houseSettlementIdentity({
+    paymentHeader,
+    challenge,
+    chain,
+    txRef: norm.key,
+    cfg,
+  });
   active.markSpent(nonce, {
     txRef: norm.key,
     amount: chain.amount,
@@ -1110,6 +1191,11 @@ export async function settleBoundPayment({
     blockNumber: chain.blockNumber || null,
     logIndex: chain.logIndex ?? null,
     slot: chain.slot ?? null,
+    chainId: house.chainId,
+    authNonce: house.nonce,
+    token: house.token,
+    authorizer: house.authorizer,
+    observation: house.observation,
   });
   active.markTxSpent(norm.key, {
     amount: String(chain.amount),
@@ -1181,6 +1267,11 @@ export async function settleBoundPayment({
       logIndex: chain.logIndex ?? null,
       slot: chain.slot ?? null,
     },
+    chainId: house.chainId,
+    nonce: house.nonce,
+    token: house.token,
+    authorizer: house.authorizer,
+    observation: house.observation,
   };
   }
   }

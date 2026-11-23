@@ -654,18 +654,7 @@ async function meterV1Request(req, res, {
     if (decision.kind === 'settled') {
       return {
         halted: false,
-        payment: {
-          ref: decision.paymentRef,
-          amount: decision.settledAmount,
-          quotedAmount: decision.quotedAmount ?? null,
-          settledAmount: decision.settledAmount,
-          payer: decision.payerWallet,
-          payTo: decision.payTo,
-          asset: decision.asset,
-          issuance_commitment: decision.issuance_commitment || null,
-          dispute_window: decision.dispute_window || null,
-          idempotentReplay: decision.idempotentReplay === true,
-        },
+        payment: meteringPaymentFromDecision(decision),
         hold: activeHold,
       };
     }
@@ -1678,30 +1667,91 @@ async function chargeServedInference({
  * unsigned presentation fields are added after signing — never a field in
  * `canonicalSignedPayload`.
  */
+function lineHex(value, width) {
+  if (value == null) return null;
+  const raw = String(value).trim().toLowerCase().replace(/^0x/, '');
+  if (raw.length !== width * 2 || !/^[0-9a-f]+$/.test(raw)) return null;
+  return raw;
+}
+
+/** Settle-path payment. Client task.meta is not a source for these fields. */
+export function meteringPaymentFromDecision(decision) {
+  return {
+    ref: decision?.paymentRef,
+    amount: decision?.settledAmount,
+    quotedAmount: decision?.quotedAmount ?? null,
+    settledAmount: decision?.settledAmount,
+    payer: decision?.payerWallet,
+    payTo: decision?.payTo,
+    asset: decision?.asset,
+    issuance_commitment: decision?.issuance_commitment || null,
+    dispute_window: decision?.dispute_window || null,
+    idempotentReplay: decision?.idempotentReplay === true,
+    chainId: decision.chainId ?? null,
+    nonce: decision.nonce ?? null,
+    token: decision.token ?? null,
+    authorizer: decision.authorizer ?? null,
+    observation: decision.observation || null,
+  };
+}
+
+function settleHousePayment(payment) {
+  if (!payment || typeof payment !== 'object') return null;
+  return {
+    chainId: payment.chainId,
+    token: lineHex(payment.token, 20),
+    authorizer: lineHex(payment.authorizer, 20),
+    nonce: lineHex(payment.nonce, 32),
+    from: lineHex(payment.from, 20),
+    to: lineHex(payment.to, 20),
+    value: payment.value,
+    method: payment.method,
+    saltP: lineHex(payment.saltP, 32),
+  };
+}
+
+function settleHouseObservation(payment) {
+  const obs = payment?.observation;
+  if (!obs || typeof obs !== 'object') return null;
+  return {
+    blockNumber: obs.blockNumber,
+    finalizedNumber: obs.finalizedNumber,
+    blockHash: obs.blockHash,
+    blockTime: obs.blockTime,
+    txIndex: obs.txIndex,
+    localLogIndex: obs.localLogIndex,
+    txHash: obs.txHash,
+    hourStart: obs.hourStart,
+  };
+}
+
 export async function buildReceipt({
   task, taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason,
   baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
   reqHost = null,
 }) {
   if (issuanceEnabled(process.env) && mainnetSealerEnabled(process.env) && storeEnabled(process.env)) {
-    const runtime = readV13Runtime() || {};
-    const housePayment = payment?.chainId != null && payment?.nonce ? payment : task?.meta?.housePayment;
+    const runtime = readV13Runtime();
     const issued = await issueHouseReceipt({
       env: process.env,
       task,
       receiptOpts: { baseUrl, reqHost },
       baseUrl,
-      payment: housePayment,
-      observation: task?.meta?.houseObservation || null,
-      store: runtime.store,
-      dir: runtime.dir,
-      caller: task?.meta?.houseCaller || runtime.caller || null,
-      client: runtime.client,
-      send: runtime.send,
+      payment: settleHousePayment(payment),
+      observation: settleHouseObservation(payment),
+      store: runtime?.store,
+      dir: runtime?.dir,
+      caller: runtime?.caller || null,
+      client: runtime?.client,
+      send: runtime?.send,
     });
     if (issued?.body?.v === 13) return issued.body;
     const err = new Error('v13 house receipt was not issued');
     err.code = issued?.body?.code || 'verify_failed';
+    if (issued?.body?.pending_id) {
+      err.pending_id = issued.body.pending_id;
+      err.verify_url = issued.body.verify_url;
+    }
     throw err;
   }
   const requestedForSub = requestedModel

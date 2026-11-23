@@ -31,7 +31,7 @@ import {
 import { parsePrivacyProduct, PRIVACY_PRODUCT_ATTEST } from './private-desk-attest.js';
 import { bindingEnforced, noteUnboundUse } from './x402-flags.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
-import { quoteBodyHash, settleBoundPayment } from './x402-settle.js';
+import { houseSettlementIdentity, quoteBodyHash, settleBoundPayment } from './x402-settle.js';
 import { canonicalPaidRoute } from './paid-route.js';
 import { readHeadBlock } from './x402-chain.js';
 import { arcAssetAllowed, arcRefused, evmRpcUrlFor, isArcId } from './arc-rail.js';
@@ -785,6 +785,13 @@ export async function runX402Handshake(req, {
   const txRef = allowUnbound ? (s.txRef || 'unknown') : s.txRef;
   const payerWallet = s.payer || v.payer || payerFromPaymentHeader(paymentHeader) || null;
   const quotedAmount = challenge?.amount != null ? String(challenge.amount) : null;
+  const house = await houseSettlementIdentity({
+    paymentHeader,
+    challenge,
+    chain: null,
+    txRef,
+    cfg,
+  });
   return {
     kind: 'settled',
     paymentRef: `${settledNetwork}:${txRef}`,
@@ -795,5 +802,10 @@ export async function runX402Handshake(req, {
     asset: challenge?.asset || 'USDC',
     issuance_commitment,
     dispute_window,
+    chainId: house.chainId,
+    nonce: house.nonce,
+    token: house.token,
+    authorizer: house.authorizer,
+    observation: house.observation,
   };
 }

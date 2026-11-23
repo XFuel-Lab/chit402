@@ -282,6 +282,11 @@ async function issueV13(input) {
     if (normHex(payment.token) !== normHex(MAINNET_USDC).replace(/^0x/, '')) {
       return closed(400, 'verify_failed');
     }
+    if (!issuanceRuntimeReady(input)) {
+      const err = new Error('v13 boot refused');
+      err.code = 'v13_boot_refused';
+      throw err;
+    }
     paid = true;
     const dir = input.dir;
     if (!dir) return pendingPaid(key.hex, input.baseUrl, input.caller);
@@ -390,6 +395,15 @@ export function readHouse(input) {
 export function pendingOpen(id) {
   const row = pendings.get(id);
   return !!(row && row.open === true);
+}
+
+function issuanceRuntimeReady(input) {
+  if (!input || typeof input !== 'object') return false;
+  if (!input.store || typeof input.store.commitEpoch !== 'function') return false;
+  if (typeof input.dir !== 'string' || input.dir === '') return false;
+  if (!input.client || typeof input.client.send !== 'function') return false;
+  if (typeof input.send !== 'function') return false;
+  return true;
 }
 
 function testAddressOf(input) {

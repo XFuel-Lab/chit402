@@ -759,6 +759,7 @@ test('M1 buildReceipt returns the v13 document when the flags are on', async () 
       dir: box.dir,
       client: mockKms(),
       send: async () => '0xabc',
+      caller: box.caller,
     });
     return buildV1Receipt({
       task: {
@@ -766,14 +767,18 @@ test('M1 buildReceipt returns the v13 document when the flags are on', async () 
         status: 'completed',
         createdAt: '2026-09-26T17:27:32Z',
         updatedAt: '2026-09-26T17:27:32Z',
-        meta: { houseObservation: observation(), houseCaller: box.caller },
+        meta: {
+          housePayment: payment({ nonce: 'ff'.repeat(32), chainId: 1 }),
+          houseObservation: observation({ blockHash: 'ee'.repeat(32) }),
+          houseCaller: box.other,
+        },
       },
+      payment: { ...payment({ nonce: '0a'.repeat(32) }), observation: observation() },
       taskId: 'chit-v13-hook',
       provider: 'example-hub',
       mock: true,
       proverConfigured: false,
       baseUrl: 'http://127.0.0.1:9',
-      payment: payment({ nonce: '0a'.repeat(32) }),
     });
   });
   assert.equal(receipt.v, 13);
