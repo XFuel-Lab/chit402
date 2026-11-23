@@ -7,6 +7,7 @@ import {Tree} from "./Tree.sol";
 
 contract ChitAnchorTest is Test {
     uint256 internal constant HOUR = 3600;
+    uint64 internal constant TREE_CAP = (uint64(1) << 53) - 1;
     address internal constant EXAMPLE_DEPLOYER = 0x1111111111111111111111111111111111111111;
     address internal constant EXAMPLE_CHECKPOINT = 0x2222222222222222222222222222222222222222;
     address internal constant EXAMPLE_CONTROLLER = 0x4444444444444444444444444444444444444444;
@@ -263,19 +264,18 @@ contract ChitAnchorTest is Test {
 
     function test_size_above_js_safe_integer_cap() public {
         uint64 above = uint64(1) << 53;
-        assertEq(uint256(above), 9007199254740992, "2^53");
-        ChitAnchor wide = new ChitAnchor(cp, ctrl, type(uint64).max);
+        assertEq(uint256(above), 9007199254740991 + 1, "2^53");
+        uint64 maxGrowth = TREE_CAP - 1;
+        ChitAnchor wide = new ChitAnchor(cp, ctrl, maxGrowth);
         bytes32 wideDom = wide.domain();
         vm.warp(HOUR + HOUR);
         vm.prank(cp);
         vm.expectRevert(ChitAnchor.SizeAboveCap.selector);
         wide.anchor(wideDom, 1, uint64(HOUR), above, bytes32(uint256(1)), bytes32(uint256(2)), new bytes32[](0));
-        uint64 cap = above - 1;
         vm.prank(cp);
-        wide.anchor(wideDom, 1, uint64(HOUR), cap, bytes32(uint256(1)), bytes32(uint256(2)), new bytes32[](0));
+        wide.anchor(wideDom, 1, uint64(HOUR), maxGrowth, bytes32(uint256(1)), bytes32(uint256(2)), new bytes32[](0));
         (,, uint64 size,,) = wide.latest();
-        assertEq(size, cap, "2^53-1");
-        assertEq(uint256(cap), 9007199254740991, "max safe");
+        assertEq(size, maxGrowth, "largest genesis step");
     }
 
     function test_size_uint64_max_reverts() public {
@@ -577,7 +577,7 @@ contract ChitAnchorTest is Test {
 
     function _allowedHex(bytes memory b, uint256 start) private pure returns (bool) {
         bytes32 word = _parseHex(b, start);
-        return word == hex"768497c45851c7547015a5bfd3384126b0d8bb4e737465bc3a3411cbbe0ceac9"
+        return word == hex"6006ad8cd474ca5093ce41d2cc0f99e4c6a036563712ecf301ab6d37f02091ed"
             || word == hex"bc37f50aefd1f20e30781db115c88ea4bb3263e504eb6e61653fb9e4f1b7b75e"
             || word == hex"95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3"
             || word == hex"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -1177,6 +1177,16 @@ contract ChitAnchorTest is Test {
         new ChitAnchor(cp, ctrl, 0);
     }
 
+    function test_constructor_rejects_growth_at_or_above_the_tree_cap() public {
+        vm.expectRevert(ChitAnchor.GrowthBound.selector);
+        new ChitAnchor(cp, ctrl, TREE_CAP);
+        vm.expectRevert(ChitAnchor.GrowthBound.selector);
+        new ChitAnchor(cp, ctrl, type(uint64).max);
+        ChitAnchor wide = new ChitAnchor(cp, ctrl, TREE_CAP - 1);
+        assertEq(wide.MAX_GROWTH(), TREE_CAP - 1, "largest cap");
+        assertEq(wide.MAX_TREE_SIZE(), TREE_CAP, "tree cap");
+    }
+
     function test_growth_over_the_cap_reverts_and_at_cap_passes() public {
         ChitAnchor small = new ChitAnchor(cp, ctrl, 2);
         bytes32 domS = small.domain();
@@ -1232,6 +1242,22 @@ contract ChitAnchorTest is Test {
         assertEq(size, 2, "cap did not scale");
     }
 
+    function test_freeze_twice_reverts_already_frozen() public {
+        _seal(1, bytes32(uint256(1)));
+        vm.recordLogs();
+        vm.prank(ctrl);
+        a.freeze();
+        uint64 epoch = a.frozenEpoch();
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.AlreadyFrozen.selector);
+        a.freeze();
+        assertTrue(a.frozen(), "stays frozen");
+        assertEq(a.frozenEpoch(), epoch, "epoch unchanged");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        assertEq(logs.length, 1, "one Frozen event");
+        assertEq(logs[0].topics[0], keccak256("Frozen(uint64,uint64,uint64,uint64)"), "topic");
+    }
+
     function test_freeze_by_the_controller_is_immediate() public {
         _seal(1, bytes32(uint256(1)));
         uint256 t = block.timestamp;
@@ -1280,6 +1306,49 @@ contract ChitAnchorTest is Test {
         assertTrue(a.frozen(), "frozen while rotation waits");
         (uint8 kind,,,) = a.pendingAction();
         assertEq(uint256(kind), 1, "rotation still pending");
+    }
+
+    /// @dev Kind 1 and kind 2 cannot execute while frozen. The slot is kept,
+    ///      so the controller can cancel and then unfreeze. Kind 3 still runs.
+    function test_frozen_blocks_pending_key_changes() public {
+        vm.prank(ctrl);
+        a.proposeRotation(address(0xBEEF), 2);
+        (,,, uint64 eta) = a.pendingAction();
+        vm.prank(ctrl);
+        a.freeze();
+        vm.warp(eta);
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.FrozenAction.selector);
+        a.executePending();
+        assertTrue(a.frozen(), "frozen after blocked rotation");
+        assertEq(a.checkpoint(), cp, "checkpoint unchanged");
+        (uint8 kind, address addr,,) = a.pendingAction();
+        assertEq(uint256(kind), 1, "rotation still pending");
+        assertEq(addr, address(0xBEEF), "pending key");
+        vm.prank(ctrl);
+        a.cancelPending();
+
+        vm.prank(ctrl);
+        a.proposeControllerChange(address(0xD00D));
+        (,,, eta) = a.pendingAction();
+        vm.warp(eta);
+        vm.prank(ctrl);
+        vm.expectRevert(ChitAnchor.FrozenAction.selector);
+        a.executePending();
+        assertTrue(a.frozen(), "frozen after blocked controller change");
+        assertEq(a.controller(), ctrl, "controller unchanged");
+        vm.prank(ctrl);
+        a.cancelPending();
+
+        uint256 t = block.timestamp;
+        vm.prank(ctrl);
+        a.proposeUnfreeze();
+        (,,, eta) = a.pendingAction();
+        assertEq(uint256(eta), t + 86400, "unfreeze waits");
+        vm.warp(eta);
+        vm.prank(ctrl);
+        a.executePending();
+        assertFalse(a.frozen(), "kind 3 clears the freeze");
     }
 
     function test_unfreeze_only_through_the_timelock() public {
@@ -1385,6 +1454,33 @@ contract ChitAnchorTest is Test {
         assertFalse(done.pending, "rotation finished");
         assertEq(done.current, next, "current key");
         assertEq(done.currentVersion, 2, "current version");
+    }
+
+    /// @dev A real one-node consistency proof from 2^52 to 2^52+1.
+    ///      2^52 is the largest power of two under MAX_TREE_SIZE. The first
+    ///      anchor is genesis (empty proof). The second is not.
+    function test_consistency_proof_near_the_tree_cap() public {
+        uint64 m = uint64(1) << 52;
+        assertTrue(m < TREE_CAP, "under the cap");
+        ChitAnchor wide = new ChitAnchor(cp, ctrl, TREE_CAP - 1);
+        bytes32 wideDom = wide.domain();
+        bytes32 oldRoot = bytes32(uint256(0x1111));
+        bytes32 node = bytes32(uint256(0x2222));
+        bytes32 newRoot = sha256(abi.encodePacked(bytes1(0x01), oldRoot, node));
+        vm.warp(HOUR + HOUR);
+        vm.prank(cp);
+        wide.anchor(wideDom, 1, uint64(HOUR), m, oldRoot, bytes32(uint256(1)), new bytes32[](0));
+        bytes32[] memory proof = new bytes32[](1);
+        proof[0] = node;
+        vm.warp(3 * HOUR);
+        vm.prank(cp);
+        wide.anchor(wideDom, 2, uint64(2 * HOUR), m + 1, newRoot, bytes32(uint256(2)), proof);
+        (uint64 epoch,, uint64 size, bytes32 root,) = wide.latest();
+        assertEq(epoch, 2, "epoch");
+        assertEq(size, m + 1, "size");
+        assertEq(root, newRoot, "root");
+        assertEq(wide.headAt(1).size, m, "prior size");
+        assertEq(wide.headAt(1).root, oldRoot, "prior root");
     }
 
     function test_gas_propose() public {

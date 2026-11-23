@@ -23,6 +23,8 @@ import {
   CORPUS_FLIP_LIST,
   MAX_TREE_SIZE,
   UNAUDITED_NOTE,
+  POST_HARDENING_RUNTIME_HASHES,
+  PRE_HARDENING_RUNTIME_HASHES,
   parseV13Receipt,
   runV13,
   topicUint,
@@ -1144,6 +1146,7 @@ function sceneHandler(s) {
       if (s.retiredDown && data === '0x2eb38ae0') return { error: 'down' };
       if (data === '0x2eb38ae0' && s.retired) return `0x${word(1)}`;
       if (s.freezeDown && data === '0x054f7d9c') return { error: 'down' };
+      if (s.freezeWord != null && data === '0x054f7d9c') return `0x${word(s.freezeWord)}`;
       if (s.frozen && data === '0x054f7d9c') return `0x${word(1)}`;
       if (data === '0x585db72a') {
         if (s.freezeEpochDown) return { error: 'down' };
@@ -1151,6 +1154,7 @@ function sceneHandler(s) {
       }
       if (typeof data === 'string' && data.startsWith('0x4979046b')) {
         if (s.cutoffDown) return { error: 'down' };
+        if (s.cutoffLive) return `0x${word(0)}${word(0)}`;
         if (s.cutoff != null) return `0x${word(1)}${word(s.cutoff)}`;
       }
       return { error: 'execution reverted' };
@@ -3348,6 +3352,11 @@ test('a freeze or key-cutoff read that fails is exit 2', () => {
   assert.equal(missingEpoch.reason, 'anchor_state_unreadable');
 });
 
+const POST_RUNTIME = readFileSync(new URL('./fixtures/post-hardening-runtime.hex', import.meta.url), 'utf8').trim();
+const PRE_RUNTIME = readFileSync(new URL('./fixtures/pre-hardening-runtime.hex', import.meta.url), 'utf8').trim();
+const POST_HASH = POST_HARDENING_RUNTIME_HASHES[0];
+const PRE_HASH = PRE_HARDENING_RUNTIME_HASHES[0];
+
 test('the chain reader honors a freeze and a retired key, and a failed read is exit 2', async () => {
   const key = makeKey();
   const built = signedLine();
@@ -3372,4 +3381,94 @@ test('the chain reader honors a freeze and a retired key, and a failed read is e
   const cutoffDown = await runScene({ ...scene, cutoffDown: true }, receipt, opts);
   assert.equal(cutoffDown.v.exit_code, 2);
   assert.equal(cutoffDown.v.reason, 'anchor_state_unreadable');
+});
+
+test('a post-hardening runtime that reverts frozen() or keyRetired() is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key, [pinOf({ codeHash: POST_HASH })]);
+  const receipt = v13Receipt(built);
+  const opts = (u) => optionsFor(key, doc, u);
+  const scene = { payment: built.payment, logs: [okLog(built)], code: POST_RUNTIME };
+  // AH20: frozen() reverts, keyRetired decodes. Must not fail open.
+  const frozenReverts = await runScene({ ...scene, cutoffLive: true }, receipt, opts);
+  assert.equal(frozenReverts.v.exit_code, 2);
+  assert.equal(frozenReverts.v.reason, 'anchor_state_unreadable');
+  // AH21: frozen() decodes as not frozen, keyRetired() reverts.
+  const cutoffReverts = await runScene({ ...scene, freezeWord: 0 }, receipt, opts);
+  assert.equal(cutoffReverts.v.exit_code, 2);
+  assert.equal(cutoffReverts.v.reason, 'anchor_state_unreadable');
+  // Both revert. A second kill for each mutant.
+  const both = await runScene(scene, receipt, opts);
+  assert.equal(both.v.exit_code, 2);
+  assert.equal(both.v.reason, 'anchor_state_unreadable');
+  // A decoded not-frozen post-hardening image still verifies.
+  const open = await runScene({ ...scene, freezeWord: 0, cutoffLive: true }, receipt, opts);
+  assert.equal(open.v.exit_code, 0, open.v.reason);
+  // Garbage freeze word is a failed decode, same as a revert.
+  const garbage = await runScene({ ...scene, freezeWord: 2, cutoffLive: true }, receipt, opts);
+  assert.equal(garbage.v.exit_code, 2);
+  assert.equal(garbage.v.reason, 'anchor_state_unreadable');
+});
+
+test('an allowlisted pre-hardening runtime keeps its exit code when the new getters revert', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key, [pinOf({ codeHash: PRE_HASH })]);
+  const seen = await runScene(
+    { payment: built.payment, logs: [okLog(built)], code: PRE_RUNTIME },
+    v13Receipt(built),
+    (u) => optionsFor(key, doc, u),
+  );
+  assert.equal(seen.v.exit_code, 0, seen.v.reason);
+});
+
+test('an unknown runtime hash fails the pin, and the code hash is checked before a freeze', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const unknown = runV13(v13Receipt(built), haltWorld(built, doc, {
+    codeHash: `0x${'ab'.repeat(32)}`,
+    frozen: 'unreadable',
+  }), haltHooks);
+  assert.equal(unknown.exit, 2);
+  assert.equal(unknown.reason, 'code_hash_mismatch');
+  const frozenFirst = runV13(v13Receipt(built), haltWorld(built, doc, {
+    codeHash: `0x${'cd'.repeat(32)}`,
+    frozen: 'yes',
+    frozenEpoch: 0,
+  }), haltHooks);
+  assert.equal(frozenFirst.exit, 2);
+  assert.equal(frozenFirst.reason, 'code_hash_mismatch');
+});
+
+test('a pinned post-hardening hash with a missing freeze or cutoff read is exit 2', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key, [pinOf({ codeHash: POST_HASH })]);
+  const missingFreeze = runV13(v13Receipt(built), haltWorld(built, doc, {
+    codeHash: POST_HASH,
+    keyCutoff: { retired: false, epoch: 0 },
+  }), haltHooks);
+  assert.equal(missingFreeze.exit, 2);
+  assert.equal(missingFreeze.reason, 'anchor_state_unreadable');
+  const missingCutoff = runV13(v13Receipt(built), haltWorld(built, doc, {
+    codeHash: POST_HASH,
+    frozen: 'no',
+  }), haltHooks);
+  assert.equal(missingCutoff.exit, 2);
+  assert.equal(missingCutoff.reason, 'anchor_state_unreadable');
+  const unreadable = runV13(v13Receipt(built), haltWorld(built, doc, {
+    codeHash: POST_HASH,
+    frozen: 'unreadable',
+    keyCutoff: { retired: false, epoch: 0 },
+  }), haltHooks);
+  assert.equal(unreadable.exit, 2);
+  assert.equal(unreadable.reason, 'anchor_state_unreadable');
+  const allowed = runV13(
+    v13Receipt(built),
+    haltWorld(built, bundleFor(key, [pinOf({ codeHash: PRE_HASH })]), { codeHash: PRE_HASH }),
+    haltHooks,
+  );
+  assert.equal(allowed.exit, 0, allowed.reason);
 });

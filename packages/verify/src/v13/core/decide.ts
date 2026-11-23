@@ -9,7 +9,10 @@
  * the checkpoint address in the bundled pin. An on-chain rotation does not
  * add a trusted sender. A retired checkpoint version is. An anchor that names
  * that version after its cutoff epoch is invalid. An anchor after a freeze
- * is invalid. A failed read of either state is could_not_check.
+ * is invalid. A failed read of either state is could_not_check. A revert
+ * of frozen() or keyRetired() is "not frozen" only for an allowlisted
+ * pre-hardening runtime. The post-hardening runtime never fails open.
+ * The code-hash pin is checked before that decision.
  */
 
 export const V13_SCHEMA = 'chit402.cs2.receipt.v1';
@@ -19,6 +22,44 @@ export const UNAUDITED_NOTE = 'anchor contract unaudited';
 
 /** Implementation limit. Not a wire field. */
 export const MAX_TREE_SIZE = Number.MAX_SAFE_INTEGER;
+
+/**
+ * Runtime image of the example post-hardening deploy (chain 84532,
+ * deployer 0x1111… nonce 0, checkpoint 0x2222…, MAX_GROWTH 1000000).
+ * Filled after the bytecode is pinned. A matching hash must decode
+ * frozen() and keyRetired(); a revert is not "not frozen".
+ */
+export const POST_HARDENING_RUNTIME_HASHES: readonly string[] = Object.freeze([
+  '0x6006ad8cd474ca5093ce41d2cc0f99e4c6a036563712ecf301ab6d37f02091ed',
+]);
+
+/**
+ * Runtime images from before freeze() and keyRetired() existed.
+ * A revert of those getters is the pre-hardening contract, not a spoof.
+ * Example preview on 7770a893, same deployer, nonce, and checkpoint.
+ */
+export const PRE_HARDENING_RUNTIME_HASHES: readonly string[] = Object.freeze([
+  '0xb7ad0c729af141a19695bc89d09bd0a04a8d9ab9668373a066cba94f13aee45c',
+]);
+
+export type RuntimeClass = 'post' | 'pre' | 'unknown';
+
+export function runtimeClass(codeHash: string | null | undefined): RuntimeClass {
+  const hash = String(codeHash || '').toLowerCase();
+  if (POST_HARDENING_RUNTIME_HASHES.some((item) => item.toLowerCase() === hash)) return 'post';
+  if (PRE_HARDENING_RUNTIME_HASHES.some((item) => item.toLowerCase() === hash)) return 'pre';
+  return 'unknown';
+}
+
+/** True when a post-hardening runtime returned a decoded freeze and cutoff. */
+export function postHardeningStateDecoded(world: Pick<V13World, 'frozen' | 'frozenEpoch' | 'keyCutoff'>): boolean {
+  if (world.frozen !== 'yes' && world.frozen !== 'no') return false;
+  if (world.frozen === 'yes' && (!isJsonInteger(world.frozenEpoch) || (world.frozenEpoch as number) < 0)) return false;
+  const cut = world.keyCutoff;
+  if (!cut || typeof cut === 'string') return false;
+  if (typeof cut.retired !== 'boolean' || !isJsonInteger(cut.epoch) || cut.epoch < 0) return false;
+  return true;
+}
 
 export const ANCHORED_EVENT = 'Anchored(uint64 indexed epoch, uint64 indexed hourStart, uint64 size, bytes32 root, bytes32 stateRoot, uint8 kind)';
 export const ANCHORED_SIGNATURE = 'Anchored(uint64,uint64,uint64,bytes32,bytes32,uint8)';
@@ -948,15 +989,20 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (world.checkpointVersion == null || !allowedVersions.includes(world.checkpointVersion)) {
     return fail(2, 'checkpoint_version', world, { anchor: 'could_not_check' }, messageOf('checkpoint_version'));
   }
+  // Code hash before freeze or retirement. A spoofed revert must not pass
+  // as "not frozen" and then reach a later pin check.
+  if (!world.codeHash) return fail(2, 'code_unreadable', world, { anchor: 'could_not_check' }, messageOf('code_unreadable'));
+  if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {
+    return fail(2, 'code_hash_mismatch', world, { anchor: 'could_not_check' }, messageOf('code_hash_mismatch'));
+  }
+  if (runtimeClass(world.codeHash) === 'post' && !postHardeningStateDecoded(world)) {
+    return fail(2, 'anchor_state_unreadable', world, { anchor: 'could_not_check' }, messageOf('anchor_state_unreadable'));
+  }
   const halted = anchorHalt(world, parsed.receipt.epoch);
   if (!halted.ok) {
     return fail(halted.exit, halted.reason, world, {
       anchor: halted.exit === 1 ? 'fail' : 'could_not_check',
     }, messageOf(halted.reason));
-  }
-  if (!world.codeHash) return fail(2, 'code_unreadable', world, { anchor: 'could_not_check' }, messageOf('code_unreadable'));
-  if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {
-    return fail(2, 'code_hash_mismatch', world, { anchor: 'could_not_check' }, messageOf('code_hash_mismatch'));
   }
   // A genesisHourStart() revert is v0 (no getter). The pin's bounds stand.
   if (world.chainGenesis != null && world.chainGenesis !== pin.genesisHourStart) {

@@ -35,6 +35,7 @@ import {
   isExactV13Receipt,
   parseV13Receipt,
   runV13,
+  runtimeClass,
   type AnchoredEvent,
   type LineView,
   type PaymentView,
@@ -826,8 +827,15 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
       } else if (retired.status !== 'revert' && retired.status !== 'word') {
         getterReason = retired.status === 'rpc_disagreement' ? 'rpc_disagreement' : 'rpc_unreachable';
       }
-      const freezeWord = await callWord(slots, parsed.receipt.contract, FROZEN_SELECTOR, tag);
-      if (freezeWord.status === 'word') {
+      // Code is already hashed. Freeze and retirement are read only after that.
+      // A post-hardening image that reverts or returns garbage is unreadable.
+      // A pre-hardening image, and only that allowlist, may revert those getters.
+      const image = runtimeClass(codeHash);
+      const strict = image === 'post';
+      const freezeWord = codeHash == null
+        ? null
+        : await callWord(slots, parsed.receipt.contract, FROZEN_SELECTOR, tag);
+      if (freezeWord && freezeWord.status === 'word') {
         if (freezeWord.word === 1n) {
           const epochWord = await callWord(slots, parsed.receipt.contract, FROZEN_EPOCH_SELECTOR, tag);
           if (epochWord.status === 'word' && epochWord.word <= BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -839,10 +847,10 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
         } else if (freezeWord.word !== 0n) {
           frozen = 'unreadable';
         }
-      } else if (freezeWord.status !== 'revert') {
+      } else if (freezeWord && (strict || freezeWord.status !== 'revert')) {
         frozen = 'unreadable';
       }
-      if (checkpointVersion != null) {
+      if (checkpointVersion != null && codeHash != null) {
         const cut = await callWords(
           slots,
           parsed.receipt.contract,
@@ -858,9 +866,11 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
           } else {
             keyCutoff = { retired: flag === 1n, epoch: Number(epoch) };
           }
-        } else if (cut.status !== 'revert') {
+        } else if (strict || cut.status !== 'revert') {
           keyCutoff = 'unreadable';
         }
+      } else if (strict) {
+        keyCutoff = 'unreadable';
       }
     }
     const pinPredecessor = predecessorOf(payload, line.chainId, parsed.receipt.contract);

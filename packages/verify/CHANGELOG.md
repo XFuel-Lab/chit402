@@ -13,7 +13,7 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 
 ### Changed: ChitAnchor freeze and retired-key cutoff
 - An anchor whose epoch is after `frozenEpoch`, while `frozen()` is true, is `anchor_frozen` (exit 1). An anchor that names a checkpoint version retired at an earlier epoch is `key_retired` (exit 1). An anchor at the freeze epoch or at the cutoff epoch still passes.
-- A failed read of `frozen()`, `frozenEpoch()`, or `keyRetired(uint64)` is `anchor_state_unreadable` (exit 2). A revert of those getters is a deployment from before this contract: not frozen, and no version retired. Exit codes 0, 1, and 2 are unchanged for that deployment. No snapshot was re-signed.
+- A failed read of `frozen()`, `frozenEpoch()`, or `keyRetired(uint64)` is `anchor_state_unreadable` (exit 2). The code-hash pin is checked first. A revert is "not frozen" only for an allowlisted pre-hardening runtime. The post-hardening runtime never fails open. No snapshot was re-signed.
 
 ### Fixed: one key window for receipts, tree heads, and epochs
 - A kid's history rows fold into one window on the receipt path, the tree-head path, and the epoch path: latest `not_before`, earliest `not_after`, earliest `revoked_at`, and revocation sticks. A later row cannot widen that window. `not_before` and `not_after` stay inclusive. `revoked_at` stays exclusive.

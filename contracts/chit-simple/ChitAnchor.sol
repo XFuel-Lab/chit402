@@ -105,6 +105,8 @@ contract ChitAnchor {
     error AlreadyFrozen();
     error NotFrozen();
     error ZeroGrowth();
+    error GrowthBound();
+    error FrozenAction();
 
     event Anchored(
         uint64 indexed epoch,
@@ -139,6 +141,10 @@ contract ChitAnchor {
         if (controller_ == address(0)) revert ZeroCheckpoint();
         if (controller_ == checkpoint_) revert SameCheckpoint();
         if (maxGrowth_ == 0) revert ZeroGrowth();
+        // A step of MAX_TREE_SIZE or more can still land on the ceiling in one
+        // anchor (from size 0, or from a small head). The ceiling then rejects
+        // every later increase.
+        if (maxGrowth_ >= MAX_TREE_SIZE) revert GrowthBound();
         checkpoint = checkpoint_;
         controller = controller_;
         MAX_GROWTH = maxGrowth_;
@@ -324,6 +330,10 @@ contract ChitAnchor {
         uint64 eta = pendingAction.eta;
         if (kind == 0) revert NoPendingAction();
         if (block.timestamp < eta) revert TooEarly();
+        // A freeze halts key changes. Kind 1 and kind 2 stay in the slot until
+        // the controller cancels them. Kind 3 is the unfreeze and must run,
+        // or the halt cannot be lifted.
+        if (frozen && kind != 3) revert FrozenAction();
         delete pendingAction;
         if (kind == 1) {
             address old = checkpoint;

@@ -16,7 +16,7 @@ Illustrative check (not a deployment): contract `0x33333333333333333333333333333
 
 `constructor(address checkpoint, address controller, uint64 maxGrowth)`
 
-Reverts `ZeroCheckpoint` if either address is zero. Reverts `SameCheckpoint` if they are equal. Reverts `ZeroGrowth` if `maxGrowth` is 0. Stores `maxGrowth` as the immutable `MAX_GROWTH`. The deploy default is `DEFAULT_MAX_GROWTH` = 1,000,000. Stores the checkpoint at version 1, stores the controller, and emits `CheckpointKeyRotated(1, address(0), checkpoint)`. Writes `heads[0]` once: hourStart 0, size 0, checkpointVersion 1, anchorBlock = the deploy block, anchorTime = the deploy timestamp, root = SHA-256("") (`0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), stateRoot 0. `latestEpoch` starts at 0. The pending slot is empty (`kind = 0`). `frozen` starts false.
+Reverts `ZeroCheckpoint` if either address is zero. Reverts `SameCheckpoint` if they are equal. Reverts `ZeroGrowth` if `maxGrowth` is 0. Reverts `GrowthBound` if `maxGrowth >= MAX_TREE_SIZE` (2^53 − 1). The largest cap is `MAX_TREE_SIZE - 1`. Stores `maxGrowth` as the immutable `MAX_GROWTH`. The deploy default is `DEFAULT_MAX_GROWTH` = 1,000,000. Stores the checkpoint at version 1, stores the controller, and emits `CheckpointKeyRotated(1, address(0), checkpoint)`. Writes `heads[0]` once: hourStart 0, size 0, checkpointVersion 1, anchorBlock = the deploy block, anchorTime = the deploy timestamp, root = SHA-256("") (`0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`), stateRoot 0. `latestEpoch` starts at 0. The pending slot is empty (`kind = 0`). `frozen` starts false.
 
 `ROTATION_DELAY` is `24 hours` (86400 seconds). `MAX_TREE_SIZE` is 2^53 − 1.
 
@@ -84,7 +84,7 @@ Stores kind 2, version 0, and the same `eta`. Emits `ActionProposed`.
 
 `cancelPending()` — only the current controller. Clears a filled slot at any time before execution and emits `ActionCancelled`. A later `executePending` reverts `NoPendingAction`. The next propose starts a new 24 hour delay.
 
-While a rotation is waiting, the old checkpoint can still anchor. That anchor emits `Anchored` and `AnchoredDuringRotation`. `rotation()` is the public view of that wait: pending, the current key, the pending key, both versions, and eta. A controller change does not set `rotation().pending`. After execution only the new checkpoint can anchor. `checkpointVersion` changes when the rotation executes. Execution also stores `keyRetired(oldVersion) = (true, latestEpoch)`. An anchor that names the old version at a later epoch is not trusted. An anchor at that epoch was written before the rotation and stays trusted. `executePending` emits `CheckpointKeyRetired` and then `CheckpointKeyRotated`. It still does not write `heads`.
+While a rotation is waiting, the old checkpoint can still anchor. That anchor emits `Anchored` and `AnchoredDuringRotation`. `rotation()` is the public view of that wait: pending, the current key, the pending key, both versions, and eta. A controller change does not set `rotation().pending`. After execution only the new checkpoint can anchor. `checkpointVersion` changes when the rotation executes. Execution also stores `keyRetired(oldVersion) = (true, latestEpoch)`. An anchor that names the old version at a later epoch is not trusted. An anchor at that epoch was written before the rotation and stays trusted. `executePending` emits `CheckpointKeyRetired` and then `CheckpointKeyRotated`. It still does not write `heads`. While `frozen` is true, kind 1 and kind 2 revert `FrozenAction` and the slot stays. Kind 3 (unfreeze) still executes. A queued rotation has to be cancelled before an unfreeze can be proposed, because there is one pending slot.
 
 ## Freeze
 
@@ -186,7 +186,7 @@ Head { uint40 hourStart; uint64 size; uint32 checkpointVersion; uint64 anchorBlo
 
 ## Errors
 
-`NotCheckpoint()`, `BadDomain()`, `BadEpoch()`, `BadHour()`, `HourNotIncreasing()`, `HourNotFinished()`, `SizeNotIncreasing()`, `BadConsistency()`, `ZeroCheckpoint()`, `SameCheckpoint()`, `BadVersion()`, `NotController()`, `ActionPending()`, `NoPendingAction()`, `TooEarly()`, `RotationToController()`, `ControllerIsCheckpoint()`, `SizeAboveCap()`, `GrowthCap()`, `AnchorFrozen()`, `AlreadyFrozen()`, `NotFrozen()`, `ZeroGrowth()`.
+`NotCheckpoint()`, `BadDomain()`, `BadEpoch()`, `BadHour()`, `HourNotIncreasing()`, `HourNotFinished()`, `SizeNotIncreasing()`, `BadConsistency()`, `ZeroCheckpoint()`, `SameCheckpoint()`, `BadVersion()`, `NotController()`, `ActionPending()`, `NoPendingAction()`, `TooEarly()`, `RotationToController()`, `ControllerIsCheckpoint()`, `SizeAboveCap()`, `GrowthCap()`, `AnchorFrozen()`, `AlreadyFrozen()`, `NotFrozen()`, `ZeroGrowth()`, `GrowthBound()`, `FrozenAction()`.
 
 ## Consistency
 
