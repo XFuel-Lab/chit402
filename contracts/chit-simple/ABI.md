@@ -88,7 +88,7 @@ While a rotation is waiting, the old checkpoint can still anchor. That anchor em
 
 ## Freeze
 
-`freeze()` — the controller, with no delay. The checkpoint signer cannot call it. A stranger cannot. Authorization is `_mayFreeze`. That function refuses the checkpoint key. An attestor role, if one is added later, belongs in `_mayFreeze` and must not be the checkpoint key. There is no attestor in this deployment, and `_mayFreeze` does not unfreeze.
+`freeze()` — the controller, with no delay. The checkpoint signer cannot call it. A third party cannot. Authorization is `_mayFreeze`. That function refuses the checkpoint key. An attestor role, if one is added later, belongs in `_mayFreeze` and must not be the checkpoint key. There is no attestor in this deployment, and `_mayFreeze` does not unfreeze.
 
 `freeze` sets `frozen`, stores `frozenEpoch = latestEpoch`, and emits `Frozen(epoch, size, hourStart, timestamp)`. A second freeze reverts `AlreadyFrozen`. Freeze does not use the pending slot, so it lands while a rotation is waiting. `anchor` then reverts `AnchorFrozen`.
 

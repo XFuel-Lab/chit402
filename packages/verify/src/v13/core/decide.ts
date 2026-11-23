@@ -7,12 +7,13 @@
  *
  * A v0 checkpoint-key rotation is not a trust event. The anchor sender is
  * the checkpoint address in the bundled pin. An on-chain rotation does not
- * add a trusted sender. A retired checkpoint version is. An anchor that names
- * that version after its cutoff epoch is invalid. An anchor after a freeze
- * is invalid. A failed read of either state is could_not_check. A revert
- * of frozen() or keyRetired() is "not frozen" only for an allowlisted
- * pre-hardening runtime. The post-hardening runtime never fails open.
- * The code-hash pin is checked before that decision.
+ * add a trusted sender. A retired checkpoint version is untrusted after
+ * its cutoff epoch. An anchor that names that version after the cutoff is
+ * invalid. An anchor after a freeze is invalid. A failed read of either
+ * state is could_not_check. A revert of frozen() or keyRetired() is "not
+ * frozen" only for an allowlisted pre-hardening runtime. Every other
+ * runtime, including one whose hash matches the pin but is not on that
+ * list, fails closed. The code-hash pin is checked before that decision.
  */
 
 export const V13_SCHEMA = 'chit402.cs2.receipt.v1';
@@ -51,8 +52,8 @@ export function runtimeClass(codeHash: string | null | undefined): RuntimeClass 
   return 'unknown';
 }
 
-/** True when a post-hardening runtime returned a decoded freeze and cutoff. */
-export function postHardeningStateDecoded(world: Pick<V13World, 'frozen' | 'frozenEpoch' | 'keyCutoff'>): boolean {
+/** True when frozen() and keyRetired() both returned a decoded value. */
+export function anchorStateDecoded(world: Pick<V13World, 'frozen' | 'frozenEpoch' | 'keyCutoff'>): boolean {
   if (world.frozen !== 'yes' && world.frozen !== 'no') return false;
   if (world.frozen === 'yes' && (!isJsonInteger(world.frozenEpoch) || (world.frozenEpoch as number) < 0)) return false;
   const cut = world.keyCutoff;
@@ -995,7 +996,7 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {
     return fail(2, 'code_hash_mismatch', world, { anchor: 'could_not_check' }, messageOf('code_hash_mismatch'));
   }
-  if (runtimeClass(world.codeHash) === 'post' && !postHardeningStateDecoded(world)) {
+  if (runtimeClass(world.codeHash) !== 'pre' && !anchorStateDecoded(world)) {
     return fail(2, 'anchor_state_unreadable', world, { anchor: 'could_not_check' }, messageOf('anchor_state_unreadable'));
   }
   const halted = anchorHalt(world, parsed.receipt.epoch);

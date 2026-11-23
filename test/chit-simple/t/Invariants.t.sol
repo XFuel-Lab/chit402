@@ -251,6 +251,35 @@ contract Handler {
         try anchor.proposeRotation(next, version) {} catch {}
     }
 
+    /// @dev The controller can halt anchors. A later seal reverts until unfreeze.
+    function freezeAnchor() external {
+        vm.prank(anchor.controller());
+        try anchor.freeze() {} catch {}
+    }
+
+    /// @dev Kind 3 only. A pending key change is cancelled first so the one
+    ///      slot can hold the unfreeze, then the timelock is waited out.
+    function unfreezeAnchor() external {
+        address who = anchor.controller();
+        (uint8 kind,,,) = anchor.pendingAction();
+        if (kind != 0 && kind != 3) {
+            vm.prank(who);
+            try anchor.cancelPending() {} catch {}
+        }
+        if (!anchor.frozen()) return;
+        (uint8 nowKind,,,) = anchor.pendingAction();
+        if (nowKind == 0) {
+            vm.prank(who);
+            try anchor.proposeUnfreeze() {} catch {
+                return;
+            }
+        }
+        (,,, uint64 eta) = anchor.pendingAction();
+        if (block.timestamp < eta) vm.warp(eta);
+        vm.prank(who);
+        try anchor.executePending() {} catch {}
+    }
+
     function pay() external {
         if (address(this).balance == 0) return;
         (bool ok,) = address(anchor).call{value: 1}("");

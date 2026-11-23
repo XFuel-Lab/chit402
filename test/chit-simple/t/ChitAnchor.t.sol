@@ -263,19 +263,48 @@ contract ChitAnchorTest is Test {
     }
 
     function test_size_above_js_safe_integer_cap() public {
-        uint64 above = uint64(1) << 53;
-        assertEq(uint256(above), 9007199254740991 + 1, "2^53");
-        uint64 maxGrowth = TREE_CAP - 1;
-        ChitAnchor wide = new ChitAnchor(cp, ctrl, maxGrowth);
+        uint64 cap = TREE_CAP;
+        uint64 above = cap + 1;
+        assertEq(uint256(above), 9007199254740992, "2^53");
+        assertEq(uint256(cap), 9007199254740991, "2^53-1");
+        ChitAnchor wide = new ChitAnchor(cp, ctrl, cap - 1);
         bytes32 wideDom = wide.domain();
+        bytes32 oldRoot = bytes32(uint256(0x1111));
         vm.warp(HOUR + HOUR);
         vm.prank(cp);
-        vm.expectRevert(ChitAnchor.SizeAboveCap.selector);
-        wide.anchor(wideDom, 1, uint64(HOUR), above, bytes32(uint256(1)), bytes32(uint256(2)), new bytes32[](0));
+        wide.anchor(wideDom, 1, uint64(HOUR), 1, oldRoot, bytes32(uint256(1)), new bytes32[](0));
+        (bytes32[] memory proof, bytes32 newRoot) = _proofFromOneToCap(oldRoot);
+        vm.warp(3 * HOUR);
         vm.prank(cp);
-        wide.anchor(wideDom, 1, uint64(HOUR), maxGrowth, bytes32(uint256(1)), bytes32(uint256(2)), new bytes32[](0));
+        wide.anchor(wideDom, 2, uint64(2 * HOUR), cap, newRoot, bytes32(uint256(2)), proof);
         (,, uint64 size,,) = wide.latest();
-        assertEq(size, maxGrowth, "largest genesis step");
+        assertEq(size, cap, "2^53-1 stored");
+        vm.warp(4 * HOUR);
+        vm.prank(cp);
+        vm.expectRevert(ChitAnchor.SizeAboveCap.selector);
+        wide.anchor(wideDom, 3, uint64(3 * HOUR), above, bytes32(uint256(9)), bytes32(uint256(3)), new bytes32[](0));
+        (,, uint64 still,,) = wide.latest();
+        assertEq(still, cap, "2^53 did not land");
+    }
+
+    /// @dev Consistency from size 1 to 2^53-1. Size 1 is a power of two, so the
+    ///      old root is prepended and is not part of the returned proof. fn
+    ///      stays 0, so each proof node only extends the new root.
+    function _proofFromOneToCap(bytes32 oldRoot) internal pure returns (bytes32[] memory proof, bytes32 newRoot) {
+        bytes32[] memory buf = new bytes32[](64);
+        uint64 sn = (uint64(1) << 53) - 2;
+        bytes32 sr = oldRoot;
+        uint256 n = 0;
+        while (sn != 0) {
+            bytes32 node = bytes32(uint256(n + 1));
+            buf[n] = node;
+            sr = sha256(abi.encodePacked(bytes1(0x01), sr, node));
+            sn >>= 1;
+            n++;
+        }
+        proof = new bytes32[](n);
+        for (uint256 i = 0; i < n; i++) proof[i] = buf[i];
+        newRoot = sr;
     }
 
     function test_size_uint64_max_reverts() public {
@@ -1274,7 +1303,7 @@ contract ChitAnchorTest is Test {
         assertEq(uint256(kind), 0, "no timelock slot");
     }
 
-    function test_freeze_by_the_signer_or_a_stranger_reverts() public {
+    function test_freeze_by_the_signer_or_a_third_party_reverts() public {
         vm.prank(cp);
         vm.expectRevert(ChitAnchor.NotController.selector);
         a.freeze();

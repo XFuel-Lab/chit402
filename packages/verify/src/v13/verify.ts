@@ -828,27 +828,16 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
         getterReason = retired.status === 'rpc_disagreement' ? 'rpc_disagreement' : 'rpc_unreachable';
       }
       // Code is already hashed. Freeze and retirement are read only after that.
-      // A post-hardening image that reverts or returns garbage is unreadable.
-      // A pre-hardening image, and only that allowlist, may revert those getters.
-      const image = runtimeClass(codeHash);
-      const strict = image === 'post';
-      const freezeWord = codeHash == null
-        ? null
-        : await callWord(slots, parsed.receipt.contract, FROZEN_SELECTOR, tag);
-      if (freezeWord && freezeWord.status === 'word') {
-        if (freezeWord.word === 1n) {
-          const epochWord = await callWord(slots, parsed.receipt.contract, FROZEN_EPOCH_SELECTOR, tag);
-          if (epochWord.status === 'word' && epochWord.word <= BigInt(Number.MAX_SAFE_INTEGER)) {
-            frozen = 'yes';
-            frozenEpoch = Number(epochWord.word);
-          } else {
-            frozen = 'unreadable';
-          }
-        } else if (freezeWord.word !== 0n) {
-          frozen = 'unreadable';
-        }
-      } else if (freezeWord && (strict || freezeWord.status !== 'revert')) {
-        frozen = 'unreadable';
+      // The legacy revert fallback is the pre-hardening allowlist only.
+      const legacy = runtimeClass(codeHash) === 'pre';
+      if (codeHash != null) {
+        const freezeWord = await callWord(slots, parsed.receipt.contract, FROZEN_SELECTOR, tag);
+        const epochWord = freezeWord.status === 'word' && freezeWord.word === 1n
+          ? await callWord(slots, parsed.receipt.contract, FROZEN_EPOCH_SELECTOR, tag)
+          : null;
+        const read = interpretFreezeRead(legacy, freezeWord, epochWord);
+        frozen = read.frozen;
+        frozenEpoch = read.frozenEpoch;
       }
       if (checkpointVersion != null && codeHash != null) {
         const cut = await callWords(
@@ -858,18 +847,8 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
           tag,
           2,
         );
-        if (cut.status === 'words') {
-          const flag = cut.words[0];
-          const epoch = cut.words[1];
-          if ((flag !== 0n && flag !== 1n) || epoch > BigInt(Number.MAX_SAFE_INTEGER)) {
-            keyCutoff = 'unreadable';
-          } else {
-            keyCutoff = { retired: flag === 1n, epoch: Number(epoch) };
-          }
-        } else if (strict || cut.status !== 'revert') {
-          keyCutoff = 'unreadable';
-        }
-      } else if (strict) {
+        keyCutoff = interpretCutoffRead(legacy, cut);
+      } else if (codeHash != null && !legacy) {
         keyCutoff = 'unreadable';
       }
     }
@@ -1041,6 +1020,44 @@ function predecessorOf(payload: Record<string, unknown> | null, chainId: number,
 
 type CallWords = { status: 'words'; words: bigint[] } | { status: 'revert' | 'empty' | 'rpc_disagreement' | 'rpc_unreachable' };
 type CallWord = { status: 'word'; word: bigint } | { status: 'revert' | 'empty' | 'rpc_disagreement' | 'rpc_unreachable' };
+
+/**
+ * Legacy is true only for an allowlisted pre-hardening runtime. Every other
+ * image treats a revert or a bad word as unreadable.
+ */
+export function interpretFreezeRead(
+  legacy: boolean,
+  freezeWord: CallWord,
+  epochWord: CallWord | null,
+): { frozen: 'no' | 'yes' | 'unreadable'; frozenEpoch: number | null } {
+  if (freezeWord.status === 'word') {
+    if (freezeWord.word === 1n) {
+      if (epochWord && epochWord.status === 'word' && epochWord.word <= BigInt(Number.MAX_SAFE_INTEGER)) {
+        return { frozen: 'yes', frozenEpoch: Number(epochWord.word) };
+      }
+      return { frozen: 'unreadable', frozenEpoch: null };
+    }
+    if (freezeWord.word !== 0n) return { frozen: 'unreadable', frozenEpoch: null };
+    return { frozen: 'no', frozenEpoch: null };
+  }
+  if (legacy && freezeWord.status === 'revert') return { frozen: 'no', frozenEpoch: null };
+  return { frozen: 'unreadable', frozenEpoch: null };
+}
+
+/** A pre-hardening revert is "not retired". Any other failure is unreadable. */
+export function interpretCutoffRead(
+  legacy: boolean,
+  cut: CallWords,
+): { retired: boolean; epoch: number } | 'unreadable' | null {
+  if (cut.status === 'words') {
+    const flag = cut.words[0];
+    const epoch = cut.words[1];
+    if ((flag !== 0n && flag !== 1n) || epoch > BigInt(Number.MAX_SAFE_INTEGER)) return 'unreadable';
+    return { retired: flag === 1n, epoch: Number(epoch) };
+  }
+  if (legacy && cut.status === 'revert') return null;
+  return 'unreadable';
+}
 
 function callKind(value: { ok: true; value: unknown } | { ok: false; err: unknown }, words: number): CallWords {
   if (!value.ok) {

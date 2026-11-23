@@ -57,7 +57,7 @@ import {
   revokeByKeyDigest,
 } from '../dist/v13/key-record.js';
 import { V13_RPC_DEFAULTS } from '../dist/v13/rpc-defaults.js';
-import { verifyV13Document } from '../dist/v13/verify.js';
+import { interpretCutoffRead, interpretFreezeRead, verifyV13Document } from '../dist/v13/verify.js';
 
 setDefaultResultOrder('ipv4first');
 
@@ -84,7 +84,12 @@ const CHECKPOINT = `0x${'22'.repeat(20)}`;
 const OTHER = `0x${'33'.repeat(20)}`;
 const ROTATION_TOPIC0 = '0x95d3ad0e28a557ff091289f350472166359808c1308277737cd6cc7cacc4e8b3';
 const USDC = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
-const CODE = '0x6001';
+const PRE_RUNTIME = readFileSync(new URL('./fixtures/pre-hardening-runtime.hex', import.meta.url), 'utf8').trim();
+const POST_RUNTIME = readFileSync(new URL('./fixtures/post-hardening-runtime.hex', import.meta.url), 'utf8').trim();
+const PRE_HASH = PRE_HARDENING_RUNTIME_HASHES[0];
+const POST_HASH = POST_HARDENING_RUNTIME_HASHES[0];
+/** Default scene code. The pre-hardening allowlist is the only revert fallback. */
+const CODE = PRE_RUNTIME;
 
 function hexOf(bytes) {
   return Buffer.from(bytes).toString('hex');
@@ -162,7 +167,7 @@ function pinOf(extra = {}) {
   return {
     chainId: 84532,
     address: CONTRACT,
-    codeHash: `0x${hexOf(keccak256(Buffer.from('6001', 'hex')))}`,
+    codeHash: PRE_HASH,
     predecessor: `0x${'00'.repeat(20)}`,
     checkpoint: CHECKPOINT,
     genesisHourStart: HOUR,
@@ -3352,11 +3357,6 @@ test('a freeze or key-cutoff read that fails is exit 2', () => {
   assert.equal(missingEpoch.reason, 'anchor_state_unreadable');
 });
 
-const POST_RUNTIME = readFileSync(new URL('./fixtures/post-hardening-runtime.hex', import.meta.url), 'utf8').trim();
-const PRE_RUNTIME = readFileSync(new URL('./fixtures/pre-hardening-runtime.hex', import.meta.url), 'utf8').trim();
-const POST_HASH = POST_HARDENING_RUNTIME_HASHES[0];
-const PRE_HASH = PRE_HARDENING_RUNTIME_HASHES[0];
-
 test('the chain reader honors a freeze and a retired key, and a failed read is exit 2', async () => {
   const key = makeKey();
   const built = signedLine();
@@ -3471,4 +3471,34 @@ test('a pinned post-hardening hash with a missing freeze or cutoff read is exit 
     haltHooks,
   );
   assert.equal(allowed.exit, 0, allowed.reason);
+});
+
+test('a pinned hash outside the pre-hardening allowlist fails closed when a getter reverts', async () => {
+  const synthetic = '0x6001';
+  const hash = `0x${hexOf(keccak256(Buffer.from('6001', 'hex')))}`;
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key, [pinOf({ codeHash: hash })]);
+  const receipt = v13Receipt(built);
+  const opts = (u) => optionsFor(key, doc, u);
+  const scene = { payment: built.payment, logs: [okLog(built)], code: synthetic };
+  const frozenReverts = await runScene({ ...scene, cutoffLive: true }, receipt, opts);
+  assert.equal(frozenReverts.v.exit_code, 2);
+  assert.equal(frozenReverts.v.reason, 'anchor_state_unreadable');
+  const cutoffReverts = await runScene({ ...scene, freezeWord: 0 }, receipt, opts);
+  assert.equal(cutoffReverts.v.exit_code, 2);
+  assert.equal(cutoffReverts.v.reason, 'anchor_state_unreadable');
+});
+
+test('interpretFreezeRead and interpretCutoffRead fail closed off the pre-hardening allowlist', () => {
+  const revert = { status: 'revert' };
+  assert.equal(interpretFreezeRead(false, revert, null).frozen, 'unreadable');
+  assert.equal(interpretFreezeRead(true, revert, null).frozen, 'no');
+  assert.equal(interpretCutoffRead(false, revert), 'unreadable');
+  assert.equal(interpretCutoffRead(true, revert), null);
+  assert.deepEqual(interpretCutoffRead(false, { status: 'words', words: [0n, 0n] }), { retired: false, epoch: 0 });
+  assert.equal(interpretFreezeRead(false, { status: 'empty' }, null).frozen, 'unreadable');
+  assert.equal(interpretCutoffRead(false, { status: 'empty' }), 'unreadable');
+  assert.equal(`0x${hexOf(keccak256(Buffer.from(PRE_RUNTIME.slice(2), 'hex')))}`, PRE_HASH);
+  assert.equal(`0x${hexOf(keccak256(Buffer.from(POST_RUNTIME.slice(2), 'hex')))}`, POST_HASH);
 });
