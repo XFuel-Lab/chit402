@@ -308,6 +308,104 @@
       "find": "  const configured = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';\n  if (!configured) return null;\n  return callerForBook(store, configured);",
       "replace": "  const configured = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';\n  if (!configured) {\n    const ids = [];\n    if (store?.books && typeof store.books.keys === 'function') {\n      for (const id of store.books.keys()) ids.push(String(id));\n    }\n    ids.sort();\n    return callerForBook(store, ids[0]);\n  }\n  return callerForBook(store, configured);",
       "note": "B16 — a missing house book id falls back to the smallest book id"
+    },
+    {
+      "id": "HT1",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  return open(dir, { books: [book] });",
+      "replace": "  return open(dir);",
+      "note": "H1 — production open does not pass books from the house file"
+    },
+    {
+      "id": "HT2",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  return { ok: true, wired: false };",
+      "replace": "  readHouseBook(env, deps);\n  return { ok: true, wired: false };",
+      "note": "H2 — the house token file is read when flags are off"
+    },
+    {
+      "id": "HT3",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function houseTokenPath(env) {\n  const raw = env?.CHIT_V13_HOUSE_TOKEN_FILE;\n  if (typeof raw !== 'string' || raw.trim() === '') throw bootRefused('token_file_missing');\n  return raw;\n}",
+      "replace": "function houseTokenPath(env) {\n  const raw = env?.CHIT_V13_HOUSE_TOKEN_FILE;\n  if (typeof raw !== 'string' || raw.trim() === '') return '/tmp';\n  return raw;\n}",
+      "note": "H3 — a missing or unset token-file path is treated as a directory path"
+    },
+    {
+      "id": "HT4",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function openHouseFile(io, file) {\n  let listed;\n  try {\n    listed = io.lstatSync(file);\n  } catch (err) {\n    if (err && err.code === 'ENOENT') throw bootRefused('token_file_missing');\n    throw bootRefused('token_file_not_regular');\n  }\n  if (typeof listed.isSymbolicLink === 'function' && listed.isSymbolicLink()) throw bootRefused('token_file_not_regular');\n  if (typeof listed.isFile !== 'function' || listed.isFile() !== true) throw bootRefused('token_file_not_regular');\n  const nofollow = fs.constants.O_NOFOLLOW;\n  if (typeof nofollow !== 'number') throw bootRefused('token_file_not_regular');\n  try {\n    return io.openSync(file, fs.constants.O_RDONLY | nofollow);\n  } catch {\n    throw bootRefused('token_file_not_regular');\n  }\n}",
+      "replace": "function openHouseFile(io, file) {\n  let listed;\n  try {\n    listed = io.statSync(file);\n  } catch (err) {\n    if (err && err.code === 'ENOENT') throw bootRefused('token_file_missing');\n    throw bootRefused('token_file_not_regular');\n  }\n  if (typeof listed.isFile !== 'function' || listed.isFile() !== true) throw bootRefused('token_file_not_regular');\n  try {\n    return io.openSync(file, fs.constants.O_RDONLY);\n  } catch {\n    throw bootRefused('token_file_not_regular');\n  }\n}",
+      "note": "H4 — stat follows a symlink and O_NOFOLLOW is dropped"
+    },
+    {
+      "id": "HT5",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "    if (st.uid !== process.getuid()) throw bootRefused('token_file_owner');\n",
+      "replace": "",
+      "note": "H5 — the house token file uid check is skipped"
+    },
+    {
+      "id": "HT6",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "    if (!envFileModeOk(st.mode)) throw bootRefused('token_file_mode');\n",
+      "replace": "",
+      "note": "H6 — the house token file mode check is skipped"
+    },
+    {
+      "id": "HT7",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function assertHouseDir(io, file) {\n  const parent = path.dirname(file);\n  let st;\n  try {\n    st = io.lstatSync(parent);\n  } catch {\n    throw bootRefused('token_file_dir');\n  }\n  if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) throw bootRefused('token_file_dir');\n  if (typeof st.isDirectory !== 'function' || st.isDirectory() !== true) throw bootRefused('token_file_dir');\n  if (st.uid !== process.getuid()) throw bootRefused('token_file_dir');\n  if (!dirModeOk(st.mode)) throw bootRefused('token_file_dir');\n}",
+      "replace": "function assertHouseDir(io, file) {\n  void io;\n  void file;\n}",
+      "note": "H7 — the parent directory mode and symlink checks are skipped"
+    },
+    {
+      "id": "HT8",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function houseFileTooBig(size) {\n  if (!Number.isSafeInteger(size) || size < 0 || size > 8192) throw bootRefused('token_file_size');\n}\n\nfunction rejectHouseShape(parsed) {\n  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw bootRefused('token_file_parse');\n  const keys = Object.keys(parsed);\n  for (let i = 0; i < keys.length; i += 1) {\n    const key = keys[i];\n    if (key !== 'v' && key !== 'bookId' && key !== 'token' && key !== 'bookPk' && key !== 'wallets') {\n      throw bootRefused('token_file_parse');\n    }\n  }\n  if (parsed.v !== 1) throw bootRefused('token_file_parse');\n}",
+      "replace": "function houseFileTooBig(size) {\n  void size;\n}\n\nfunction rejectHouseShape(parsed) {\n  void parsed;\n}",
+      "note": "H8 — an oversize file, a bad version, or unknown fields are accepted"
+    },
+    {
+      "id": "HT9",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (envTrim !== '' && (!envNorm || envNorm !== fileNorm)) throw bootRefused('house_book_id');\n",
+      "replace": "  if (false) throw bootRefused('house_book_id');\n",
+      "note": "H9 — the file book id need not match CHIT_V13_HOUSE_BOOK_ID"
+    },
+    {
+      "id": "HT10",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (!houseTokenOk(parsed.token)) throw bootRefused('house_token');\n  if (!housePkOk(parsed.bookPk)) throw bootRefused('house_book_pk');\n",
+      "replace": "",
+      "note": "H10 — an empty or too-short token, or a missing bookPk, is accepted"
+    },
+    {
+      "id": "HT11",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  assertStoredHouseSalt(dir, house.id);\n",
+      "replace": "",
+      "note": "H11 — open proceeds when the store has no salt for that book"
+    },
+    {
+      "id": "HT12",
+      "file": "services/chit-store/store.js",
+      "find": "  for (const [id, book] of store.books) books[id] = { bookSalt: Buffer.from(book.bookSalt).toString('hex') };",
+      "replace": "  for (const [id, book] of store.books) books[id] = { bookSalt: Buffer.from(book.bookSalt).toString('hex'), token: book.token };",
+      "note": "H12 — persist writes the house token into store-state.json"
+    },
+    {
+      "id": "HT13",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function sealedCaller(bookId, token) {\n  const caller = {\n    bookId,\n    token,\n    toJSON() {\n      return { bookId: this.bookId };\n    },\n  };\n  Object.defineProperty(caller, inspect.custom, {\n    enumerable: false,\n    value() {\n      return { bookId: this.bookId };\n    },\n  });\n  return caller;\n}",
+      "replace": "function sealedCaller(bookId, token) {\n  return { bookId, token };\n}",
+      "note": "H13 — inspect and JSON.stringify reveal the house token"
+    },
+    {
+      "id": "HT14",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "      store = openDurableStore(storeDir, env, deps);\n    } catch (err) {\n      if (err?.code === 'v13_boot_refused') throw err;\n      throw bootRefused();\n    }",
+      "replace": "      store = openDurableStore(storeDir, env, deps);\n    } catch {\n      throw bootRefused();\n    }",
+      "note": "H3 — guardListen replaces a v13_boot_refused reason with a bare error"
     }
   ]
 }
