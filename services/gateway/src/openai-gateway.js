@@ -654,18 +654,7 @@ async function meterV1Request(req, res, {
     if (decision.kind === 'settled') {
       return {
         halted: false,
-        payment: {
-          ref: decision.paymentRef,
-          amount: decision.settledAmount,
-          quotedAmount: decision.quotedAmount ?? null,
-          settledAmount: decision.settledAmount,
-          payer: decision.payerWallet,
-          payTo: decision.payTo,
-          asset: decision.asset,
-          issuance_commitment: decision.issuance_commitment || null,
-          dispute_window: decision.dispute_window || null,
-          idempotentReplay: decision.idempotentReplay === true,
-        },
+        payment: meteringPaymentFromDecision(decision),
         hold: activeHold,
       };
     }
@@ -1678,30 +1667,91 @@ async function chargeServedInference({
  * unsigned presentation fields are added after signing — never a field in
  * `canonicalSignedPayload`.
  */
+function lineHex(value, width) {
+  if (value == null) return null;
+  const raw = String(value).trim().toLowerCase().replace(/^0x/, '');
+  if (raw.length !== width * 2 || !/^[0-9a-f]+$/.test(raw)) return null;
+  return raw;
+}
+
+/** Settle-path payment. Client task.meta is not a source for these fields. */
+export function meteringPaymentFromDecision(decision) {
+  return {
+    ref: decision?.paymentRef,
+    amount: decision?.settledAmount,
+    quotedAmount: decision?.quotedAmount ?? null,
+    settledAmount: decision?.settledAmount,
+    payer: decision?.payerWallet,
+    payTo: decision?.payTo,
+    asset: decision?.asset,
+    issuance_commitment: decision?.issuance_commitment || null,
+    dispute_window: decision?.dispute_window || null,
+    idempotentReplay: decision?.idempotentReplay === true,
+    chainId: decision.chainId ?? null,
+    nonce: decision.nonce ?? null,
+    token: decision.token ?? null,
+    authorizer: decision.authorizer ?? null,
+    observation: decision.observation || null,
+  };
+}
+
+function settleHousePayment(payment) {
+  if (!payment || typeof payment !== 'object') return null;
+  return {
+    chainId: payment.chainId,
+    token: lineHex(payment.token, 20),
+    authorizer: lineHex(payment.authorizer, 20),
+    nonce: lineHex(payment.nonce, 32),
+    from: lineHex(payment.from, 20),
+    to: lineHex(payment.to, 20),
+    value: payment.value,
+    method: payment.method,
+    saltP: lineHex(payment.saltP, 32),
+  };
+}
+
+function settleHouseObservation(payment) {
+  const obs = payment?.observation;
+  if (!obs || typeof obs !== 'object') return null;
+  return {
+    blockNumber: obs.blockNumber,
+    finalizedNumber: obs.finalizedNumber,
+    blockHash: obs.blockHash,
+    blockTime: obs.blockTime,
+    txIndex: obs.txIndex,
+    localLogIndex: obs.localLogIndex,
+    txHash: obs.txHash,
+    hourStart: obs.hourStart,
+  };
+}
+
 export async function buildReceipt({
   task, taskId, provider, mock, proverConfigured, proveAllowed = true, mockReason,
   baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
   reqHost = null,
 }) {
   if (issuanceEnabled(process.env) && mainnetSealerEnabled(process.env) && storeEnabled(process.env)) {
-    const runtime = readV13Runtime() || {};
-    const housePayment = payment?.chainId != null && payment?.nonce ? payment : task?.meta?.housePayment;
+    const runtime = readV13Runtime();
     const issued = await issueHouseReceipt({
       env: process.env,
       task,
       receiptOpts: { baseUrl, reqHost },
       baseUrl,
-      payment: housePayment,
-      observation: task?.meta?.houseObservation || null,
-      store: runtime.store,
-      dir: runtime.dir,
-      caller: task?.meta?.houseCaller || runtime.caller || null,
-      client: runtime.client,
-      send: runtime.send,
+      payment: settleHousePayment(payment),
+      observation: settleHouseObservation(payment),
+      store: runtime?.store,
+      dir: runtime?.dir,
+      caller: runtime?.caller || null,
+      client: runtime?.client,
+      send: runtime?.send,
     });
     if (issued?.body?.v === 13) return issued.body;
     const err = new Error('v13 house receipt was not issued');
     err.code = issued?.body?.code || 'verify_failed';
+    if (issued?.body?.pending_id) {
+      err.pending_id = issued.body.pending_id;
+      err.verify_url = issued.body.verify_url;
+    }
     throw err;
   }
   const requestedForSub = requestedModel
@@ -2418,6 +2468,37 @@ function priceForCatalogModel(m) {
   return publishedPrice(m.id, rateForModel(m));
 }
 
+const V13_HOOK_CODES = new Set([
+  'v13_boot_refused',
+  'v13_flag_invalid',
+  'settle_unconfirmed',
+  'verify_failed',
+  'settle_pending',
+  'gateway_not_configured',
+]);
+
+/**
+ * Retryable JSON after a paid buildReceipt throw.
+ * Does not call buildReceipt again and does not open a hold.
+ */
+export function v13PaidHookFailure(err, payment) {
+  const raw = err?.code;
+  const code = V13_HOOK_CODES.has(raw) ? raw : 'verify_failed';
+  const pendingId = typeof err?.pending_id === 'string' && err.pending_id ? err.pending_id : null;
+  const body = {
+    error: { code, type: 'server_error' },
+    code,
+    retryable: true,
+  };
+  if (payment?.ref) body.payment_ref = payment.ref;
+  if (pendingId) {
+    body.pending_id = pendingId;
+    body.verify_url = err.verify_url || null;
+  }
+  const status = pendingId ? 202 : 503;
+  return { status, body };
+}
+
 export function registerOpenAIRoutes(app, {
   rateLimit, authenticate, isAuthorised, ledger = null, registry = null,
   sessionStore = null, bookPolicy = null, spendHolds = null,
@@ -2471,6 +2552,27 @@ export function registerOpenAIRoutes(app, {
     }
     return recorded;
   };
+
+  // A hook throw after payment. respondPaidV1Failure calls buildReceipt again.
+  async function paidReceipt(req, res, metering, settleRecord, task, build) {
+    try {
+      return await bookSpend(req, settleRecord, task, build);
+    } catch (err) {
+      const failure = v13PaidHookFailure(err, metering?.payment || null);
+      res.status(failure.status).json(failure.body);
+      return null;
+    }
+  }
+
+  async function plainReceipt(res, build) {
+    try {
+      return await build();
+    } catch (err) {
+      const failure = v13PaidHookFailure(err, null);
+      res.status(failure.status).json(failure.body);
+      return null;
+    }
+  }
 
   // ── GET /v1/models ───────────────────────────────────────────────────────
   app.get('/v1/models', async (req, res) => {
@@ -2975,13 +3077,14 @@ export function registerOpenAIRoutes(app, {
     }
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = await bookSpend(req, settleRecord, task, async () => await buildReceipt({
+    const receipt = await paidReceipt(req, res, metering, settleRecord, task, async () => await buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
     }));
+    if (!receipt) return undefined;
 
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
@@ -3444,13 +3547,14 @@ export function registerOpenAIRoutes(app, {
     await startTaskProof(task, proveAllowed);
 
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = await bookSpend(req, settleRecord, task, async () => await buildReceipt({
+    const receipt = await paidReceipt(req, res, metering, settleRecord, task, async () => await buildReceipt({
       task, taskId, provider, mock, proverConfigured, proveAllowed,
       mockReason: inference.raw?.reason, baseUrl, privateSpend,
       payment: metering.payment,
       requestedModel: model, resolvedModel: echoModel,
       reqHost,
     }));
+    if (!receipt) return undefined;
 
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
@@ -3511,7 +3615,7 @@ export function registerOpenAIRoutes(app, {
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = await buildReceipt({
+    const receipt = await plainReceipt(res, async () => await buildReceipt({
       task,
       taskId,
       provider: inference.provider,
@@ -3523,7 +3627,8 @@ export function registerOpenAIRoutes(app, {
       requestedModel: model,
       resolvedModel: inference.resolvedModel,
       reqHost,
-    });
+    }));
+    if (!receipt) return undefined;
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/images/generations'));
 
     const count = Math.min(Math.max(Number(n) || 1, 1), 4);
@@ -3577,7 +3682,7 @@ export function registerOpenAIRoutes(app, {
     });
     const baseUrl = baseUrlFromReq(req, config.service.publicBaseUrl, config.service.publicHosts);
     const reqHost = typeof req?.get === 'function' ? req.get('host') : null;
-    const receipt = await buildReceipt({
+    const receipt = await plainReceipt(res, async () => await buildReceipt({
       task,
       taskId,
       provider: inference.provider,
@@ -3589,7 +3694,8 @@ export function registerOpenAIRoutes(app, {
       requestedModel: model || 'theta/whisper',
       resolvedModel: inference.resolvedModel,
       reqHost,
-    });
+    }));
+    if (!receipt) return undefined;
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/audio/transcriptions'));
     return res.json({
       text: inference.text || '',

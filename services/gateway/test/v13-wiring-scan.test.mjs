@@ -33,3 +33,12 @@ for (const file of FILES) {
     assert.equal(src.includes(PATTERNS[3]), false);
   });
 }
+
+test('scan services/gateway/src/v13-boot.js', () => {
+  const src = readFileSync(new URL('../../../services/gateway/src/v13-boot.js', import.meta.url), 'utf8');
+  assert.equal(src.includes(PATTERNS[0]), false);
+  assert.equal(src.includes(PATTERNS[2]), false);
+  assert.equal(src.includes(PATTERNS[3]), false);
+  assert.equal(/\d{12}/.test(src), false);
+  assert.equal(src.includes('@aws-sdk/client-kms'), true);
+});

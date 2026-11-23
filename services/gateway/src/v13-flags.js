@@ -7,6 +7,15 @@
  * in CHIT_CHECKPOINT_KMS_REGION, and nothing else on that key
  * (no ScheduleKeyDeletion, CreateKey, PutKeyPolicy, or Decrypt).
  * This module does not attach that policy and does not read the key id.
+ *
+ * Names only. Values stay on the host:
+ * CHIT_V13_STORE_PATH — durable chit-store directory passed to openStore.
+ * CHIT_V13_BIND_DIR — authorization-binding directory, mode 700 or tighter.
+ * CHIT_V13_ENV_FILE — optional operator env file, mode 600 or tighter when set.
+ * CHIT_V13_HOUSE_BOOK_ID — house book id. The token is the one already on
+ * that book in the opened store. It is not read from the request.
+ * CHIT_CHECKPOINT_MAX_FEE_PER_GAS and CHIT_CHECKPOINT_KMS_TIMEOUT_MS are read
+ * by the checkpoint signer. This module does not read their values.
  */
 
 import { assertLivePin, mainnetPin, normHex, MAINNET_CHECKPOINT } from '../../chit-sealer/mainnet-pin.js';

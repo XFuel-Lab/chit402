@@ -2,7 +2,8 @@
  * Flag-gated v13 house receipts. No production host, no AWS, no mainnet RPC.
  */
 import { createHash, createPublicKey } from 'node:crypto';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import http from 'node:http';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -27,9 +28,11 @@ const {
   paymentIsFinal,
   pendingOpen,
   resetHouseState,
+  readV13Runtime,
   setV13Runtime,
 } = await import('../src/v13-issue.js');
-const { buildReceipt: buildV1Receipt } = await import('../src/openai-gateway.js');
+const { wireV13Runtime } = await import('../src/v13-boot.js');
+const { buildReceipt: buildV1Receipt, meteringPaymentFromDecision, registerOpenAIRoutes } = await import('../src/openai-gateway.js');
 const { checkMainnetPack, createAddress, checkpointDomain } = await import('../../../deploy/chit-simple/mainnet-pack/check-deploy.mjs');
 const {
   POST_HARDENING_RUNTIME_HASHES,
@@ -240,6 +243,7 @@ test('T1 flags false: the same fixture bytes', async () => {
     task: byteTask(),
     receiptOpts: RECEIPT_OPTS,
   });
+  assert.equal(issued.status, 200);
   assert.deepEqual(issued.bytes, FIXTURE);
 });
 
@@ -258,6 +262,7 @@ test('T2 flags unset: no KMS, anchor, or RPC call', async () => {
     send: async () => { counts.send += 1; return '0x1'; },
     rpc: async () => { counts.rpc += 1; },
   });
+  assert.equal(issued.status, 200);
   assert.deepEqual(issued.bytes, FIXTURE);
   assert.deepEqual(counts, { kms: 0, send: 0, rpc: 0 });
 });
@@ -754,26 +759,25 @@ test('M1 buildReceipt returns the v13 document when the flags are on', async () 
   resetAnchorLedger();
   const box = fresh();
   const receipt = await withProcessFlags(true, async () => {
-    setV13Runtime({
-      store: box.store,
-      dir: box.dir,
-      client: mockKms(),
-      send: async () => '0xabc',
-    });
+    await wireOpenedHouse(box);
     return buildV1Receipt({
       task: {
         taskId: 'chit-v13-hook',
         status: 'completed',
         createdAt: '2026-09-26T17:27:32Z',
         updatedAt: '2026-09-26T17:27:32Z',
-        meta: { houseObservation: observation(), houseCaller: box.caller },
+        meta: {
+          housePayment: payment({ nonce: 'ff'.repeat(32), chainId: 1 }),
+          houseObservation: observation({ blockHash: 'ee'.repeat(32) }),
+          houseCaller: box.other,
+        },
       },
+      payment: { ...payment({ nonce: '0a'.repeat(32) }), observation: observation() },
       taskId: 'chit-v13-hook',
       provider: 'example-hub',
       mock: true,
       proverConfigured: false,
       baseUrl: 'http://127.0.0.1:9',
-      payment: payment({ nonce: '0a'.repeat(32) }),
     });
   });
   assert.equal(receipt.v, 13);
@@ -824,4 +828,701 @@ test('mainnet pack accepts chain 8453 and leaves the Sepolia example hash', () =
   const sepolia = JSON.parse(readFileSync(new URL('../../../deploy/chit-simple/sepolia-pack/expected-runtime.json', import.meta.url), 'utf8'));
   assert.equal(sepolia.example.runtimeCodeHash, SEPOLIA_HASH);
   assert.equal(sepolia.example.chainId, 84532);
+});
+
+function assertStartServerWires() {
+  const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const start = src.slice(src.indexOf('export async function startServer'));
+  const bootAt = start.indexOf('assertV13Boot(process.env)');
+  const wireAt = start.indexOf('await wireV13Runtime(process.env)');
+  const listenAt = start.indexOf('app.listen(');
+  assert.ok(bootAt >= 0 && wireAt > bootAt && listenAt > wireAt);
+}
+
+function preparedBoot() {
+  const root = mkdtempSync(join(tmpdir(), 'v13-boot-'));
+  const storeDir = join(root, 'store');
+  const bindDir = join(root, 'bind');
+  mkdirSync(storeDir, { mode: 0o700 });
+  mkdirSync(bindDir, { mode: 0o700 });
+  chmodSync(storeDir, 0o700);
+  chmodSync(bindDir, 0o700);
+  const book = {
+    id: 'aa'.repeat(32),
+    token: 'book-token',
+    bookPk: new Uint8Array(32).fill(7),
+  };
+  const store = openStore(storeDir, { books: [book] });
+  return {
+    root,
+    storeDir,
+    bindDir,
+    store,
+    book,
+    env: {
+      ...flagsOn(),
+      CHIT_V13_STORE_PATH: storeDir,
+      CHIT_V13_BIND_DIR: bindDir,
+      CHIT_V13_HOUSE_BOOK_ID: book.id,
+    },
+  };
+}
+
+function livePin(box, address = MAINNET_CHECKPOINT) {
+  return {
+    ...pinDeps(address),
+    openStore() { return box.store; },
+  };
+}
+
+async function wireOpenedHouse(box) {
+  mkdirSync(box.dir, { recursive: true, mode: 0o700 });
+  chmodSync(box.dir, 0o700);
+  chmodSync(box.store.dir, 0o700);
+  return wireV13Runtime({
+    ...flagsOn(),
+    CHIT_V13_STORE_PATH: box.store.dir,
+    CHIT_V13_BIND_DIR: box.dir,
+    CHIT_V13_HOUSE_BOOK_ID: box.caller.bookId,
+  }, {
+    ...pinDeps(),
+    openStore() { return box.store; },
+  });
+}
+
+function pinDeps(address = MAINNET_CHECKPOINT) {
+  return {
+    testInjection: true,
+    addressOf: () => address,
+    client: mockKms(),
+  };
+}
+
+function oneFlagEnv(name, bindDir) {
+  return {
+    [name]: 'true',
+    CHIT_CHECKPOINT_KMS_KEY_ID: 'alias/test-checkpoint',
+    CHIT_CHECKPOINT_KMS_REGION: 'us-east-2',
+    CHIT_CHECKPOINT_ADDRESS: MAINNET_CHECKPOINT,
+    CHIT_CHECKPOINT_MAX_FEE_PER_GAS: '10',
+    CHIT_V13_BIND_DIR: bindDir,
+  };
+}
+
+test('B1 flags off does not wire the runtime and v10 bytes stay pinned', async () => {
+  setV13Runtime({ marker: true });
+  const calls = { send: 0, open: 0 };
+  const out = await wireV13Runtime({
+    CHIT_V13_ISSUANCE: 'false',
+    CHIT_V13_MAINNET_SEALER: false,
+    CHIT_V13_STORE: '',
+  }, {
+    client: { async send() { calls.send += 1; throw new Error('kms'); } },
+    openStore() { calls.open += 1; throw new Error('store'); },
+    log() { calls.log = true; },
+  });
+  assert.equal(out.wired, false);
+  assert.equal(calls.send, 0);
+  assert.equal(calls.open, 0);
+  assert.equal(calls.log, undefined);
+  assert.equal(readV13Runtime().marker, true);
+  const issued = await issueHouseReceipt({ env: {}, task: byteTask(), receiptOpts: RECEIPT_OPTS });
+  assert.equal(issued.status, 200);
+  assert.deepEqual(issued.bytes, FIXTURE);
+  setV13Runtime(null);
+});
+
+test('B2 flags off buildReceipt stays the v1 document', async () => {
+  const receipt = await withProcessFlags(false, () => buildV1Receipt({
+    task: byteTask(),
+    taskId: 'chit-v13-bytepin',
+    provider: 'example-hub',
+    mock: true,
+    proverConfigured: false,
+    baseUrl: 'http://127.0.0.1:9',
+  }));
+  assert.equal(receipt.surface, 'openai-v1');
+  assert.equal(receipt.v, undefined);
+  assert.equal(Buffer.isBuffer(receipt.bytes), false);
+});
+
+test('B3 one v13 flag and an incomplete runtime refuses to listen', async () => {
+  assertStartServerWires();
+  setV13Runtime(null);
+  const flags = ['CHIT_V13_ISSUANCE', 'CHIT_V13_MAINNET_SEALER', 'CHIT_V13_STORE'];
+  for (const name of flags) {
+    const root = mkdtempSync(join(tmpdir(), 'v13-b3-'));
+    const bindDir = join(root, 'bind');
+    mkdirSync(bindDir, { mode: 0o700 });
+    chmodSync(bindDir, 0o700);
+    await assert.rejects(
+      () => wireV13Runtime(oneFlagEnv(name, bindDir), pinDeps()),
+      (err) => err.code === 'v13_boot_refused',
+    );
+    assert.equal(readV13Runtime(), null);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('B4 a GetPublicKey for another address refuses to listen', async () => {
+  assertStartServerWires();
+  setV13Runtime(null);
+  const box = preparedBoot();
+  const log = [];
+  await assert.rejects(
+    () => wireV13Runtime(box.env, { ...livePin(box, `0x${'12'.repeat(20)}`), log: (row) => log.push(row) }),
+    (err) => err.code === 'v13_boot_refused',
+  );
+  assert.equal(readV13Runtime(), null);
+  assert.equal(JSON.stringify(log).includes('12'.repeat(20)), false);
+  rmSync(box.root, { recursive: true, force: true });
+});
+
+test('B5 a matching GetPublicKey wires store, dir, client, and send', async () => {
+  assertStartServerWires();
+  setV13Runtime(null);
+  const box = preparedBoot();
+  const deps = livePin(box);
+  const out = await wireV13Runtime(box.env, deps);
+  assert.equal(out.wired, true);
+  const runtime = readV13Runtime();
+  assert.ok(runtime.store);
+  assert.equal(runtime.dir, box.bindDir);
+  assert.equal(typeof runtime.client.send, 'function');
+  assert.equal(typeof runtime.send, 'function');
+  assert.equal(runtime.caller.bookId, box.book.id);
+  assert.equal(runtime.caller.token, box.book.token);
+  assert.equal(deps.client.calls.includes('GetPublicKey'), true);
+  setV13Runtime(null);
+  rmSync(box.root, { recursive: true, force: true });
+});
+
+test('B6 a missing runtime fails closed before a hold', async () => {
+  resetHouseState();
+  let committed = false;
+  const box = fresh();
+  const issued = await issueHouseReceipt({
+    env: flagsOn(),
+    payment: payment({ nonce: '21'.repeat(32) }),
+    observation: observation(),
+    store: { commitEpoch() { committed = true; return { ok: true }; } },
+  });
+  assert.equal(issued.status, 400);
+  assert.equal(issued.body.code, 'verify_failed');
+  assert.equal(issued.body.pending_id, undefined);
+  assert.equal(pendingOpen(issued.body.pending_id), false);
+  assert.equal(committed, false);
+  assert.equal(existsSync(join(box.dir, 'auth-bindings.json')), false);
+  await assert.rejects(
+    () => withProcessFlags(true, () => buildV1Receipt({
+      task: byteTask(),
+      taskId: 'b6',
+      provider: 'example-hub',
+      mock: true,
+      proverConfigured: false,
+      baseUrl: 'http://127.0.0.1:9',
+      payment: { ...payment({ nonce: '22'.repeat(32) }), observation: observation() },
+    })),
+    (err) => err.code === 'verify_failed' && pendingOpen(err.pending_id) === false,
+  );
+});
+
+test('B7 a flags-on buildReceipt failure throws a closed code and opens no hold', async () => {
+  resetHouseState();
+  const box = fresh();
+  await withProcessFlags(true, async () => {
+    await wireOpenedHouse(box);
+    await assert.rejects(
+      () => buildV1Receipt({
+        task: byteTask(),
+        taskId: 'b7-obs',
+        provider: 'example-hub',
+        mock: true,
+        proverConfigured: false,
+        baseUrl: 'http://127.0.0.1:9',
+        payment: payment({ nonce: '23'.repeat(32) }),
+      }),
+      (err) => err.code === 'settle_unconfirmed',
+    );
+    const pay = payment({ nonce: '24'.repeat(32) });
+    delete pay.chainId;
+    await assert.rejects(
+      () => buildV1Receipt({
+        task: byteTask(),
+        taskId: 'b7-pay',
+        provider: 'example-hub',
+        mock: true,
+        proverConfigured: false,
+        baseUrl: 'http://127.0.0.1:9',
+        payment: { ...pay, observation: observation() },
+      }),
+      (err) => err.code === 'verify_failed',
+    );
+  });
+  assert.equal(pendingOpen(undefined), false);
+  assert.equal(existsSync(join(box.dir, 'auth-bindings.json')), false);
+});
+
+function listenLocal(handler) {
+  return new Promise((resolve) => {
+    const server = http.createServer(handler);
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () => new Promise((done) => server.close(done)),
+      });
+    });
+  });
+}
+
+test('B8 a paid hook throw is retryable JSON, 202 with a hold and 503 without', async () => {
+  const payer = `0x${'5b'.repeat(20)}`;
+  const payTo = '0x8453000000000000000000000000000000000001';
+  let facN = 0;
+  const fac = await listenLocal((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      facN += 1;
+      const txRef = `0x${createHash('sha256').update(`b8-tx-${facN}`).digest('hex')}`;
+      const payload = req.url?.endsWith('/verify')
+        ? { isValid: true, valid: true, payer }
+        : { success: true, settled: true, transaction: txRef, txRef, network: 'base', payer };
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify(payload));
+    });
+  });
+  const rpc = await listenLocal((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      let parsed = {};
+      try { parsed = JSON.parse(body || '{}'); } catch { parsed = {}; }
+      const which = parsed.params?.[0];
+      const number = which === 'finalized' ? '0x10' : (which || '0x10');
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({
+        jsonrpc: '2.0',
+        id: parsed.id || 1,
+        result: {
+          number,
+          timestamp: '0x6553f000',
+          hash: `0x${'ab'.repeat(32)}`,
+        },
+      }));
+    });
+  });
+  const { default: config } = await import('../src/config.js');
+  const { installEchoChainReader, clearChainReaderForTests } = await import('../src/x402-chain.js');
+  const express = (await import('express')).default;
+  const prev = {
+    enabled: config.x402.enabled,
+    network: config.x402.network,
+    payTo: config.x402.payTo,
+    gatewayUrl: config.x402.gatewayUrl,
+    facilitatorProvider: config.x402.facilitatorProvider,
+    baseRpcUrl: config.x402.baseRpcUrl,
+    apiKey: config.x402.apiKey,
+  };
+  config.x402.enabled = true;
+  config.x402.network = 'base';
+  config.x402.payTo = payTo;
+  config.x402.gatewayUrl = fac.url;
+  config.x402.facilitatorProvider = 'zan';
+  config.x402.baseRpcUrl = rpc.url;
+  config.x402.apiKey = 'testkey';
+  installEchoChainReader();
+  let server;
+  try {
+    const app = express();
+    app.use(express.json());
+    registerOpenAIRoutes(app, {
+      rateLimit: (_req, _res, next) => next(),
+      authenticate: (_req, _res, next) => next(),
+      isAuthorised: () => false,
+    });
+    server = await new Promise((resolve) => {
+      const started = app.listen(0, '127.0.0.1', () => resolve(started));
+    });
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const chat = {
+      model: 'theta/qwen3',
+      messages: [{ role: 'user', content: 'boot wiring' }],
+      max_tokens: 8,
+    };
+    const headerFor = (label) => {
+      const nonce = `0x${createHash('sha256').update(label).digest('hex')}`;
+      const body = {
+        x402Version: 1,
+        payload: {
+          signature: `0x${'11'.repeat(65)}`,
+          authorization: {
+            from: payer,
+            to: payTo,
+            value: '1000000000000',
+            validAfter: '0',
+            validBefore: String(Math.floor(Date.now() / 1000) + 3600),
+            nonce,
+          },
+        },
+        accepted: { asset: `0x${USDC}` },
+      };
+      return Buffer.from(JSON.stringify(body)).toString('base64');
+    };
+    const settle = async (label) => {
+      const challenge = await fetch(`${base}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(chat),
+      });
+      assert.equal(challenge.status, 402);
+      const offered = await challenge.json();
+      const nonce = offered.accepts[0].extra.nonce;
+      const res = await fetch(`${base}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-payment': headerFor(label),
+          'x-payment-nonce': nonce,
+        },
+        body: JSON.stringify(chat),
+      });
+      const text = await res.text();
+      let body = {};
+      try { body = JSON.parse(text); } catch { body = { raw: text }; }
+      return { status: res.status, body, text };
+    };
+    setV13Runtime(null);
+    const closed = await withProcessFlags(true, () => settle('b8-no-hold'));
+    assert.equal(closed.status, 503);
+    assert.equal(typeof closed.body.code, 'string');
+    assert.ok(closed.body.code.length > 0);
+    assert.equal(closed.body.pending_id, undefined);
+    assert.equal(typeof closed.body.payment_ref, 'string');
+    assert.equal(closed.text.toLowerCase().includes('pay again'), false);
+    assert.equal(pendingOpen(closed.body.pending_id), false);
+
+    const box = fresh();
+    await wireOpenedHouse(box);
+    const held = await withProcessFlags(true, () => settle('b8-hold'));
+    assert.equal(held.status, 202);
+    assert.equal(held.body.code, 'settle_pending');
+    assert.equal(typeof held.body.pending_id, 'string');
+    assert.equal(typeof held.body.verify_url, 'string');
+    assert.equal(typeof held.body.payment_ref, 'string');
+    assert.equal(held.text.toLowerCase().includes('pay again'), false);
+    assert.equal(pendingOpen(held.body.pending_id), true);
+  } finally {
+    setV13Runtime(null);
+    clearChainReaderForTests();
+    Object.assign(config.x402, prev);
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await fac.close();
+    await rpc.close();
+  }
+});
+
+test('B9 the address stand-in is honored only when both gates are on', async () => {
+  resetHouseState();
+  resetAnchorLedger();
+  const box = fresh();
+  const allowed = mockKms();
+  const honored = await issueHouseReceipt({
+    env: flagsOn(),
+    dir: box.dir,
+    store: box.store,
+    caller: box.caller,
+    payment: payment({ nonce: '25'.repeat(32) }),
+    observation: observation(),
+    client: allowed,
+    send: async () => '0xabc',
+    testInjection: true,
+    addressOf: asCheckpoint,
+  });
+  assert.equal(honored.body.v, 13);
+  assert.equal(allowed.calls.includes('Sign'), true);
+
+  const prev = process.env.ISSUER_KMS_KEY_ID;
+  process.env.ISSUER_KMS_KEY_ID = 'alias/test-only';
+  try {
+    const blocked = mockKms();
+    const ignored = await issueHouseReceipt({
+      env: flagsOn(),
+      dir: box.dir,
+      store: box.store,
+      caller: box.caller,
+      payment: payment({ nonce: '26'.repeat(32) }),
+      observation: observation(),
+      client: blocked,
+      send: async () => '0xabc',
+      testInjection: true,
+      addressOf: asCheckpoint,
+    });
+    assert.equal(ignored.body.v, 13);
+    assert.equal(blocked.calls.includes('Sign'), false);
+  } finally {
+    if (prev == null) delete process.env.ISSUER_KMS_KEY_ID;
+    else process.env.ISSUER_KMS_KEY_ID = prev;
+  }
+
+  const absent = mockKms();
+  const noInjection = await issueHouseReceipt({
+    env: flagsOn(),
+    dir: box.dir,
+    store: box.store,
+    caller: box.caller,
+    payment: payment({ nonce: '27'.repeat(32) }),
+    observation: observation(),
+    client: absent,
+    send: async () => '0xabc',
+    addressOf: asCheckpoint,
+  });
+  assert.equal(noInjection.body.v, 13);
+  assert.equal(absent.calls.includes('Sign'), false);
+});
+
+test('B10 settle-path payment, observation, and caller win over task.meta', async () => {
+  const mapped = meteringPaymentFromDecision({
+    paymentRef: 'base:0xabc',
+    settledAmount: '2000',
+    quotedAmount: '2000',
+    payerWallet: `0x${'11'.repeat(20)}`,
+    payTo: `0x${'22'.repeat(20)}`,
+    asset: 'USDC',
+    chainId: 8453,
+    nonce: '0c'.repeat(32),
+    token: USDC,
+    authorizer: '11'.repeat(20),
+    observation: observation(),
+  });
+  assert.equal(mapped.chainId, 8453);
+  assert.equal(mapped.nonce, '0c'.repeat(32));
+  assert.equal(mapped.token, USDC);
+  resetHouseState();
+  resetAnchorLedger();
+  const box = fresh();
+  let receipt = null;
+  let thrown = null;
+  try {
+    receipt = await withProcessFlags(true, async () => {
+      await wireOpenedHouse(box);
+      return buildV1Receipt({
+        task: {
+          taskId: 'b10',
+          status: 'completed',
+          meta: {
+            housePayment: payment({ nonce: 'ff'.repeat(32), chainId: 111, token: '44'.repeat(20) }),
+            houseObservation: observation({ blockHash: 'ee'.repeat(32), blockNumber: 4, finalizedNumber: 1 }),
+            houseCaller: box.other,
+          },
+        },
+        taskId: 'b10',
+        provider: 'example-hub',
+        mock: true,
+        proverConfigured: false,
+        baseUrl: 'http://127.0.0.1:9',
+        payment: { ...payment({ nonce: '28'.repeat(32) }), observation: observation() },
+      });
+    });
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown, null);
+  assert.equal(receipt.v, 13);
+  const rows = JSON.parse(readFileSync(join(box.dir, 'auth-bindings.json'), 'utf8')).rows;
+  const row = rows[Object.keys(rows)[0]];
+  assert.equal(row.bookId, box.caller.bookId);
+  assert.notEqual(row.bookId, box.other.bookId);
+});
+
+test('B11 a group-readable env file refuses to listen and mode 600 is accepted', async () => {
+  setV13Runtime(null);
+  delete process.env.CHIT_V13_BOOT_MARKER;
+  const looseBoot = preparedBoot();
+  const loose = join(looseBoot.root, 'loose.env');
+  writeFileSync(loose, 'CHIT_V13_BOOT_MARKER=loose\n', { mode: 0o644 });
+  chmodSync(loose, 0o644);
+  await assert.rejects(
+    () => wireV13Runtime({ ...looseBoot.env, CHIT_V13_ENV_FILE: loose }, livePin(looseBoot)),
+    (err) => err.code === 'v13_boot_refused',
+  );
+  assert.equal(process.env.CHIT_V13_BOOT_MARKER, undefined);
+
+  const tightBoot = preparedBoot();
+  const tight = join(tightBoot.root, 'tight.env');
+  writeFileSync(tight, 'CHIT_V13_BOOT_MARKER=tight\n', { mode: 0o600 });
+  chmodSync(tight, 0o600);
+  const out = await wireV13Runtime({ ...tightBoot.env, CHIT_V13_ENV_FILE: tight }, livePin(tightBoot));
+  assert.equal(out.wired, true);
+  assert.equal(process.env.CHIT_V13_BOOT_MARKER, 'tight');
+  delete process.env.CHIT_V13_BOOT_MARKER;
+  setV13Runtime(null);
+  rmSync(looseBoot.root, { recursive: true, force: true });
+  rmSync(tightBoot.root, { recursive: true, force: true });
+});
+
+test('B12 a group-readable store or bind dir refuses to listen and mode 700 is accepted', async () => {
+  setV13Runtime(null);
+  const box = preparedBoot();
+  chmodSync(box.bindDir, 0o755);
+  await assert.rejects(
+    () => wireV13Runtime(box.env, livePin(box)),
+    (err) => err.code === 'v13_boot_refused',
+  );
+  chmodSync(box.bindDir, 0o700);
+  chmodSync(box.storeDir, 0o755);
+  await assert.rejects(
+    () => wireV13Runtime(box.env, livePin(box)),
+    (err) => err.code === 'v13_boot_refused',
+  );
+  chmodSync(box.storeDir, 0o700);
+  const out = await wireV13Runtime(box.env, livePin(box));
+  assert.equal(out.wired, true);
+  setV13Runtime(null);
+  rmSync(box.root, { recursive: true, force: true });
+});
+
+test('B13 logs and errors do not contain the dummy key id or ARN', async () => {
+  setV13Runtime(null);
+  const box = preparedBoot();
+  const arn = dummyKmsArn('3');
+  const keyId = dummyKeyId('3');
+  const log = [];
+  box.env.CHIT_CHECKPOINT_KMS_KEY_ID = keyId;
+  await assert.rejects(
+    () => wireV13Runtime(box.env, {
+      client: { async send() { throw new Error(arn); } },
+      openStore() { return box.store; },
+      log: (row) => log.push(row),
+    }),
+    (err) => err.code === 'v13_boot_refused'
+      && err.message.includes(arn) === false
+      && err.message.includes(keyId) === false,
+  );
+  const packed = JSON.stringify({ log, message: 'v13 boot refused' });
+  assert.equal(packed.includes(arn), false);
+  assert.equal(packed.includes(keyId), false);
+  assert.equal(log.some((row) => row.checkpointKey === 'set'), true);
+  rmSync(box.root, { recursive: true, force: true });
+});
+
+test('B14 images and audio do not issue a v13 document or a hold when unpaid', async () => {
+  const express = (await import('express')).default;
+  const app = express();
+  app.use(express.json());
+  registerOpenAIRoutes(app, {
+    rateLimit: (_req, _res, next) => next(),
+    authenticate: (_req, _res, next) => next(),
+    isAuthorised: () => false,
+  });
+  const server = await new Promise((resolve) => {
+    const started = app.listen(0, '127.0.0.1', () => resolve(started));
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    setV13Runtime(null);
+    const image = await withProcessFlags(true, async () => {
+      const res = await fetch(`${base}/v1/images/generations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'theta/stable_diffusion_xl_turbo', prompt: 'a red circle' }),
+      });
+      const text = await res.text();
+      return { status: res.status, text };
+    });
+    assert.notEqual(image.status, 500);
+    assert.equal(image.text.includes('"v":13'), false);
+    assert.equal(image.text.includes('pending_id'), false);
+    const audio = await withProcessFlags(true, async () => {
+      const res = await fetch(`${base}/v1/audio/transcriptions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ model: 'theta/whisper', audio_url: 'http://127.0.0.1/clip' }),
+      });
+      const text = await res.text();
+      return { status: res.status, text };
+    });
+    assert.notEqual(audio.status, 500);
+    assert.equal(audio.text.includes('"v":13'), false);
+    assert.equal(audio.text.includes('pending_id'), false);
+    assert.equal(pendingOpen(undefined), false);
+  } finally {
+    setV13Runtime(null);
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('B15 a chain or token other than the pin is still a 400 with no hold', async () => {
+  resetHouseState();
+  const box = fresh();
+  const base = {
+    env: flagsOn(),
+    dir: box.dir,
+    store: box.store,
+    caller: box.caller,
+    observation: observation(),
+    client: mockKms(),
+    send: async () => '0xabc',
+  };
+  const otherChain = await issueHouseReceipt({ ...base, payment: payment({ chainId: 84532, nonce: '29'.repeat(32) }) });
+  const otherToken = await issueHouseReceipt({ ...base, payment: payment({ token: '44'.repeat(20), nonce: '2a'.repeat(32) }) });
+  assert.equal(otherChain.status, 400);
+  assert.equal(otherChain.body.pending_id, undefined);
+  assert.equal(pendingOpen(otherChain.body.pending_id), false);
+  assert.equal(otherToken.status, 400);
+  assert.equal(otherToken.body.pending_id, undefined);
+  assert.equal(pendingOpen(otherToken.body.pending_id), false);
+  assert.equal(existsSync(join(box.dir, 'auth-bindings.json')), false);
+});
+
+test('B16 a flags-on listen requires a configured house book with an in-memory token', async () => {
+  setV13Runtime(null);
+  const disk = preparedBoot();
+  await assert.rejects(
+    () => wireV13Runtime(disk.env, pinDeps()),
+    (err) => err.code === 'v13_boot_refused',
+  );
+  assert.equal(readV13Runtime(), null);
+
+  const missing = preparedBoot();
+  const missingEnv = { ...missing.env };
+  delete missingEnv.CHIT_V13_HOUSE_BOOK_ID;
+  await assert.rejects(
+    () => wireV13Runtime(missingEnv, livePin(missing)),
+    (err) => err.code === 'v13_boot_refused',
+  );
+  await assert.rejects(
+    () => wireV13Runtime(
+      { ...missing.env, CHIT_V13_HOUSE_BOOK_ID: 'bb'.repeat(32) },
+      livePin(missing),
+    ),
+    (err) => err.code === 'v13_boot_refused',
+  );
+
+  resetHouseState();
+  const box = fresh();
+  mkdirSync(box.dir, { recursive: true, mode: 0o700 });
+  let committed = false;
+  const issued = await issueHouseReceipt({
+    env: flagsOn(),
+    dir: box.dir,
+    store: {
+      commitEpoch() { committed = true; return { ok: true }; },
+      hasCommitted() { return false; },
+    },
+    client: mockKms(),
+    send: async () => '0xabc',
+    payment: payment({ nonce: '2b'.repeat(32) }),
+    observation: observation(),
+  });
+  assert.equal(issued.status, 400);
+  assert.equal(issued.body.code, 'verify_failed');
+  assert.equal(issued.body.pending_id, undefined);
+  assert.equal(pendingOpen(issued.body.pending_id), false);
+  assert.equal(committed, false);
+  assert.equal(existsSync(join(box.dir, 'auth-bindings.json')), false);
+  rmSync(disk.root, { recursive: true, force: true });
+  rmSync(missing.root, { recursive: true, force: true });
 });
