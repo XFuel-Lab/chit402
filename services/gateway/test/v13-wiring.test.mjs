@@ -243,6 +243,7 @@ test('T1 flags false: the same fixture bytes', async () => {
     task: byteTask(),
     receiptOpts: RECEIPT_OPTS,
   });
+  assert.equal(issued.status, 200);
   assert.deepEqual(issued.bytes, FIXTURE);
 });
 
@@ -261,6 +262,7 @@ test('T2 flags unset: no KMS, anchor, or RPC call', async () => {
     send: async () => { counts.send += 1; return '0x1'; },
     rpc: async () => { counts.rpc += 1; },
   });
+  assert.equal(issued.status, 200);
   assert.deepEqual(issued.bytes, FIXTURE);
   assert.deepEqual(counts, { kms: 0, send: 0, rpc: 0 });
 });
@@ -925,6 +927,7 @@ test('B1 flags off does not wire the runtime and v10 bytes stay pinned', async (
   assert.equal(calls.log, undefined);
   assert.equal(readV13Runtime().marker, true);
   const issued = await issueHouseReceipt({ env: {}, task: byteTask(), receiptOpts: RECEIPT_OPTS });
+  assert.equal(issued.status, 200);
   assert.deepEqual(issued.bytes, FIXTURE);
   setV13Runtime(null);
 });
