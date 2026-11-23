@@ -12,6 +12,8 @@
  * CHIT_V13_STORE_PATH — durable chit-store directory passed to openStore.
  * CHIT_V13_BIND_DIR — authorization-binding directory, mode 700 or tighter.
  * CHIT_V13_ENV_FILE — optional operator env file, mode 600 or tighter when set.
+ * CHIT_V13_HOUSE_BOOK_ID — house book id. The token is the one already on
+ * that book in the opened store. It is not read from the request.
  * CHIT_CHECKPOINT_MAX_FEE_PER_GAS and CHIT_CHECKPOINT_KMS_TIMEOUT_MS are read
  * by the checkpoint signer. This module does not read their values.
  */

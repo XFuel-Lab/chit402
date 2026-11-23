@@ -403,6 +403,8 @@ function issuanceRuntimeReady(input) {
   if (typeof input.dir !== 'string' || input.dir === '') return false;
   if (!input.client || typeof input.client.send !== 'function') return false;
   if (typeof input.send !== 'function') return false;
+  if (!input.caller || typeof input.caller.bookId !== 'string' || input.caller.bookId === '') return false;
+  if (typeof input.caller.token !== 'string' || input.caller.token === '') return false;
   return true;
 }
 

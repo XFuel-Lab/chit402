@@ -87,6 +87,8 @@ function runtimeComplete(runtime) {
   if (!runtime.dir) return false;
   if (!runtime.client || typeof runtime.client.send !== 'function') return false;
   if (typeof runtime.send !== 'function') return false;
+  if (!runtime.caller || typeof runtime.caller.bookId !== 'string' || runtime.caller.bookId === '') return false;
+  if (typeof runtime.caller.token !== 'string' || runtime.caller.token === '') return false;
   return true;
 }
 
@@ -119,22 +121,22 @@ function loadEnvFile(env) {
   if (loaded?.error) throw bootRefused();
 }
 
-/**
- * The on-disk book row stores a salt, not the book token. The default id is
- * the lexicographically smallest id on the opened store. A caller is returned
- * only when that book was opened with a token already on the store object.
- * The choice is not taken from the request.
- */
-function defaultCaller(store) {
-  if (!store?.books || typeof store.books.keys !== 'function') return null;
-  const ids = [];
-  for (const id of store.books.keys()) ids.push(String(id));
-  ids.sort();
-  if (ids.length === 0) return null;
-  const id = ids[0];
+function callerForBook(store, id) {
+  if (!store || typeof id !== 'string' || id === '') return null;
   const token = typeof store.bookToken === 'function' ? store.bookToken(id) : null;
   if (typeof token !== 'string' || token === '') return null;
   return { bookId: id, token };
+}
+
+/**
+ * The house book id is CHIT_V13_HOUSE_BOOK_ID. The token is the one already
+ * on that book in the opened store. A missing id, an unknown id, or a book
+ * with no in-memory token is not a caller. Nothing here reads the request.
+ */
+function houseCaller(store, env) {
+  const configured = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';
+  if (!configured) return null;
+  return callerForBook(store, configured);
 }
 
 function pointFromGetPublicKey(out) {
@@ -242,7 +244,7 @@ async function guardListen(env, deps) {
     dir: bindDir,
     client,
     send,
-    caller: defaultCaller(store),
+    caller: houseCaller(store, env),
   };
   if (!runtimeComplete(runtime)) throw bootRefused();
   await assertCheckpointPin(client, env, deps);

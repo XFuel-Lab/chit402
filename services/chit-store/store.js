@@ -101,7 +101,14 @@ export function openStore(dir, { books = [], io = fs } = {}) {
     const salt = fromCaller || fromFile || new Uint8Array(randomBytes(32));
     if (!fromCaller && !fromFile) freshSalt = true;
     bookHashes.set(book.id, sha256Text(book.token));
-    bookRecords.set(book.id, { bookPk: pk, bookSalt: salt, wallets: walletSet(book.wallets) });
+    // The token stays in memory for the process that opened the book.
+    // persist writes the salt only.
+    bookRecords.set(book.id, {
+      bookPk: pk,
+      bookSalt: salt,
+      wallets: walletSet(book.wallets),
+      token: book.token,
+    });
   }
   const epochs = new Map();
   for (const row of loaded.epochs) epochs.set(String(row.epoch), row);
@@ -128,6 +135,10 @@ export function openStore(dir, { books = [], io = fs } = {}) {
       const row = store.books.get(bookId);
       if (!row) return null;
       return { bookPk: row.bookPk, bookSalt: row.bookSalt, wallets: row.wallets };
+    },
+    bookToken(bookId) {
+      const row = store.books.get(bookId);
+      return row && typeof row.token === 'string' && row.token !== '' ? row.token : null;
     },
   };
   if (freshSalt) persist(store);

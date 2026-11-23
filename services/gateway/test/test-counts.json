@@ -1,6 +1,6 @@
 {
   "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.",
-  "total": 2686,
+  "total": 2687,
   "skipped": 3,
   "files": {
     "test/a2a-paid-door.test.mjs": 6,
@@ -221,7 +221,7 @@
     "test/v1-receipt-signing.test.mjs": 5,
     "test/v11-privacy.test.mjs": 19,
     "test/v13-wiring-scan.test.mjs": 9,
-    "test/v13-wiring.test.mjs": 37,
+    "test/v13-wiring.test.mjs": 38,
     "test/verifier-digest.test.mjs": 1,
     "test/version-windows-doc.test.mjs": 5,
     "test/webhooks.test.mjs": 6,

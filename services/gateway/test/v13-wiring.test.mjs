@@ -757,13 +757,7 @@ test('M1 buildReceipt returns the v13 document when the flags are on', async () 
   resetAnchorLedger();
   const box = fresh();
   const receipt = await withProcessFlags(true, async () => {
-    setV13Runtime({
-      store: box.store,
-      dir: box.dir,
-      client: mockKms(),
-      send: async () => '0xabc',
-      caller: box.caller,
-    });
+    await wireOpenedHouse(box);
     return buildV1Receipt({
       task: {
         taskId: 'chit-v13-hook',
@@ -851,23 +845,47 @@ function preparedBoot() {
   mkdirSync(bindDir, { mode: 0o700 });
   chmodSync(storeDir, 0o700);
   chmodSync(bindDir, 0o700);
-  openStore(storeDir, {
-    books: [{
-      id: 'aa'.repeat(32),
-      token: 'book-token',
-      bookPk: new Uint8Array(32).fill(7),
-    }],
-  });
+  const book = {
+    id: 'aa'.repeat(32),
+    token: 'book-token',
+    bookPk: new Uint8Array(32).fill(7),
+  };
+  const store = openStore(storeDir, { books: [book] });
   return {
     root,
     storeDir,
     bindDir,
+    store,
+    book,
     env: {
       ...flagsOn(),
       CHIT_V13_STORE_PATH: storeDir,
       CHIT_V13_BIND_DIR: bindDir,
+      CHIT_V13_HOUSE_BOOK_ID: book.id,
     },
   };
+}
+
+function livePin(box, address = MAINNET_CHECKPOINT) {
+  return {
+    ...pinDeps(address),
+    openStore() { return box.store; },
+  };
+}
+
+async function wireOpenedHouse(box) {
+  mkdirSync(box.dir, { recursive: true, mode: 0o700 });
+  chmodSync(box.dir, 0o700);
+  chmodSync(box.store.dir, 0o700);
+  return wireV13Runtime({
+    ...flagsOn(),
+    CHIT_V13_STORE_PATH: box.store.dir,
+    CHIT_V13_BIND_DIR: box.dir,
+    CHIT_V13_HOUSE_BOOK_ID: box.caller.bookId,
+  }, {
+    ...pinDeps(),
+    openStore() { return box.store; },
+  });
 }
 
 function pinDeps(address = MAINNET_CHECKPOINT) {
@@ -949,7 +967,7 @@ test('B4 a GetPublicKey for another address refuses to listen', async () => {
   const box = preparedBoot();
   const log = [];
   await assert.rejects(
-    () => wireV13Runtime(box.env, { ...pinDeps(`0x${'12'.repeat(20)}`), log: (row) => log.push(row) }),
+    () => wireV13Runtime(box.env, { ...livePin(box, `0x${'12'.repeat(20)}`), log: (row) => log.push(row) }),
     (err) => err.code === 'v13_boot_refused',
   );
   assert.equal(readV13Runtime(), null);
@@ -961,7 +979,7 @@ test('B5 a matching GetPublicKey wires store, dir, client, and send', async () =
   assertStartServerWires();
   setV13Runtime(null);
   const box = preparedBoot();
-  const deps = pinDeps();
+  const deps = livePin(box);
   const out = await wireV13Runtime(box.env, deps);
   assert.equal(out.wired, true);
   const runtime = readV13Runtime();
@@ -969,6 +987,8 @@ test('B5 a matching GetPublicKey wires store, dir, client, and send', async () =
   assert.equal(runtime.dir, box.bindDir);
   assert.equal(typeof runtime.client.send, 'function');
   assert.equal(typeof runtime.send, 'function');
+  assert.equal(runtime.caller.bookId, box.book.id);
+  assert.equal(runtime.caller.token, box.book.token);
   assert.equal(deps.client.calls.includes('GetPublicKey'), true);
   setV13Runtime(null);
   rmSync(box.root, { recursive: true, force: true });
@@ -1008,13 +1028,7 @@ test('B7 a flags-on buildReceipt failure throws a closed code and opens no hold'
   resetHouseState();
   const box = fresh();
   await withProcessFlags(true, async () => {
-    setV13Runtime({
-      store: box.store,
-      dir: box.dir,
-      client: mockKms(),
-      send: async () => '0xabc',
-      caller: box.caller,
-    });
+    await wireOpenedHouse(box);
     await assert.rejects(
       () => buildV1Receipt({
         task: byteTask(),
@@ -1188,14 +1202,7 @@ test('B8 a paid hook throw is retryable JSON, 202 with a hold and 503 without', 
     assert.equal(pendingOpen(closed.body.pending_id), false);
 
     const box = fresh();
-    mkdirSync(box.dir, { recursive: true, mode: 0o700 });
-    setV13Runtime({
-      store: box.store,
-      dir: box.dir,
-      client: mockKms(),
-      send: async () => '0xabc',
-      caller: box.caller,
-    });
+    await wireOpenedHouse(box);
     const held = await withProcessFlags(true, () => settle('b8-hold'));
     assert.equal(held.status, 202);
     assert.equal(held.body.code, 'settle_pending');
@@ -1297,13 +1304,7 @@ test('B10 settle-path payment, observation, and caller win over task.meta', asyn
   let thrown = null;
   try {
     receipt = await withProcessFlags(true, async () => {
-      setV13Runtime({
-        store: box.store,
-        dir: box.dir,
-        client: mockKms(),
-        send: async () => '0xabc',
-        caller: box.caller,
-      });
+      await wireOpenedHouse(box);
       return buildV1Receipt({
         task: {
           taskId: 'b10',
@@ -1341,7 +1342,7 @@ test('B11 a group-readable env file refuses to listen and mode 600 is accepted',
   writeFileSync(loose, 'CHIT_V13_BOOT_MARKER=loose\n', { mode: 0o644 });
   chmodSync(loose, 0o644);
   await assert.rejects(
-    () => wireV13Runtime({ ...looseBoot.env, CHIT_V13_ENV_FILE: loose }, pinDeps()),
+    () => wireV13Runtime({ ...looseBoot.env, CHIT_V13_ENV_FILE: loose }, livePin(looseBoot)),
     (err) => err.code === 'v13_boot_refused',
   );
   assert.equal(process.env.CHIT_V13_BOOT_MARKER, undefined);
@@ -1350,7 +1351,7 @@ test('B11 a group-readable env file refuses to listen and mode 600 is accepted',
   const tight = join(tightBoot.root, 'tight.env');
   writeFileSync(tight, 'CHIT_V13_BOOT_MARKER=tight\n', { mode: 0o600 });
   chmodSync(tight, 0o600);
-  const out = await wireV13Runtime({ ...tightBoot.env, CHIT_V13_ENV_FILE: tight }, pinDeps());
+  const out = await wireV13Runtime({ ...tightBoot.env, CHIT_V13_ENV_FILE: tight }, livePin(tightBoot));
   assert.equal(out.wired, true);
   assert.equal(process.env.CHIT_V13_BOOT_MARKER, 'tight');
   delete process.env.CHIT_V13_BOOT_MARKER;
@@ -1364,17 +1365,17 @@ test('B12 a group-readable store or bind dir refuses to listen and mode 700 is a
   const box = preparedBoot();
   chmodSync(box.bindDir, 0o755);
   await assert.rejects(
-    () => wireV13Runtime(box.env, pinDeps()),
+    () => wireV13Runtime(box.env, livePin(box)),
     (err) => err.code === 'v13_boot_refused',
   );
   chmodSync(box.bindDir, 0o700);
   chmodSync(box.storeDir, 0o755);
   await assert.rejects(
-    () => wireV13Runtime(box.env, pinDeps()),
+    () => wireV13Runtime(box.env, livePin(box)),
     (err) => err.code === 'v13_boot_refused',
   );
   chmodSync(box.storeDir, 0o700);
-  const out = await wireV13Runtime(box.env, pinDeps());
+  const out = await wireV13Runtime(box.env, livePin(box));
   assert.equal(out.wired, true);
   setV13Runtime(null);
   rmSync(box.root, { recursive: true, force: true });
@@ -1390,6 +1391,7 @@ test('B13 logs and errors do not contain the dummy key id or ARN', async () => {
   await assert.rejects(
     () => wireV13Runtime(box.env, {
       client: { async send() { throw new Error(arn); } },
+      openStore() { return box.store; },
       log: (row) => log.push(row),
     }),
     (err) => err.code === 'v13_boot_refused'
@@ -1470,4 +1472,54 @@ test('B15 a chain or token other than the pin is still a 400 with no hold', asyn
   assert.equal(otherToken.body.pending_id, undefined);
   assert.equal(pendingOpen(otherToken.body.pending_id), false);
   assert.equal(existsSync(join(box.dir, 'auth-bindings.json')), false);
+});
+
+test('B16 a flags-on listen requires a configured house book with an in-memory token', async () => {
+  setV13Runtime(null);
+  const disk = preparedBoot();
+  await assert.rejects(
+    () => wireV13Runtime(disk.env, pinDeps()),
+    (err) => err.code === 'v13_boot_refused',
+  );
+  assert.equal(readV13Runtime(), null);
+
+  const missing = preparedBoot();
+  const missingEnv = { ...missing.env };
+  delete missingEnv.CHIT_V13_HOUSE_BOOK_ID;
+  await assert.rejects(
+    () => wireV13Runtime(missingEnv, livePin(missing)),
+    (err) => err.code === 'v13_boot_refused',
+  );
+  await assert.rejects(
+    () => wireV13Runtime(
+      { ...missing.env, CHIT_V13_HOUSE_BOOK_ID: 'bb'.repeat(32) },
+      livePin(missing),
+    ),
+    (err) => err.code === 'v13_boot_refused',
+  );
+
+  resetHouseState();
+  const box = fresh();
+  mkdirSync(box.dir, { recursive: true, mode: 0o700 });
+  let committed = false;
+  const issued = await issueHouseReceipt({
+    env: flagsOn(),
+    dir: box.dir,
+    store: {
+      commitEpoch() { committed = true; return { ok: true }; },
+      hasCommitted() { return false; },
+    },
+    client: mockKms(),
+    send: async () => '0xabc',
+    payment: payment({ nonce: '2b'.repeat(32) }),
+    observation: observation(),
+  });
+  assert.equal(issued.status, 400);
+  assert.equal(issued.body.code, 'verify_failed');
+  assert.equal(issued.body.pending_id, undefined);
+  assert.equal(pendingOpen(issued.body.pending_id), false);
+  assert.equal(committed, false);
+  assert.equal(existsSync(join(box.dir, 'auth-bindings.json')), false);
+  rmSync(disk.root, { recursive: true, force: true });
+  rmSync(missing.root, { recursive: true, force: true });
 });

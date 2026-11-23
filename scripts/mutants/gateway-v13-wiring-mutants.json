@@ -221,7 +221,7 @@
     {
       "id": "BW5",
       "file": "services/gateway/src/v13-boot.js",
-      "find": "function runtimeComplete(runtime) {\n  if (!runtime || typeof runtime !== 'object') return false;\n  if (!runtime.store) return false;\n  if (!runtime.dir) return false;\n  if (!runtime.client || typeof runtime.client.send !== 'function') return false;\n  if (typeof runtime.send !== 'function') return false;\n  return true;\n}",
+      "find": "function runtimeComplete(runtime) {\n  if (!runtime || typeof runtime !== 'object') return false;\n  if (!runtime.store) return false;\n  if (!runtime.dir) return false;\n  if (!runtime.client || typeof runtime.client.send !== 'function') return false;\n  if (typeof runtime.send !== 'function') return false;\n  if (!runtime.caller || typeof runtime.caller.bookId !== 'string' || runtime.caller.bookId === '') return false;\n  if (typeof runtime.caller.token !== 'string' || runtime.caller.token === '') return false;\n  return true;\n}",
       "replace": "function runtimeComplete(runtime) {\n  void runtime;\n  return true;\n}",
       "note": "B3 — missing store, dir, client, or send is treated as complete"
     },
@@ -287,6 +287,27 @@
       "find": "  const fields = { checkpointKey: present ? 'set' : 'missing' };",
       "replace": "  const fields = { checkpointKey: env.CHIT_CHECKPOINT_KMS_KEY_ID };",
       "note": "B13 — the log includes the key id value"
+    },
+    {
+      "id": "BW15",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (!runtime.caller || typeof runtime.caller.bookId !== 'string' || runtime.caller.bookId === '') return false;\n  if (typeof runtime.caller.token !== 'string' || runtime.caller.token === '') return false;\n",
+      "replace": "",
+      "note": "B16 — runtimeComplete no longer requires the house caller"
+    },
+    {
+      "id": "BW16",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "  if (!input.caller || typeof input.caller.bookId !== 'string' || input.caller.bookId === '') return false;\n  if (typeof input.caller.token !== 'string' || input.caller.token === '') return false;\n",
+      "replace": "",
+      "note": "B16 — issuanceRuntimeReady no longer requires the house caller"
+    },
+    {
+      "id": "BW17",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  const configured = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';\n  if (!configured) return null;\n  return callerForBook(store, configured);",
+      "replace": "  const configured = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';\n  if (!configured) {\n    const ids = [];\n    if (store?.books && typeof store.books.keys === 'function') {\n      for (const id of store.books.keys()) ids.push(String(id));\n    }\n    ids.sort();\n    return callerForBook(store, ids[0]);\n  }\n  return callerForBook(store, configured);",
+      "note": "B16 — a missing house book id falls back to the smallest book id"
     }
   ]
 }
