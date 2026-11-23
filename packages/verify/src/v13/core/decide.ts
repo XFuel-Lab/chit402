@@ -32,6 +32,9 @@ export const MAX_TREE_SIZE = Number.MAX_SAFE_INTEGER;
  */
 export const POST_HARDENING_RUNTIME_HASHES: readonly string[] = Object.freeze([
   '0x6006ad8cd474ca5093ce41d2cc0f99e4c6a036563712ecf301ab6d37f02091ed',
+  // Base mainnet (8453) ChitAnchor runtime. A getter revert on this image
+  // is could_not_check, not "not frozen". Not a pre-hardening hash.
+  '0xbaad531853ab89c65eeddee489d0290f41a623f785ded9855e80aefee9fb087f',
 ]);
 
 /**
