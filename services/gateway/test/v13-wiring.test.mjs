@@ -42,6 +42,25 @@ const { highSDer, publicPoint, signRawDigest } = await import('../../../packages
 const { bytesToBig } = await import('../../../packages/cs2-core/ecdsa/bytes.js');
 
 const USDC = '833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+
+function repeatDigit(digit, count) {
+  return String(digit).repeat(count);
+}
+
+function dummyKeyId(digit) {
+  return [
+    repeatDigit(digit, 8),
+    repeatDigit(digit, 4),
+    repeatDigit(digit, 4),
+    repeatDigit(digit, 4),
+    repeatDigit(digit, 12),
+  ].join('-');
+}
+
+function dummyKmsArn(digit) {
+  const head = ['arn', 'aws', 'kms', 'us-east-2'].join(':');
+  return [head, repeatDigit(digit, 12), `key/${dummyKeyId(digit)}`].join(':');
+}
 const SEPOLIA_HASH = '0x6006ad8cd474ca5093ce41d2cc0f99e4c6a036563712ecf301ab6d37f02091ed';
 const PRE_HASH = '0xb7ad0c729af141a19695bc89d09bd0a04a8d9ab9668373a066cba94f13aee45c';
 const FIXTURE = readFileSync(new URL('./fixtures/v10-issuance-response.json', import.meta.url));
@@ -447,7 +466,7 @@ test('T9 a store throw after the payment is final returns a pending id and verif
   let sends = 0;
   const log = [];
   const box = fresh();
-  const secret = 'arn:aws:kms:us-east-2:000000000000:key/00000000-0000-0000-0000-000000000000';
+  const secret = dummyKmsArn('0');
   const issued = await issueHouseReceipt({
     env: flagsOn(),
     dir: box.dir,
@@ -597,7 +616,7 @@ test('T12 a different caller with the same public id gets the same not-found bod
 test('T13 dummy secrets and signatures stay out of logs and error bodies', async () => {
   resetHouseState();
   const log = [];
-  const arn = 'arn:aws:kms:us-east-2:000000000000:key/11111111-1111-1111-1111-111111111111';
+  const arn = dummyKmsArn('1');
   const signature = 'cafebabe'.repeat(8);
   const box = fresh();
   const issued = await issueHouseReceipt({
@@ -617,7 +636,7 @@ test('T13 dummy secrets and signatures stay out of logs and error bodies', async
   const packed = JSON.stringify({ body: issued.body, log });
   assert.equal(packed.includes(arn), false);
   assert.equal(packed.includes(signature), false);
-  assert.equal(packed.includes('11111111-1111-1111-1111-111111111111'), false);
+  assert.equal(packed.includes(dummyKeyId('1')), false);
 });
 
 test('T14 the authorization binding is written by the request path', async () => {
