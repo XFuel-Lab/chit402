@@ -10,6 +10,8 @@ import { settlementProofEnabled } from './settlement-proof-flag.js';
 import {
   buildVerifyUrl, baseUrlFromReq, buildReceipt as buildSignedReceipt, mergeReceiptView, privacyOf,
 } from './receipt.js';
+import { issuanceEnabled } from './v13-flags.js';
+import { issueHouseReceipt } from './v13-issue.js';
 import {
   resolvePrivateSpendContext,
   bodyForPrivacyPricing,
@@ -1681,6 +1683,14 @@ async function buildReceipt({
   baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
   reqHost = null,
 }) {
+  if (issuanceEnabled(process.env)) {
+    return issueHouseReceipt({
+      env: process.env,
+      task,
+      receiptOpts: { baseUrl, reqHost },
+      baseUrl,
+    });
+  }
   const requestedForSub = requestedModel
     || task?.meta?.requestedModel
     || task?.intent?.requestedModel
