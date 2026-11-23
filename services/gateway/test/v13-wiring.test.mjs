@@ -1293,32 +1293,39 @@ test('B10 settle-path payment, observation, and caller win over task.meta', asyn
   resetHouseState();
   resetAnchorLedger();
   const box = fresh();
-  const receipt = await withProcessFlags(true, async () => {
-    setV13Runtime({
-      store: box.store,
-      dir: box.dir,
-      client: mockKms(),
-      send: async () => '0xabc',
-      caller: box.caller,
-    });
-    return buildV1Receipt({
-      task: {
-        taskId: 'b10',
-        status: 'completed',
-        meta: {
-          housePayment: payment({ nonce: 'ff'.repeat(32), chainId: 111, token: '44'.repeat(20) }),
-          houseObservation: observation({ blockHash: 'ee'.repeat(32), blockNumber: 4, finalizedNumber: 1 }),
-          houseCaller: box.other,
+  let receipt = null;
+  let thrown = null;
+  try {
+    receipt = await withProcessFlags(true, async () => {
+      setV13Runtime({
+        store: box.store,
+        dir: box.dir,
+        client: mockKms(),
+        send: async () => '0xabc',
+        caller: box.caller,
+      });
+      return buildV1Receipt({
+        task: {
+          taskId: 'b10',
+          status: 'completed',
+          meta: {
+            housePayment: payment({ nonce: 'ff'.repeat(32), chainId: 111, token: '44'.repeat(20) }),
+            houseObservation: observation({ blockHash: 'ee'.repeat(32), blockNumber: 4, finalizedNumber: 1 }),
+            houseCaller: box.other,
+          },
         },
-      },
-      taskId: 'b10',
-      provider: 'example-hub',
-      mock: true,
-      proverConfigured: false,
-      baseUrl: 'http://127.0.0.1:9',
-      payment: { ...payment({ nonce: '28'.repeat(32) }), observation: observation() },
+        taskId: 'b10',
+        provider: 'example-hub',
+        mock: true,
+        proverConfigured: false,
+        baseUrl: 'http://127.0.0.1:9',
+        payment: { ...payment({ nonce: '28'.repeat(32) }), observation: observation() },
+      });
     });
-  });
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown, null);
   assert.equal(receipt.v, 13);
   const rows = JSON.parse(readFileSync(join(box.dir, 'auth-bindings.json'), 'utf8')).rows;
   const row = rows[Object.keys(rows)[0]];
