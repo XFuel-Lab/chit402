@@ -20,6 +20,7 @@
 import { createPublicKey } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { inspect } from 'node:util';
 import { KMSClient } from '@aws-sdk/client-kms';
 import { ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
 import { broadcastCommittedAnchor, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
@@ -139,11 +140,52 @@ function loadEnvFile(env) {
   if (loaded?.error) throw bootRefused();
 }
 
+function sealedCaller(bookId, token) {
+  const caller = {
+    bookId,
+    token,
+    toJSON() {
+      return { bookId: this.bookId };
+    },
+  };
+  Object.defineProperty(caller, inspect.custom, {
+    enumerable: false,
+    value() {
+      return { bookId: this.bookId };
+    },
+  });
+  return caller;
+}
+
+function sealRuntime(runtime) {
+  const sealed = {
+    store: runtime.store,
+    dir: runtime.dir,
+    client: runtime.client,
+    send: runtime.send,
+    caller: runtime.caller,
+    toJSON() {
+      return { dir: this.dir, caller: this.caller };
+    },
+  };
+  Object.defineProperty(sealed, inspect.custom, {
+    enumerable: false,
+    value() {
+      const caller = this.caller;
+      return {
+        dir: this.dir,
+        caller: caller && typeof caller.bookId === 'string' ? { bookId: caller.bookId } : null,
+      };
+    },
+  });
+  return sealed;
+}
+
 function callerForBook(store, id) {
   if (!store || typeof id !== 'string' || id === '') return null;
   const token = typeof store.bookToken === 'function' ? store.bookToken(id) : null;
   if (typeof token !== 'string' || token === '') return null;
-  return { bookId: id, token };
+  return sealedCaller(id, token);
 }
 
 /**
@@ -447,13 +489,7 @@ async function guardListen(env, deps) {
   };
   if (!runtimeComplete(runtime)) throw bootRefused();
   await assertCheckpointPin(client, env, deps);
-  setV13Runtime({
-    store: runtime.store,
-    dir: runtime.dir,
-    client: runtime.client,
-    send: runtime.send,
-    caller: runtime.caller,
-  });
+  setV13Runtime(sealRuntime(runtime));
   return { ok: true, wired: true };
 }
 
