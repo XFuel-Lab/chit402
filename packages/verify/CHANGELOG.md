@@ -11,6 +11,10 @@ Not published. The bundled `version-windows.json` is test-signed in this build; 
 
 **Known limit of this pre-release (L5).** The earliest-head probe does not check an inclusion proof for the receipt's leaf at the probed tree_size, and does not require the probed head to be in the same epoch as the verified head. A trusted signed head of an unrelated log that was anchored early can therefore set the log time. Before 0.5.0 final the probe is tied to the leaf: inclusion proof at tree_size=k, same epoch. A test records the current behaviour and is marked to change.
 
+### Changed: ChitAnchor freeze and retired-key cutoff
+- An anchor whose epoch is after `frozenEpoch`, while `frozen()` is true, is `anchor_frozen` (exit 1). An anchor that names a checkpoint version retired at an earlier epoch is `key_retired` (exit 1). An anchor at the freeze epoch or at the cutoff epoch still passes.
+- A failed read of `frozen()`, `frozenEpoch()`, or `keyRetired(uint64)` is `anchor_state_unreadable` (exit 2). A revert of those getters is a deployment from before this contract: not frozen, and no version retired. Exit codes 0, 1, and 2 are unchanged for that deployment. No snapshot was re-signed.
+
 ### Fixed: one key window for receipts, tree heads, and epochs
 - A kid's history rows fold into one window on the receipt path, the tree-head path, and the epoch path: latest `not_before`, earliest `not_after`, earliest `revoked_at`, and revocation sticks. A later row cannot widen that window. `not_before` and `not_after` stay inclusive. `revoked_at` stays exclusive.
 - A tree head signed inside that window verifies when the kid has more than one lifecycle row. `kid_ambiguous` means the matched rows do not name one key (two labels, or two keys). On a receipt it is a key-window failure, exit 1. No matching row stays `kid_not_in_history`, exit 2.

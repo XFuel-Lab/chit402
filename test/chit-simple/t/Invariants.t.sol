@@ -15,7 +15,7 @@ contract ChitAnchorInvariantTest is Test {
     function setUp() public {
         vm.chainId(84532);
         address cp = address(0xC0FFEE);
-        anchor = new ChitAnchor(cp, address(0xC0117011));
+        anchor = new ChitAnchor(cp, address(0xC0117011), uint64(1_000_000));
         harness = new Rfc9162Harness();
         handler = new Handler(anchor);
         vm.deal(address(handler), 1 ether);

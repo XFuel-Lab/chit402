@@ -1,7 +1,9 @@
 /**
  * Node entry for the v13 path. The decisions live in core/decide.ts.
  * Pins are read only from the bundled snapshot's signed payload.
- * A checkpoint rotation is not consulted and cannot add a trusted sender.
+ * A checkpoint rotation does not add a trusted sender. The verifier does
+ * read freeze() and keyRetired(version). A revert is a pre-hardening
+ * deployment. A failed read is could_not_check.
  */
 
 import { createHash } from 'node:crypto';
@@ -523,6 +525,9 @@ function blankWorld(history: V13History, extra: Partial<V13World> = {}): V13Worl
 }
 
 const HEADS_FOR = '0x828a1095';
+const FROZEN_SELECTOR = '0x054f7d9c';
+const FROZEN_EPOCH_SELECTOR = '0x585db72a';
+const KEY_RETIRED_SELECTOR = '0x4979046b';
 
 function blockTag(hash: string): { blockHash: string; requireCanonical: true } {
   return { blockHash: hash, requireCanonical: true };
@@ -783,6 +788,9 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
   let headAbsent = false;
   let checkpointVersion: number | null = null;
   let anchorTime: number | null = null;
+  let frozen: V13World['frozen'] = 'no';
+  let frozenEpoch: number | null = null;
+  let keyCutoff: V13World['keyCutoff'] = null;
 
   try {
     const agreed = await agreedHeader(slots, line.chainId);
@@ -817,6 +825,42 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
         if (next.status !== 'word') ownRetired = 'successor_unreadable';
       } else if (retired.status !== 'revert' && retired.status !== 'word') {
         getterReason = retired.status === 'rpc_disagreement' ? 'rpc_disagreement' : 'rpc_unreachable';
+      }
+      const freezeWord = await callWord(slots, parsed.receipt.contract, FROZEN_SELECTOR, tag);
+      if (freezeWord.status === 'word') {
+        if (freezeWord.word === 1n) {
+          const epochWord = await callWord(slots, parsed.receipt.contract, FROZEN_EPOCH_SELECTOR, tag);
+          if (epochWord.status === 'word' && epochWord.word <= BigInt(Number.MAX_SAFE_INTEGER)) {
+            frozen = 'yes';
+            frozenEpoch = Number(epochWord.word);
+          } else {
+            frozen = 'unreadable';
+          }
+        } else if (freezeWord.word !== 0n) {
+          frozen = 'unreadable';
+        }
+      } else if (freezeWord.status !== 'revert') {
+        frozen = 'unreadable';
+      }
+      if (checkpointVersion != null) {
+        const cut = await callWords(
+          slots,
+          parsed.receipt.contract,
+          `${KEY_RETIRED_SELECTOR}${BigInt(checkpointVersion).toString(16).padStart(64, '0')}`,
+          tag,
+          2,
+        );
+        if (cut.status === 'words') {
+          const flag = cut.words[0];
+          const epoch = cut.words[1];
+          if ((flag !== 0n && flag !== 1n) || epoch > BigInt(Number.MAX_SAFE_INTEGER)) {
+            keyCutoff = 'unreadable';
+          } else {
+            keyCutoff = { retired: flag === 1n, epoch: Number(epoch) };
+          }
+        } else if (cut.status !== 'revert') {
+          keyCutoff = 'unreadable';
+        }
       }
     }
     const pinPredecessor = predecessorOf(payload, line.chainId, parsed.receipt.contract);
@@ -927,6 +971,9 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     headAbsent,
     checkpointVersion,
     anchorTime,
+    frozen,
+    frozenEpoch,
+    keyCutoff,
     rpcConfigured: true,
   }), hooks), version);
 }
@@ -982,24 +1029,30 @@ function predecessorOf(payload: Record<string, unknown> | null, chainId: number,
   return null;
 }
 
+type CallWords = { status: 'words'; words: bigint[] } | { status: 'revert' | 'empty' | 'rpc_disagreement' | 'rpc_unreachable' };
 type CallWord = { status: 'word'; word: bigint } | { status: 'revert' | 'empty' | 'rpc_disagreement' | 'rpc_unreachable' };
 
-function callKind(value: { ok: true; value: unknown } | { ok: false; err: unknown }): CallWord {
+function callKind(value: { ok: true; value: unknown } | { ok: false; err: unknown }, words: number): CallWords {
   if (!value.ok) {
     const message = value.err && typeof value.err === 'object' && 'message' in value.err ? String((value.err as { message?: string }).message) : '';
     if (/execution reverted/i.test(message)) return { status: 'revert' };
     return { status: 'rpc_unreachable' };
   }
-  if (typeof value.value !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(value.value)) return { status: 'empty' };
-  return { status: 'word', word: BigInt(value.value) };
+  const width = words * 64;
+  if (typeof value.value !== 'string' || !new RegExp(`^0x[0-9a-fA-F]{${width}}$`).test(value.value)) return { status: 'empty' };
+  const body = value.value.slice(2);
+  const out: bigint[] = [];
+  for (let i = 0; i < words; i += 1) out.push(BigInt(`0x${body.slice(i * 64, (i + 1) * 64)}`));
+  return { status: 'words', words: out };
 }
 
-async function callWord(
+async function callWords(
   slots: RpcSlot[],
   to: string,
   data: string,
   block: { blockHash: string; requireCanonical: true },
-): Promise<CallWord> {
+  words: number,
+): Promise<CallWords> {
   const publics = slots.filter((slot) => !slot.keyed);
   if (publics.length < 2) return { status: 'rpc_unreachable' };
   const settled = await Promise.all(slots.map(async (slot) => {
@@ -1009,17 +1062,28 @@ async function callWord(
       return { slot, ok: false as const, err };
     }
   }));
-  const kinds = settled.map((item) => ({ slot: item.slot, kind: callKind(item.ok ? { ok: true, value: item.value } : { ok: false, err: item.err }) }));
+  const kinds = settled.map((item) => ({ slot: item.slot, kind: callKind(item.ok ? { ok: true, value: item.value } : { ok: false, err: item.err }, words) }));
   const relevant = kinds.filter((item) => !(item.slot.keyed && item.kind.status === 'rpc_unreachable'));
   if (relevant.some((item) => !item.slot.keyed && item.kind.status === 'rpc_unreachable')) return { status: 'rpc_unreachable' };
   if (relevant.filter((item) => !item.slot.keyed).length < 2) return { status: 'rpc_unreachable' };
-  const kindKey = (kind: CallWord) => (kind.status === 'word' ? `word:${kind.word.toString()}` : kind.status);
+  const kindKey = (kind: CallWords) => (kind.status === 'words' ? `words:${kind.words.map((word) => word.toString()).join(',')}` : kind.status);
   const first = kindKey(relevant[0].kind);
   for (const item of relevant.slice(1)) {
     const kind = item.kind;
     if (kindKey(kind) !== first) return { status: 'rpc_disagreement' };
   }
   return relevant[0].kind;
+}
+
+async function callWord(
+  slots: RpcSlot[],
+  to: string,
+  data: string,
+  block: { blockHash: string; requireCanonical: true },
+): Promise<CallWord> {
+  const got = await callWords(slots, to, data, block, 1);
+  if (got.status === 'words') return { status: 'word', word: got.words[0] };
+  return got;
 }
 
 export { isExactV13Receipt };

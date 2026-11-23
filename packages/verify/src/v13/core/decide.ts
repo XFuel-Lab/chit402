@@ -7,7 +7,9 @@
  *
  * A v0 checkpoint-key rotation is not a trust event. The anchor sender is
  * the checkpoint address in the bundled pin. An on-chain rotation does not
- * add a trusted sender.
+ * add a trusted sender. A retired checkpoint version is. An anchor that names
+ * that version after its cutoff epoch is invalid. An anchor after a freeze
+ * is invalid. A failed read of either state is could_not_check.
  */
 
 export const V13_SCHEMA = 'chit402.cs2.receipt.v1';
@@ -197,6 +199,18 @@ export interface V13World {
   headAbsent?: boolean;
   /** checkpointVersion from heads[e]. Absent skips the pin-list check. */
   checkpointVersion?: number | null;
+  /**
+   * Freeze flag at the agreed block. `unreadable` is a failed read.
+   * Omitted, or `no`, means anchor is not halted.
+   */
+  frozen?: 'no' | 'yes' | 'unreadable';
+  /** latestEpoch stored by freeze(). Required when frozen is `yes`. */
+  frozenEpoch?: number | null;
+  /**
+   * Cutoff for the head's checkpoint version. `unreadable` is a failed read.
+   * Omitted or null means that version has not been rotated out.
+   */
+  keyCutoff?: { retired: boolean; epoch: number } | 'unreadable' | null;
   /** heads[e].anchorTime. Absent skips the lateness line. */
   anchorTime?: number | null;
   /** Hostnames of the RPCs that were asked. No path, query, or userinfo. */
@@ -334,6 +348,9 @@ const MESSAGES: Record<string, string> = {
   checkpoint_version: 'The anchor checkpoint version is not in the pin.',
   tree_size_above_cap: 'The anchored tree size is above the verifier cap.',
   anchor_sender_mismatch: 'anchor sender mismatch',
+  anchor_frozen: 'The anchor epoch is after the contract was frozen.',
+  key_retired: 'The checkpoint key was retired before this epoch.',
+  anchor_state_unreadable: 'The freeze and key-cutoff state could not be read.',
   code_hash_mismatch: 'The contract code hash does not match the pin.',
   code_unreadable: 'The contract code could not be read.',
   hour_outside_coverage: 'The receipt hour is outside the contract coverage.',
@@ -817,6 +834,31 @@ function safeHour(value: bigint): number | null {
   return Number(value);
 }
 
+/**
+ * Freeze and key-retirement gate. A missing field is not a halt: the
+ * pre-hardening bytecode has no getter, and the chain reader leaves the
+ * field unset when that getter reverts. `unreadable` is a failed read.
+ */
+export function anchorHalt(
+  world: Pick<V13World, 'frozen' | 'frozenEpoch' | 'keyCutoff'>,
+  epoch: number,
+): { ok: true } | { ok: false; exit: 1 | 2; reason: 'anchor_frozen' | 'key_retired' | 'anchor_state_unreadable' } {
+  if (world.frozen === 'unreadable' || world.keyCutoff === 'unreadable') {
+    return { ok: false, exit: 2, reason: 'anchor_state_unreadable' };
+  }
+  if (world.frozen === 'yes') {
+    const at = world.frozenEpoch;
+    if (!isJsonInteger(at) || at < 0) return { ok: false, exit: 2, reason: 'anchor_state_unreadable' };
+    if (epoch > at) return { ok: false, exit: 1, reason: 'anchor_frozen' };
+  }
+  const cut = world.keyCutoff;
+  if (cut && cut.retired) {
+    if (!isJsonInteger(cut.epoch) || cut.epoch < 0) return { ok: false, exit: 2, reason: 'anchor_state_unreadable' };
+    if (epoch > cut.epoch) return { ok: false, exit: 1, reason: 'key_retired' };
+  }
+  return { ok: true };
+}
+
 function anchorTiming(hourStart: number, anchorTime: number): string {
   const deadline = hourStart + 3600 + MAX_ANCHOR_LAG;
   if (anchorTime <= deadline) return 'anchored on time';
@@ -905,6 +947,12 @@ export function runV13(receipt: unknown, world: V13World, hooks: V13Hooks): V13R
   const allowedVersions = pin.checkpointVersions ?? [1];
   if (world.checkpointVersion == null || !allowedVersions.includes(world.checkpointVersion)) {
     return fail(2, 'checkpoint_version', world, { anchor: 'could_not_check' }, messageOf('checkpoint_version'));
+  }
+  const halted = anchorHalt(world, parsed.receipt.epoch);
+  if (!halted.ok) {
+    return fail(halted.exit, halted.reason, world, {
+      anchor: halted.exit === 1 ? 'fail' : 'could_not_check',
+    }, messageOf(halted.reason));
   }
   if (!world.codeHash) return fail(2, 'code_unreadable', world, { anchor: 'could_not_check' }, messageOf('code_unreadable'));
   if (world.codeHash.toLowerCase() !== pin.codeHash.toLowerCase()) {

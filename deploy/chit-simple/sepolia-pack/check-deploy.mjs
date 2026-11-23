@@ -223,6 +223,8 @@ function main() {
   if (onCheckpoint !== checkpoint) fail(`checkpoint() ${onCheckpoint} != ${checkpoint}`);
   if (onController !== controller) fail(`controller() ${onController} != ${controller}`);
   if (version !== 1n) fail(`checkpointVersion() is ${version}, expected 1`);
+  const growth = BigInt(cast(['call', address, 'MAX_GROWTH()(uint64)'], rpc));
+  if (growth !== 1000000n) fail(`MAX_GROWTH() is ${growth}, expected 1000000`);
   if (hash !== expected.hash) fail(`code hash ${hash} != ${expected.hash}`);
   if (expected.address && address !== expected.address) fail(`address ${address} != ${expected.address}`);
   const controllerProblem = checkController(controllerView(controller, rpc));

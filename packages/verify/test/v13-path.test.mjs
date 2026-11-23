@@ -1143,6 +1143,16 @@ function sceneHandler(s) {
       if (s.retiredDisagree && second && data === '0x2eb38ae0') return `0x${word(1)}`;
       if (s.retiredDown && data === '0x2eb38ae0') return { error: 'down' };
       if (data === '0x2eb38ae0' && s.retired) return `0x${word(1)}`;
+      if (s.freezeDown && data === '0x054f7d9c') return { error: 'down' };
+      if (s.frozen && data === '0x054f7d9c') return `0x${word(1)}`;
+      if (data === '0x585db72a') {
+        if (s.freezeEpochDown) return { error: 'down' };
+        if (s.frozenEpoch != null) return `0x${word(s.frozenEpoch)}`;
+      }
+      if (typeof data === 'string' && data.startsWith('0x4979046b')) {
+        if (s.cutoffDown) return { error: 'down' };
+        if (s.cutoff != null) return `0x${word(1)}${word(s.cutoff)}`;
+      }
       return { error: 'execution reverted' };
     }
     if (method === 'eth_getBlockByHash' && params[0].toLowerCase() === payHash) {
@@ -2777,7 +2787,7 @@ test('T1 a long chain reads the anchor by state and does not scan logs', async (
   const seen = await runScene({ payment: built.payment, logs: [okLog(built)], fin: 10_000 }, v13Receipt(built), (u) => optionsFor(key, doc, u));
   assert.equal(seen.v.exit_code, 0, seen.v.reason);
   assert.equal(seen.calls.some((call) => call[0] === 'eth_getLogs'), false);
-  assert.ok(anchorCallsPerUrl(seen.calls) <= 6, String(anchorCallsPerUrl(seen.calls)));
+  assert.ok(anchorCallsPerUrl(seen.calls) <= 8, String(anchorCallsPerUrl(seen.calls)));
 });
 
 test('T2 and T3 a getLogs refusal or pruned history still verifies', async () => {
@@ -3243,4 +3253,123 @@ test('the receipt epoch is the anchored epoch, and the hourly state root is the 
     ],
   }, hooks);
   assert.equal(proved.exit, 0, proved.reason);
+});
+
+function haltWorld(built, doc, patch) {
+  const payload = JSON.parse(Buffer.from(doc.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
+  return {
+    history: { ok: true, reason: null, source: 'bundled', headHash: doc.head_hash, entryCount: 1, asOf: null },
+    snapshotSigned: true,
+    bundledPayload: payload,
+    narrowing: [],
+    liveExtension: null,
+    rpcConfigured: true,
+    finalizedNumber: 110,
+    checkpointVersion: 1,
+    events: [{
+      epoch: 1n, hourStart: BigInt(HOUR), size: 1n, root: built.leaf, stateRoot: built.stateRoot,
+      kind: 0, blockNumber: 105, blockHash: `0x${'ef'.repeat(32)}`, txHash: `0x${'ee'.repeat(32)}`,
+      logIndex: 0, address: CONTRACT,
+    }],
+    codeHash: pinOf().codeHash,
+    anchorFrom: CHECKPOINT,
+    anchorTo: CONTRACT,
+    successor: 'not_required',
+    chainGenesis: null,
+    line: {
+      chainId: 84532, blockHash: `0x${built.payment.blockHash}`, blockNumber: 100, blockTime: 1_700_000_000,
+      txIndex: 0, localLogIndex: 1, txHash: `0x${built.payment.txHash}`, token: USDC,
+      from: `0x${built.payment.from}`, to: `0x${built.payment.to}`, value: 1000000n, method: 1,
+      authorizer: `0x${built.payment.authorizer}`, nonce: `0x${built.payment.nonce}`, bytes: built.line,
+    },
+    lineReason: null,
+    rotatedTo: null,
+    payment: {
+      blockHash: `0x${built.payment.blockHash}`, txIndexMatch: true, txTo: USDC, input: '0x',
+      chainNumber: 100, chainTime: 1_700_000_000,
+      logs: [
+        { index: 0, address: USDC, topics: ['0x98de503528ee59b575ef0c0a2576a82497bfc029a5685b209e9ec333479b10a5', `0x${'0'.repeat(24)}${built.payment.authorizer}`, `0x${built.payment.nonce}`], data: '0x' },
+        { index: 1, address: USDC, topics: ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef', `0x${'0'.repeat(24)}${built.payment.from}`, `0x${'0'.repeat(24)}${built.payment.to}`], data: `0x${word(built.payment.value)}` },
+      ],
+    },
+    canonical: 'ok',
+    ...patch,
+  };
+}
+
+const haltHooks = {
+  leafHash,
+  verifyInclusion: () => ({ ok: true }),
+  stateOk: () => true,
+  paymentOk: () => ({ ok: true, exit: 0, reason: null }),
+};
+
+test('an anchor after a freeze is exit 1 and the freeze epoch itself still passes', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const after = runV13(v13Receipt(built), haltWorld(built, doc, { frozen: 'yes', frozenEpoch: 0 }), haltHooks);
+  assert.equal(after.exit, 1);
+  assert.equal(after.reason, 'anchor_frozen');
+  assert.equal(after.checks.anchor, 'fail');
+  const at = runV13(v13Receipt(built), haltWorld(built, doc, { frozen: 'yes', frozenEpoch: 1 }), haltHooks);
+  assert.equal(at.exit, 0, at.reason);
+});
+
+test('a retired checkpoint key after its cutoff epoch is exit 1', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const retired = runV13(v13Receipt(built), haltWorld(built, doc, { keyCutoff: { retired: true, epoch: 0 } }), haltHooks);
+  assert.equal(retired.exit, 1);
+  assert.equal(retired.reason, 'key_retired');
+  assert.equal(retired.checks.anchor, 'fail');
+  const atCutoff = runV13(v13Receipt(built), haltWorld(built, doc, { keyCutoff: { retired: true, epoch: 1 } }), haltHooks);
+  assert.equal(atCutoff.exit, 0, atCutoff.reason);
+  const live = runV13(v13Receipt(built), haltWorld(built, doc, { keyCutoff: { retired: false, epoch: 0 } }), haltHooks);
+  assert.equal(live.exit, 0, live.reason);
+});
+
+test('a freeze or key-cutoff read that fails is exit 2', () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const freeze = runV13(v13Receipt(built), haltWorld(built, doc, { frozen: 'unreadable' }), haltHooks);
+  assert.equal(freeze.exit, 2);
+  assert.equal(freeze.reason, 'anchor_state_unreadable');
+  assert.equal(freeze.checks.anchor, 'could_not_check');
+  assert.equal(/invalid/i.test(freeze.message), false);
+  const cutoff = runV13(v13Receipt(built), haltWorld(built, doc, { keyCutoff: 'unreadable' }), haltHooks);
+  assert.equal(cutoff.exit, 2);
+  assert.equal(cutoff.reason, 'anchor_state_unreadable');
+  assert.equal(/invalid/i.test(cutoff.message), false);
+  const missingEpoch = runV13(v13Receipt(built), haltWorld(built, doc, { frozen: 'yes', frozenEpoch: null }), haltHooks);
+  assert.equal(missingEpoch.exit, 2);
+  assert.equal(missingEpoch.reason, 'anchor_state_unreadable');
+});
+
+test('the chain reader honors a freeze and a retired key, and a failed read is exit 2', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const receipt = v13Receipt(built);
+  const opts = (u) => optionsFor(key, doc, u);
+  const scene = { payment: built.payment, logs: [okLog(built)] };
+  const open = await runScene(scene, receipt, opts);
+  assert.equal(open.v.exit_code, 0, open.v.reason);
+  const frozen = await runScene({ ...scene, frozen: true, frozenEpoch: 0 }, receipt, opts);
+  assert.equal(frozen.v.exit_code, 1);
+  assert.equal(frozen.v.reason, 'anchor_frozen');
+  const atFreeze = await runScene({ ...scene, frozen: true, frozenEpoch: 1 }, receipt, opts);
+  assert.equal(atFreeze.v.exit_code, 0, atFreeze.v.reason);
+  const retired = await runScene({ ...scene, cutoff: 0 }, receipt, opts);
+  assert.equal(retired.v.exit_code, 1);
+  assert.equal(retired.v.reason, 'key_retired');
+  const down = await runScene({ ...scene, freezeDown: true }, receipt, opts);
+  assert.equal(down.v.exit_code, 2);
+  assert.equal(down.v.reason, 'anchor_state_unreadable');
+  assert.equal(/invalid/i.test(down.v.message), false);
+  const cutoffDown = await runScene({ ...scene, cutoffDown: true }, receipt, opts);
+  assert.equal(cutoffDown.v.exit_code, 2);
+  assert.equal(cutoffDown.v.reason, 'anchor_state_unreadable');
 });

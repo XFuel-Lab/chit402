@@ -5,7 +5,7 @@
   "evmVersion": "cancun",
   "bytecodeHash": "none",
   "cborMetadata": false,
-  "note": "Runtime bytecode embeds the domain immutable, so the hash depends on chain id and the deployed address. It does not depend on the checkout path or on the constructor addresses. The example below is a local prediction for a fixed deployer, nonce, and checkpoint on Base Sepolia. The preview controller is the example controller. Recompute with print-runtime.mjs for the real deployer and checkpoint before the owner broadcasts.",
+  "note": "Runtime bytecode embeds the domain immutable and MAX_GROWTH, so the hash depends on chain id, the deployed address, and the growth cap. It does not depend on the checkout path or on the constructor addresses. The preview and the broadcast pass DEFAULT_MAX_GROWTH (1000000). The example below is a local prediction for a fixed deployer, nonce, and checkpoint on Base Sepolia. The preview controller is the example controller. Recompute with print-runtime.mjs for the real deployer and checkpoint before the owner broadcasts.",
   "example": {
     "chainId": 84532,
     "deployer": "0x1111111111111111111111111111111111111111",
@@ -13,6 +13,6 @@
     "checkpoint": "0x2222222222222222222222222222222222222222",
     "controller": "0x4444444444444444444444444444444444444444",
     "contract": "0x8f7a45ebde059392e46a46dcc14ab24681a961ea",
-    "runtimeCodeHash": "0xb7ad0c729af141a19695bc89d09bd0a04a8d9ab9668373a066cba94f13aee45c"
+    "runtimeCodeHash": "0x768497c45851c7547015a5bfd3384126b0d8bb4e737465bc3a3411cbbe0ceac9"
   }
 }
