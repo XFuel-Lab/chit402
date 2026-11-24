@@ -3,11 +3,26 @@
  */
 import { createHash, createPublicKey } from 'node:crypto';
 import http from 'node:http';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { inspect } from 'node:util';
 
 process.env.NODE_ENV = 'test';
 process.env.HUB_CATALOG_OFFLINE = 'true';
@@ -875,15 +890,36 @@ function livePin(box, address = MAINNET_CHECKPOINT) {
   };
 }
 
+function attachHouseFile(box, token = 'test-house-token-1') {
+  const base = box.root || box.store.dir;
+  const secretDir = join(base, 'secret');
+  mkdirSync(secretDir, { mode: 0o700 });
+  chmodSync(secretDir, 0o700);
+  const bookId = box.book ? box.book.id : box.caller.bookId;
+  const pkBytes = box.book ? box.book.bookPk : box.store.bookRecord(bookId).bookPk;
+  const file = join(secretDir, 'book.json');
+  writeFileSync(file, JSON.stringify({
+    v: 1,
+    bookId,
+    token,
+    bookPk: Buffer.from(pkBytes).toString('hex'),
+  }), { mode: 0o600 });
+  chmodSync(file, 0o600);
+  if (box.env) box.env.CHIT_V13_HOUSE_TOKEN_FILE = file;
+  return file;
+}
+
 async function wireOpenedHouse(box) {
   mkdirSync(box.dir, { recursive: true, mode: 0o700 });
   chmodSync(box.dir, 0o700);
   chmodSync(box.store.dir, 0o700);
+  const file = attachHouseFile(box);
   return wireV13Runtime({
     ...flagsOn(),
     CHIT_V13_STORE_PATH: box.store.dir,
     CHIT_V13_BIND_DIR: box.dir,
     CHIT_V13_HOUSE_BOOK_ID: box.caller.bookId,
+    CHIT_V13_HOUSE_TOKEN_FILE: file,
   }, {
     ...pinDeps(),
     openStore() { return box.store; },
@@ -968,6 +1004,7 @@ test('B4 a GetPublicKey for another address refuses to listen', async () => {
   assertStartServerWires();
   setV13Runtime(null);
   const box = preparedBoot();
+  attachHouseFile(box);
   const log = [];
   await assert.rejects(
     () => wireV13Runtime(box.env, { ...livePin(box, `0x${'12'.repeat(20)}`), log: (row) => log.push(row) }),
@@ -982,6 +1019,7 @@ test('B5 a matching GetPublicKey wires store, dir, client, and send', async () =
   assertStartServerWires();
   setV13Runtime(null);
   const box = preparedBoot();
+  attachHouseFile(box);
   const deps = livePin(box);
   const out = await wireV13Runtime(box.env, deps);
   assert.equal(out.wired, true);
@@ -1341,6 +1379,7 @@ test('B11 a group-readable env file refuses to listen and mode 600 is accepted',
   setV13Runtime(null);
   delete process.env.CHIT_V13_BOOT_MARKER;
   const looseBoot = preparedBoot();
+  attachHouseFile(looseBoot);
   const loose = join(looseBoot.root, 'loose.env');
   writeFileSync(loose, 'CHIT_V13_BOOT_MARKER=loose\n', { mode: 0o644 });
   chmodSync(loose, 0o644);
@@ -1351,6 +1390,7 @@ test('B11 a group-readable env file refuses to listen and mode 600 is accepted',
   assert.equal(process.env.CHIT_V13_BOOT_MARKER, undefined);
 
   const tightBoot = preparedBoot();
+  attachHouseFile(tightBoot);
   const tight = join(tightBoot.root, 'tight.env');
   writeFileSync(tight, 'CHIT_V13_BOOT_MARKER=tight\n', { mode: 0o600 });
   chmodSync(tight, 0o600);
@@ -1366,6 +1406,7 @@ test('B11 a group-readable env file refuses to listen and mode 600 is accepted',
 test('B12 a group-readable store or bind dir refuses to listen and mode 700 is accepted', async () => {
   setV13Runtime(null);
   const box = preparedBoot();
+  attachHouseFile(box);
   chmodSync(box.bindDir, 0o755);
   await assert.rejects(
     () => wireV13Runtime(box.env, livePin(box)),
@@ -1387,6 +1428,7 @@ test('B12 a group-readable store or bind dir refuses to listen and mode 700 is a
 test('B13 logs and errors do not contain the dummy key id or ARN', async () => {
   setV13Runtime(null);
   const box = preparedBoot();
+  attachHouseFile(box);
   const arn = dummyKmsArn('3');
   const keyId = dummyKeyId('3');
   const log = [];
@@ -1487,6 +1529,7 @@ test('B16 a flags-on listen requires a configured house book with an in-memory t
   assert.equal(readV13Runtime(), null);
 
   const missing = preparedBoot();
+  attachHouseFile(missing);
   const missingEnv = { ...missing.env };
   delete missingEnv.CHIT_V13_HOUSE_BOOK_ID;
   await assert.rejects(
@@ -1525,4 +1568,528 @@ test('B16 a flags-on listen requires a configured house book with an in-memory t
   assert.equal(existsSync(join(box.dir, 'auth-bindings.json')), false);
   rmSync(disk.root, { recursive: true, force: true });
   rmSync(missing.root, { recursive: true, force: true });
+});
+
+function houseCanary(tag) {
+  return `canary-${tag}-token-value`;
+}
+
+function makeHouseTree() {
+  const root = mkdtempSync(join(tmpdir(), 'v13-hfile-'));
+  const storeDir = join(root, 'store');
+  const bindDir = join(root, 'bind');
+  const secretDir = join(root, 'secret');
+  for (const dir of [storeDir, bindDir, secretDir]) {
+    mkdirSync(dir, { mode: 0o700 });
+    chmodSync(dir, 0o700);
+  }
+  const bookId = 'aa'.repeat(32);
+  const salt = '12'.repeat(32);
+  const bookPk = '07'.repeat(32);
+  const state = join(storeDir, 'store-state.json');
+  writeFileSync(state, JSON.stringify({
+    v: 1,
+    epochs: [],
+    receipts: [],
+    books: { [bookId]: { bookSalt: salt } },
+  }));
+  return { root, storeDir, bindDir, secretDir, bookId, salt, bookPk, state };
+}
+
+function writeTokenFile(tree, { token, mode = 0o600, body, name = 'book.json', dir } = {}) {
+  const folder = dir || tree.secretDir;
+  const file = join(folder, name);
+  const text = body == null ? JSON.stringify({
+    v: 1,
+    bookId: tree.bookId,
+    token,
+    bookPk: tree.bookPk,
+  }) : body;
+  writeFileSync(file, text, { mode });
+  chmodSync(file, mode);
+  return file;
+}
+
+function houseBootEnv(tree, file, over = {}) {
+  const env = {
+    ...flagsOn(),
+    CHIT_V13_STORE_PATH: tree.storeDir,
+    CHIT_V13_BIND_DIR: tree.bindDir,
+    CHIT_V13_HOUSE_BOOK_ID: tree.bookId,
+    ...over,
+  };
+  if (file !== undefined) env.CHIT_V13_HOUSE_TOKEN_FILE = file;
+  return env;
+}
+
+function foreignOwnerFs() {
+  return {
+    lstatSync(file) { return lstatSync(file); },
+    openSync(file, flags) { return openSync(file, flags); },
+    fstatSync(fd) {
+      const st = fstatSync(fd);
+      return new Proxy(st, {
+        get(target, prop, receiver) {
+          if (prop === 'uid') return target.uid + 1;
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+    },
+    readSync(fd, buf, offset, length, position) {
+      return readSync(fd, buf, offset, length, position);
+    },
+    closeSync(fd) { closeSync(fd); },
+  };
+}
+
+function foreignDirFs() {
+  return {
+    lstatSync(file) {
+      const st = lstatSync(file);
+      if (typeof st.isDirectory === 'function' && st.isDirectory()) {
+        return new Proxy(st, {
+          get(target, prop, receiver) {
+            if (prop === 'uid') return target.uid + 1;
+            const value = Reflect.get(target, prop, receiver);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+      }
+      return st;
+    },
+    openSync(file, flags) { return openSync(file, flags); },
+    fstatSync(fd) { return fstatSync(fd); },
+    readSync(fd, buf, offset, length, position) {
+      return readSync(fd, buf, offset, length, position);
+    },
+    closeSync(fd) { closeSync(fd); },
+  };
+}
+
+async function refuseHouse(env, reason, deps) {
+  setV13Runtime(null);
+  let caught = null;
+  try {
+    await wireV13Runtime(env, deps || pinDeps());
+  } catch (err) {
+    caught = err;
+  }
+  assert.ok(caught);
+  assert.equal(caught.code, 'v13_boot_refused');
+  assert.equal(caught.reason, reason);
+  assert.equal(caught.message, 'v13 boot refused');
+  assert.equal(caught.cause, undefined);
+  assert.equal(readV13Runtime(), null);
+  return caught;
+}
+
+function packedLeak(parts) {
+  return parts.map((part) => {
+    if (typeof part === 'string') return part;
+    let text = '';
+    try { text += inspect(part, { depth: 8 }); } catch { text += ''; }
+    try { text += JSON.stringify(part); } catch { text += ''; }
+    return text;
+  }).join('\n');
+}
+
+test('H1 a flags-on boot opens the store with the house book from the file', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('h1');
+  const before = readFileSync(tree.state);
+  const file = writeTokenFile(tree, { token: canary });
+  setV13Runtime(null);
+  let thrown = null;
+  let out = null;
+  try {
+    out = await wireV13Runtime(houseBootEnv(tree, file), pinDeps());
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown, null);
+  assert.equal(out.wired, true);
+  const runtime = readV13Runtime();
+  assert.equal(runtime.caller.bookId, tree.bookId);
+  assert.equal(runtime.caller.token, canary);
+  const after = readFileSync(tree.state);
+  assert.equal(after.equals(before), true);
+  assert.equal(after.includes(Buffer.from(canary)), false);
+  assert.equal(after.toString('utf8').includes('"token"'), false);
+  const parsed = JSON.parse(after.toString('utf8'));
+  assert.deepEqual(parsed.books[tree.bookId], { bookSalt: tree.salt });
+  setV13Runtime(null);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H2 flags off do not read or stat the house token file', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('h2');
+  const before = readFileSync(tree.state);
+  const file = writeTokenFile(tree, { token: canary, mode: 0o644 });
+  const seen = { read: false, fs: false };
+  const base = {
+    CHIT_V13_HOUSE_TOKEN_FILE: file,
+    CHIT_V13_STORE_PATH: tree.storeDir,
+    CHIT_V13_HOUSE_BOOK_ID: tree.bookId,
+  };
+  const env = new Proxy(base, {
+    get(target, prop, receiver) {
+      if (prop === 'CHIT_V13_HOUSE_TOKEN_FILE') seen.read = true;
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  const deps = {
+    fs: {
+      lstatSync() { seen.fs = true; throw new Error('statted'); },
+      openSync() { seen.fs = true; throw new Error('opened'); },
+    },
+    openStore() { throw new Error('opened store'); },
+  };
+  let thrown = null;
+  try {
+    const unset = await wireV13Runtime(env, deps);
+    assert.equal(unset.wired, false);
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown, null);
+  const flagged = new Proxy({
+    ...base,
+    CHIT_V13_ISSUANCE: 'false',
+    CHIT_V13_MAINNET_SEALER: 'false',
+    CHIT_V13_STORE: 'false',
+  }, {
+    get(target, prop, receiver) {
+      if (prop === 'CHIT_V13_HOUSE_TOKEN_FILE') seen.read = true;
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  try {
+    const off = await wireV13Runtime(flagged, deps);
+    assert.equal(off.wired, false);
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown, null);
+  assert.equal(seen.read, false);
+  assert.equal(seen.fs, false);
+  assert.equal(readFileSync(tree.state).equals(before), true);
+  const issued = await issueHouseReceipt({ env: {}, task: byteTask(), receiptOpts: RECEIPT_OPTS });
+  assert.equal(issued.status, 200);
+  assert.deepEqual(issued.bytes, FIXTURE);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H3 a missing house token path refuses to listen', async () => {
+  const tree = makeHouseTree();
+  await refuseHouse(houseBootEnv(tree, undefined), 'token_file_missing');
+  await refuseHouse(houseBootEnv(tree, ''), 'token_file_missing');
+  await refuseHouse(houseBootEnv(tree, '   '), 'token_file_missing');
+  await refuseHouse(houseBootEnv(tree, join(tree.secretDir, 'missing.json')), 'token_file_missing');
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H4 a symlink or directory house token path is not a regular file', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('h4');
+  const file = writeTokenFile(tree, { token: canary });
+  const link = join(tree.secretDir, 'link.json');
+  symlinkSync(file, link);
+  const linked = await refuseHouse(houseBootEnv(tree, link), 'token_file_not_regular');
+  assert.equal(packedLeak([linked, linked.stack]).includes(canary), false);
+  assert.equal(packedLeak([linked, linked.stack]).includes(link), false);
+  const asDir = await refuseHouse(houseBootEnv(tree, tree.secretDir), 'token_file_not_regular');
+  assert.equal(packedLeak([asDir]).includes(canary), false);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H5 a house token file owned by another uid is refused', async () => {
+  const tree = makeHouseTree();
+  const file = writeTokenFile(tree, { token: houseCanary('h5') });
+  await refuseHouse(houseBootEnv(tree, file), 'token_file_owner', { ...pinDeps(), fs: foreignOwnerFs() });
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H6 house token file mode must be 600 or tighter', async () => {
+  const loose = makeHouseTree();
+  await refuseHouse(houseBootEnv(loose, writeTokenFile(loose, { token: houseCanary('h6a'), mode: 0o644 })), 'token_file_mode');
+  await refuseHouse(houseBootEnv(loose, writeTokenFile(loose, { token: houseCanary('h6b'), mode: 0o660, name: 'group.json' })), 'token_file_mode');
+  rmSync(loose.root, { recursive: true, force: true });
+
+  const owner = makeHouseTree();
+  const canary = houseCanary('h6c');
+  const file = writeTokenFile(owner, { token: canary, mode: 0o600 });
+  setV13Runtime(null);
+  const opened = await wireV13Runtime(houseBootEnv(owner, file), pinDeps());
+  assert.equal(opened.wired, true);
+  assert.equal(readV13Runtime().caller.token, canary);
+  setV13Runtime(null);
+  chmodSync(file, 0o400);
+  const tighter = await wireV13Runtime(houseBootEnv(owner, file), pinDeps());
+  assert.equal(tighter.wired, true);
+  assert.equal(readV13Runtime().caller.token, canary);
+  setV13Runtime(null);
+  rmSync(owner.root, { recursive: true, force: true });
+});
+
+test('H7 the house token directory must be a private directory', async () => {
+  const loose = makeHouseTree();
+  const file = writeTokenFile(loose, { token: houseCanary('h7') });
+  chmodSync(loose.secretDir, 0o755);
+  await refuseHouse(houseBootEnv(loose, file), 'token_file_dir');
+  chmodSync(loose.secretDir, 0o770);
+  await refuseHouse(houseBootEnv(loose, file), 'token_file_dir');
+  chmodSync(loose.secretDir, 0o700);
+  await refuseHouse(houseBootEnv(loose, file), 'token_file_dir', { ...pinDeps(), fs: foreignDirFs() });
+  rmSync(loose.root, { recursive: true, force: true });
+
+  const linked = makeHouseTree();
+  const real = join(linked.root, 'real-secret');
+  mkdirSync(real, { mode: 0o700 });
+  chmodSync(real, 0o700);
+  const token = writeTokenFile(linked, { token: houseCanary('h7b'), dir: real, name: 'book.json' });
+  const via = join(linked.root, 'secret-link');
+  symlinkSync(real, via);
+  const through = join(via, 'book.json');
+  assert.equal(through.endsWith(token.slice(token.lastIndexOf('/'))), true);
+  await refuseHouse(houseBootEnv(linked, through), 'token_file_dir');
+  rmSync(linked.root, { recursive: true, force: true });
+
+  const tight = makeHouseTree();
+  const ok = writeTokenFile(tight, { token: houseCanary('h7c') });
+  setV13Runtime(null);
+  const out = await wireV13Runtime(houseBootEnv(tight, ok), pinDeps());
+  assert.equal(out.wired, true);
+  setV13Runtime(null);
+  rmSync(tight.root, { recursive: true, force: true });
+});
+
+test('H8 an oversize or ill-formed house token file is refused', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('h8');
+  const fat = await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, { body: `${canary}${' '.repeat(8192)}`, name: 'fat.json' })),
+    'token_file_size',
+  );
+  const bad = await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, { body: `{${canary}`, name: 'bad.json' })),
+    'token_file_parse',
+  );
+  await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, { body: '{"v":1,}', name: 'comma.json' })),
+    'token_file_parse',
+  );
+  await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, { body: '/* c */ {"v":1}', name: 'comment.json' })),
+    'token_file_parse',
+  );
+  await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, { body: `\uFEFF{"v":1}`, name: 'bom.json' })),
+    'token_file_parse',
+  );
+  await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, {
+      body: JSON.stringify({ v: 2, bookId: tree.bookId, token: canary, bookPk: tree.bookPk }),
+      name: 'ver.json',
+    })),
+    'token_file_parse',
+  );
+  await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, {
+      body: JSON.stringify({ v: '1', bookId: tree.bookId, token: canary, bookPk: tree.bookPk }),
+      name: 'ver-string.json',
+    })),
+    'token_file_parse',
+  );
+  await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, {
+      body: JSON.stringify({ v: 1, bookId: tree.bookId, token: canary, bookPk: tree.bookPk, extra: true }),
+      name: 'extra.json',
+    })),
+    'token_file_parse',
+  );
+  await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, {
+      body: JSON.stringify({ v: 1, bookId: tree.bookId, token: canary, bookPk: tree.bookPk, books: [] }),
+      name: 'books.json',
+    })),
+    'token_file_parse',
+  );
+  await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, { body: JSON.stringify([{ v: 1 }]), name: 'array.json' })),
+    'token_file_parse',
+  );
+  const leaked = packedLeak([fat, fat.stack, bad, bad.stack]);
+  assert.equal(leaked.includes(canary), false);
+  assert.equal(leaked.includes('fat.json'), false);
+  assert.equal(leaked.includes('bad.json'), false);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H9 the house file book id must match the configured book', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('h9');
+  const doc = (bookId) => JSON.stringify({ v: 1, bookId, token: canary, bookPk: tree.bookPk });
+  const missing = await refuseHouse(
+    houseBootEnv(tree, writeTokenFile(tree, { body: JSON.stringify({ v: 1, token: canary, bookPk: tree.bookPk }), name: 'no-id.json' })),
+    'house_book_id',
+  );
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc('abcd'), name: 'short.json' })), 'house_book_id');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc('bb'.repeat(32)), name: 'other.json' })), 'house_book_id');
+  const leaked = packedLeak([missing, missing.stack]);
+  assert.equal(leaked.includes(canary), false);
+  assert.equal(leaked.includes(tree.bookId), false);
+  assert.equal(leaked.includes('no-id.json'), false);
+  const prefixed = writeTokenFile(tree, {
+    body: JSON.stringify({ v: 1, bookId: `0x${tree.bookId.toUpperCase()}`, token: canary, bookPk: `0x${tree.bookPk}` }),
+    name: 'prefixed.json',
+  });
+  setV13Runtime(null);
+  const out = await wireV13Runtime(houseBootEnv(tree, prefixed), pinDeps());
+  assert.equal(out.wired, true);
+  assert.equal(readV13Runtime().caller.bookId, tree.bookId);
+  assert.equal(readV13Runtime().caller.token, canary);
+  setV13Runtime(null);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H10 the house token and book key must be well formed', async () => {
+  const tree = makeHouseTree();
+  const good = houseCanary('h10');
+  const doc = (over) => JSON.stringify({ v: 1, bookId: tree.bookId, token: good, bookPk: tree.bookPk, ...over });
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc({ token: undefined }), name: 'no-token.json' })), 'house_token');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: JSON.stringify({ v: 1, bookId: tree.bookId, token: '', bookPk: tree.bookPk }), name: 'empty.json' })), 'house_token');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc({ token: 'short-token' }), name: 'short.json' })), 'house_token');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc({ token: 't'.repeat(257) }), name: 'long.json' })), 'house_token');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc({ token: 16 }), name: 'num.json' })), 'house_token');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc({ token: ` ${'t'.repeat(16)}` }), name: 'pad.json' })), 'house_token');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: JSON.stringify({ v: 1, bookId: tree.bookId, token: good }), name: 'no-pk.json' })), 'house_book_pk');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc({ bookPk: '07'.repeat(31) }), name: 'short-pk.json' })), 'house_book_pk');
+  await refuseHouse(houseBootEnv(tree, writeTokenFile(tree, { body: doc({ bookPk: 32 }), name: 'num-pk.json' })), 'house_book_pk');
+  const minFile = writeTokenFile(tree, { body: doc({ token: 'm'.repeat(16) }), name: 'min.json' });
+  setV13Runtime(null);
+  const minOut = await wireV13Runtime(houseBootEnv(tree, minFile), pinDeps());
+  assert.equal(minOut.wired, true);
+  assert.equal(readV13Runtime().caller.token, 'm'.repeat(16));
+  setV13Runtime(null);
+  const edge = writeTokenFile(tree, { body: doc({ token: 'e'.repeat(256) }), name: 'edge.json' });
+  const out = await wireV13Runtime(houseBootEnv(tree, edge), pinDeps());
+  assert.equal(out.wired, true);
+  assert.equal(readV13Runtime().caller.token, 'e'.repeat(256));
+  setV13Runtime(null);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H11 a house book with no stored salt is not created', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('h11');
+  const file = writeTokenFile(tree, { token: canary });
+  writeFileSync(tree.state, JSON.stringify({ v: 1, epochs: [], receipts: [], books: {} }));
+  const before = readFileSync(tree.state);
+  await refuseHouse(houseBootEnv(tree, file), 'store_book');
+  assert.equal(readFileSync(tree.state).equals(before), true);
+  writeFileSync(tree.state, JSON.stringify({
+    v: 1,
+    epochs: [],
+    receipts: [],
+    books: { [tree.bookId]: { bookSalt: 'ab' } },
+  }));
+  const short = readFileSync(tree.state);
+  await refuseHouse(houseBootEnv(tree, file), 'store_book');
+  assert.equal(readFileSync(tree.state).equals(short), true);
+  assert.equal(readFileSync(tree.state).includes(Buffer.from(canary)), false);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H12 a later persist still writes only the house salt', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('h12');
+  const file = writeTokenFile(tree, { token: canary });
+  setV13Runtime(null);
+  await wireV13Runtime(houseBootEnv(tree, file), pinDeps());
+  const runtime = readV13Runtime();
+  const stored = runtime.store.commitEpoch({
+    epoch: '1',
+    hourStart: 1,
+    size: 1,
+    root: 'root',
+    stateRoot: 'state',
+    chainId: '8453',
+    contract: 'contract',
+    checkpoint: 'checkpoint',
+    receipts: [],
+  });
+  assert.equal(stored.ok, true);
+  const text = readFileSync(tree.state, 'utf8');
+  const parsed = JSON.parse(text);
+  assert.deepEqual(parsed.books[tree.bookId], { bookSalt: tree.salt });
+  assert.equal(Object.keys(parsed.books[tree.bookId]).join(','), 'bookSalt');
+  assert.equal(text.includes(canary), false);
+  assert.equal(text.includes('"token"'), false);
+  assert.equal(text.includes(tree.bookPk), false);
+  setV13Runtime(null);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('H13 the house token and its path stay out of logs, errors, and inspect', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('h13');
+  const file = writeTokenFile(tree, { token: canary });
+  const chunks = [];
+  const stdout = process.stdout.write;
+  const stderr = process.stderr.write;
+  const save = (chunk) => {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk));
+  };
+  process.stdout.write = function write(chunk, enc, cb) {
+    save(chunk);
+    return stdout.call(process.stdout, chunk, enc, cb);
+  };
+  process.stderr.write = function write(chunk, enc, cb) {
+    save(chunk);
+    return stderr.call(process.stderr, chunk, enc, cb);
+  };
+  try {
+    setV13Runtime(null);
+    const out = await wireV13Runtime(houseBootEnv(tree, file), pinDeps());
+    assert.equal(out.wired, true);
+    const runtime = readV13Runtime();
+    const shown = packedLeak([
+      chunks.join('\n'),
+      runtime,
+      runtime.caller,
+      inspect(runtime, { depth: 8 }),
+      inspect(runtime.caller, { depth: 8 }),
+      JSON.stringify(runtime),
+      JSON.stringify(runtime.caller),
+      readFileSync(tree.state, 'utf8'),
+    ]);
+    assert.equal(shown.includes(canary), false);
+    assert.equal(shown.includes(file), false);
+    assert.equal(runtime.caller.token, canary);
+    setV13Runtime(null);
+    const mismatch = writeTokenFile(tree, {
+      body: JSON.stringify({ v: 1, bookId: 'bb'.repeat(32), token: canary, bookPk: tree.bookPk }),
+      name: 'mismatch.json',
+    });
+    const err = await refuseHouse(houseBootEnv(tree, mismatch), 'house_book_id');
+    const refused = packedLeak([
+      chunks.join('\n'),
+      err,
+      err.stack,
+      err.message,
+      inspect(err, { depth: 8 }),
+      JSON.stringify(err),
+      readFileSync(tree.state, 'utf8'),
+    ]);
+    assert.equal(refused.includes(canary), false);
+    assert.equal(refused.includes(mismatch), false);
+    assert.equal(refused.includes(file), false);
+  } finally {
+    process.stdout.write = stdout;
+    process.stderr.write = stderr;
+    setV13Runtime(null);
+    rmSync(tree.root, { recursive: true, force: true });
+  }
 });

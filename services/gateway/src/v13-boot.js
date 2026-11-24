@@ -12,11 +12,15 @@
  * The checkpoint client is the secp256k1 KMS client, not the P-256 issuer
  * signer. GetPublicKey must recover to the live checkpoint pin. The key id
  * is never written to a log or an error. A log may say that it is set.
+ *
+ * CHIT_V13_HOUSE_TOKEN_FILE is the path of the house book file. It is read
+ * only when a v13 flag is on. The token stays in memory for openStore.
  */
 
 import { createPublicKey } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { inspect } from 'node:util';
 import { KMSClient } from '@aws-sdk/client-kms';
 import { ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
 import { broadcastCommittedAnchor, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
@@ -28,9 +32,24 @@ import { testSwitchesOn } from './test-switch.js';
 import { v13Flags } from './v13-flags.js';
 import { setV13Runtime } from './v13-issue.js';
 
-function bootRefused() {
+const HOUSE_REASONS = new Set([
+  'token_file_missing',
+  'token_file_not_regular',
+  'token_file_owner',
+  'token_file_mode',
+  'token_file_dir',
+  'token_file_parse',
+  'token_file_size',
+  'house_book_id',
+  'house_token',
+  'house_book_pk',
+  'store_book',
+]);
+
+function bootRefused(reason) {
   const err = new Error('v13 boot refused');
   err.code = 'v13_boot_refused';
+  if (HOUSE_REASONS.has(reason)) err.reason = reason;
   return err;
 }
 
@@ -121,11 +140,52 @@ function loadEnvFile(env) {
   if (loaded?.error) throw bootRefused();
 }
 
+function sealedCaller(bookId, token) {
+  const caller = {
+    bookId,
+    token,
+    toJSON() {
+      return { bookId: this.bookId };
+    },
+  };
+  Object.defineProperty(caller, inspect.custom, {
+    enumerable: false,
+    value() {
+      return { bookId: this.bookId };
+    },
+  });
+  return caller;
+}
+
+function sealRuntime(runtime) {
+  const sealed = {
+    store: runtime.store,
+    dir: runtime.dir,
+    client: runtime.client,
+    send: runtime.send,
+    caller: runtime.caller,
+    toJSON() {
+      return { dir: this.dir, caller: this.caller };
+    },
+  };
+  Object.defineProperty(sealed, inspect.custom, {
+    enumerable: false,
+    value() {
+      const caller = this.caller;
+      return {
+        dir: this.dir,
+        caller: caller && typeof caller.bookId === 'string' ? { bookId: caller.bookId } : null,
+      };
+    },
+  });
+  return sealed;
+}
+
 function callerForBook(store, id) {
   if (!store || typeof id !== 'string' || id === '') return null;
   const token = typeof store.bookToken === 'function' ? store.bookToken(id) : null;
   if (typeof token !== 'string' || token === '') return null;
-  return { bookId: id, token };
+  return sealedCaller(id, token);
 }
 
 /**
@@ -205,7 +265,183 @@ function checkpointClient(env, deps) {
   return new KMSClient({ region });
 }
 
-function openDurableStore(dir, deps) {
+function houseIo(deps) {
+  if (deps && deps.fs && typeof deps.fs.lstatSync === 'function') return deps.fs;
+  return fs;
+}
+
+function houseTokenPath(env) {
+  const raw = env?.CHIT_V13_HOUSE_TOKEN_FILE;
+  if (typeof raw !== 'string' || raw.trim() === '') throw bootRefused('token_file_missing');
+  return raw;
+}
+
+function assertHouseDir(io, file) {
+  const parent = path.dirname(file);
+  let st;
+  try {
+    st = io.lstatSync(parent);
+  } catch {
+    throw bootRefused('token_file_dir');
+  }
+  if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) throw bootRefused('token_file_dir');
+  if (typeof st.isDirectory !== 'function' || st.isDirectory() !== true) throw bootRefused('token_file_dir');
+  if (st.uid !== process.getuid()) throw bootRefused('token_file_dir');
+  if (!dirModeOk(st.mode)) throw bootRefused('token_file_dir');
+}
+
+function openHouseFile(io, file) {
+  let listed;
+  try {
+    listed = io.lstatSync(file);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') throw bootRefused('token_file_missing');
+    throw bootRefused('token_file_not_regular');
+  }
+  if (typeof listed.isSymbolicLink === 'function' && listed.isSymbolicLink()) throw bootRefused('token_file_not_regular');
+  if (typeof listed.isFile !== 'function' || listed.isFile() !== true) throw bootRefused('token_file_not_regular');
+  const nofollow = fs.constants.O_NOFOLLOW;
+  if (typeof nofollow !== 'number') throw bootRefused('token_file_not_regular');
+  try {
+    return io.openSync(file, fs.constants.O_RDONLY | nofollow);
+  } catch {
+    throw bootRefused('token_file_not_regular');
+  }
+}
+
+function readHouseFd(io, fd, size) {
+  const buf = Buffer.alloc(size);
+  let offset = 0;
+  while (offset < size) {
+    const n = io.readSync(fd, buf, offset, size - offset, offset);
+    if (!Number.isInteger(n) || n <= 0) break;
+    offset += n;
+  }
+  if (offset !== size) throw bootRefused('token_file_parse');
+  return buf.toString('utf8');
+}
+
+function normalizeBookId(value) {
+  if (typeof value !== 'string') return null;
+  let hex = value.trim();
+  if (hex.startsWith('0x') || hex.startsWith('0X')) hex = hex.slice(2);
+  hex = hex.toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(hex)) return null;
+  return hex;
+}
+
+function houseTokenOk(token) {
+  if (typeof token !== 'string') return false;
+  if (token.length < 16 || token.length > 256) return false;
+  if (token.trim() === '') return false;
+  if (token !== token.trim()) return false;
+  return true;
+}
+
+function housePkOk(value) {
+  return typeof value === 'string' && /^(0x)?[0-9a-fA-F]{64}$/.test(value);
+}
+
+function copyHouseWallets(value) {
+  if (!Array.isArray(value)) return null;
+  const out = [];
+  for (let i = 0; i < value.length; i += 1) {
+    const item = value[i];
+    if (typeof item !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(item)) return null;
+    out.push(item);
+  }
+  return out;
+}
+
+function houseFileTooBig(size) {
+  if (!Number.isSafeInteger(size) || size < 0 || size > 8192) throw bootRefused('token_file_size');
+}
+
+function rejectHouseShape(parsed) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw bootRefused('token_file_parse');
+  const keys = Object.keys(parsed);
+  for (let i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    if (key !== 'v' && key !== 'bookId' && key !== 'token' && key !== 'bookPk' && key !== 'wallets') {
+      throw bootRefused('token_file_parse');
+    }
+  }
+  if (parsed.v !== 1) throw bootRefused('token_file_parse');
+}
+
+function parseHouseBook(text, env) {
+  if (typeof text !== 'string' || text.length === 0 || text.charCodeAt(0) === 0xfeff) throw bootRefused('token_file_parse');
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw bootRefused('token_file_parse');
+  }
+  rejectHouseShape(parsed);
+  const fileNorm = normalizeBookId(parsed.bookId);
+  const envTrim = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';
+  const envNorm = normalizeBookId(envTrim);
+  if (!fileNorm) throw bootRefused('house_book_id');
+  if (envTrim !== '' && (!envNorm || envNorm !== fileNorm)) throw bootRefused('house_book_id');
+  if (!houseTokenOk(parsed.token)) throw bootRefused('house_token');
+  if (!housePkOk(parsed.bookPk)) throw bootRefused('house_book_pk');
+  const book = {
+    id: envTrim !== '' ? envTrim : fileNorm,
+    token: parsed.token,
+    bookPk: parsed.bookPk,
+  };
+  if (Object.prototype.hasOwnProperty.call(parsed, 'wallets')) {
+    const wallets = copyHouseWallets(parsed.wallets);
+    if (!wallets) throw bootRefused('token_file_parse');
+    book.wallets = wallets;
+  }
+  return book;
+}
+
+function readHouseBook(env, deps) {
+  const io = houseIo(deps);
+  const file = houseTokenPath(env);
+  assertHouseDir(io, file);
+  const fd = openHouseFile(io, file);
+  try {
+    const st = io.fstatSync(fd);
+    if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) throw bootRefused('token_file_not_regular');
+    if (typeof st.isFile !== 'function' || st.isFile() !== true) throw bootRefused('token_file_not_regular');
+    houseFileTooBig(st.size);
+    if (!envFileModeOk(st.mode)) throw bootRefused('token_file_mode');
+    if (st.uid !== process.getuid()) throw bootRefused('token_file_owner');
+    return parseHouseBook(readHouseFd(io, fd, st.size), env);
+  } finally {
+    try { io.closeSync(fd); } catch { /* the refusal is already set */ }
+  }
+}
+
+function saltHexOk(value) {
+  return typeof value === 'string' && /^(0x)?[0-9a-fA-F]{64}$/.test(value);
+}
+
+function assertStoredHouseSalt(dir, bookId) {
+  const state = path.join(dir, 'store-state.json');
+  let text;
+  try {
+    text = fs.readFileSync(state, 'utf8');
+  } catch {
+    throw bootRefused('store_book');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw bootRefused('store_book');
+  }
+  const books = parsed && parsed.books && typeof parsed.books === 'object' && !Array.isArray(parsed.books)
+    ? parsed.books
+    : null;
+  const row = books && books[bookId] && typeof books[bookId] === 'object' ? books[bookId] : null;
+  if (!row || !saltHexOk(row.bookSalt)) throw bootRefused('store_book');
+}
+
+function openDurableStore(dir, env, deps) {
   const state = path.join(dir, 'store-state.json');
   let st;
   try {
@@ -214,8 +450,12 @@ function openDurableStore(dir, deps) {
     return null;
   }
   if (!st.isFile()) return null;
+  const house = readHouseBook(env, deps);
+  assertStoredHouseSalt(dir, house.id);
   const open = typeof deps.openStore === 'function' ? deps.openStore : openStore;
-  return open(dir);
+  const book = { id: house.id, token: house.token, bookPk: house.bookPk };
+  if (Array.isArray(house.wallets)) book.wallets = house.wallets;
+  return open(dir, { books: [book] });
 }
 
 async function guardListen(env, deps) {
@@ -225,8 +465,9 @@ async function guardListen(env, deps) {
   let store = null;
   if (storeDir) {
     try {
-      store = openDurableStore(storeDir, deps);
-    } catch {
+      store = openDurableStore(storeDir, env, deps);
+    } catch (err) {
+      if (err?.code === 'v13_boot_refused') throw err;
       throw bootRefused();
     }
   }
@@ -248,13 +489,7 @@ async function guardListen(env, deps) {
   };
   if (!runtimeComplete(runtime)) throw bootRefused();
   await assertCheckpointPin(client, env, deps);
-  setV13Runtime({
-    store: runtime.store,
-    dir: runtime.dir,
-    client: runtime.client,
-    send: runtime.send,
-    caller: runtime.caller,
-  });
+  setV13Runtime(sealRuntime(runtime));
   return { ok: true, wired: true };
 }
 

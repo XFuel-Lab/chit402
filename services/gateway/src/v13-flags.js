@@ -14,6 +14,8 @@
  * CHIT_V13_ENV_FILE — optional operator env file, mode 600 or tighter when set.
  * CHIT_V13_HOUSE_BOOK_ID — house book id. The token is the one already on
  * that book in the opened store. It is not read from the request.
+ * CHIT_V13_HOUSE_TOKEN_FILE — path of the house book file, mode 600 or
+ * tighter. The token is not an environment value.
  * CHIT_CHECKPOINT_MAX_FEE_PER_GAS and CHIT_CHECKPOINT_KMS_TIMEOUT_MS are read
  * by the checkpoint signer. This module does not read their values.
  */
