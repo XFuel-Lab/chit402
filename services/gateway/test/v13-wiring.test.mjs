@@ -35,7 +35,8 @@ const {
   MAINNET_CHECKPOINT,
   mainnetPin,
 } = await import('../../chit-sealer/mainnet-pin.js');
-const { anchor, anchoredReplay, resetAnchorLedger } = await import('../../chit-sealer/anchor-mainnet.js');
+const { anchor, anchoredReplay, resetAnchorLedger, signMainnetCheckpoint } = await import('../../chit-sealer/anchor-mainnet.js');
+const { createCheckpointSigner } = await import('../../chit-sealer/kms-secp256k1.js');
 const {
   issueHouseReceipt,
   handleHouse,
@@ -47,6 +48,10 @@ const {
   setV13Runtime,
 } = await import('../src/v13-issue.js');
 const { wireV13Runtime } = await import('../src/v13-boot.js');
+const { sendCheckpointKms } = await import('../src/checkpoint-kms.js');
+const { createS3Client } = await import('../src/receipt-log-s3.js');
+const { KMSClient } = await import('@aws-sdk/client-kms');
+const { ethereumAddress } = await import('../../../packages/cs2-core/ecdsa/index.js');
 const { buildReceipt: buildV1Receipt, meteringPaymentFromDecision, registerOpenAIRoutes } = await import('../src/openai-gateway.js');
 const { checkMainnetPack, createAddress, checkpointDomain } = await import('../../../deploy/chit-simple/mainnet-pack/check-deploy.mjs');
 const {
@@ -2213,5 +2218,776 @@ test('S4 a looser fstat mode is refused when lstat said 0600', async () => {
   const packed = packedLeak([err, err.stack, inspect(err, { depth: 8 }), JSON.stringify(err)]);
   assert.equal(packed.includes(canary), false);
   assert.equal(packed.includes(file), false);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+function checkpointMaterial() {
+  const d = 0xA11CEn;
+  const pub = publicPoint(d, SECP256K1);
+  const jwk = {
+    kty: 'EC',
+    crv: 'secp256k1',
+    x: Buffer.from(pub.subarray(1, 33)).toString('base64url'),
+    y: Buffer.from(pub.subarray(33)).toString('base64url'),
+  };
+  const spki = createPublicKey({ key: jwk, format: 'jwk' }).export({ type: 'spki', format: 'der' });
+  function sign(digest) {
+    let k = (bytesToBig(digest) % (SECP256K1.order - 3n)) + 2n;
+    for (let i = 0; i < 8; i += 1) {
+      try {
+        return signRawDigest(digest, d, k, SECP256K1);
+      } catch (err) {
+        if (err.code !== 'bad_nonce') throw err;
+        k += 1n;
+      }
+    }
+    return null;
+  }
+  return { pub, spki, address: ethereumAddress(pub), sign };
+}
+
+function kmsTransport({ spki, onSign, fail, status, bodyFor }) {
+  const calls = [];
+  const requestHandler = {
+    async handle(request) {
+      const headers = request.headers || {};
+      const target = String(headers['x-amz-target'] || '');
+      calls.push(target);
+      if (typeof fail === 'function' && fail(target)) throw new Error('kms transport');
+      if (status && status !== 200) {
+        return {
+          response: {
+            statusCode: status,
+            headers: { 'content-type': 'application/x-amz-json-1.1' },
+            body: Buffer.from(JSON.stringify({ __type: 'KMSInternalException', message: 'unavailable' })),
+          },
+        };
+      }
+      const signing = target.endsWith('.Sign');
+      const payload = typeof bodyFor === 'function'
+        ? bodyFor(target)
+        : (signing
+          ? (typeof onSign === 'function' ? onSign() : { Signature: '', SigningAlgorithm: 'ECDSA_SHA_256' })
+          : {
+            KeySpec: 'ECC_SECG_P256K1',
+            KeyUsage: 'SIGN_VERIFY',
+            SigningAlgorithms: ['ECDSA_SHA_256'],
+            CustomerMasterKeySpec: 'ECC_SECG_P256K1',
+            PublicKey: Buffer.from(spki || []).toString('base64'),
+          });
+      return {
+        response: {
+          statusCode: 200,
+          headers: { 'content-type': 'application/x-amz-json-1.1' },
+          body: Buffer.from(JSON.stringify(payload)),
+        },
+      };
+    },
+  };
+  return { requestHandler, calls };
+}
+
+function realKms(requestHandler, accessKey = 'k-access-key', secret = 'k-secret-value') {
+  return new KMSClient({
+    region: 'us-east-2',
+    credentials: { accessKeyId: accessKey, secretAccessKey: secret },
+    requestHandler,
+  });
+}
+
+function writeCredsFile(dir, { profile, accessKey, secret, mode = 0o600, name = 'credentials' }) {
+  const file = join(dir, name);
+  const text = `[${profile}]\naws_access_key_id = ${accessKey}\naws_secret_access_key = ${secret}\n`;
+  writeFileSync(file, text, { mode });
+  chmodSync(file, mode);
+  return file;
+}
+
+function credsDir(root) {
+  const dir = join(root, 'creds');
+  mkdirSync(dir, { mode: 0o700 });
+  chmodSync(dir, 0o700);
+  return dir;
+}
+
+function storeOnlyEnv(tree, tokenFile, credsFile, profile, over = {}) {
+  return houseBootEnv(tree, tokenFile, {
+    CHIT_V13_ISSUANCE: 'false',
+    CHIT_V13_MAINNET_SEALER: 'false',
+    CHIT_V13_STORE: 'true',
+    CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE: credsFile,
+    CHIT_CHECKPOINT_AWS_PROFILE: profile,
+    ...over,
+  });
+}
+
+function productionPin(requestHandler) {
+  return {
+    testInjection: true,
+    addressOf: () => MAINNET_CHECKPOINT,
+    requestHandler,
+  };
+}
+
+async function bootOutcome(env, deps) {
+  setV13Runtime(null);
+  let out = null;
+  let err = null;
+  try {
+    out = await wireV13Runtime(env, deps);
+  } catch (caught) {
+    err = caught;
+  }
+  return { out, err, runtime: readV13Runtime() };
+}
+
+function signerEnv(address, keyId = 'alias/test-checkpoint') {
+  return {
+    CHIT_CHECKPOINT_KMS_KEY_ID: keyId,
+    CHIT_CHECKPOINT_KMS_REGION: 'us-east-2',
+    CHIT_CHECKPOINT_ADDRESS: address,
+    CHIT_CHECKPOINT_MAX_FEE_PER_GAS: '10',
+  };
+}
+
+test('K1 a real KMS client pins GetPublicKey on a store-only boot', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const profile = 'checkpoint-k1';
+  const creds = writeCredsFile(credsDir(tree.root), {
+    profile,
+    accessKey: 'k1-access-key',
+    secret: 'k1-secret-value',
+  });
+  const token = writeTokenFile(tree, { token: houseCanary('k1') });
+  const transport = kmsTransport({ spki: material.spki });
+  const outcome = await bootOutcome(
+    storeOnlyEnv(tree, token, creds, profile),
+    productionPin(transport.requestHandler),
+  );
+  assert.equal(outcome.err, null);
+  assert.equal(outcome.out && outcome.out.wired, true);
+  assert.equal(outcome.runtime.caller.bookId, tree.bookId);
+  assert.equal(transport.calls.includes('TrentService.GetPublicKey'), true);
+  setV13Runtime(null);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('K2 a real KMS client signs and the other checkpoint send sites do too', async () => {
+  const material = checkpointMaterial();
+  const digest = Buffer.alloc(32, 4);
+  const made = material.sign(digest);
+  assert.ok(made);
+  const transport = kmsTransport({
+    spki: material.spki,
+    onSign: () => ({
+      Signature: Buffer.from(made.der).toString('base64'),
+      SigningAlgorithm: 'ECDSA_SHA_256',
+    }),
+  });
+  const client = realKms(transport.requestHandler);
+  const signer = await createCheckpointSigner({ client, env: signerEnv(material.address) });
+  let signed = null;
+  let signErr = null;
+  try {
+    signed = await signer.signDigest(digest);
+  } catch (err) {
+    signErr = err;
+  }
+  assert.equal(signErr, null);
+  assert.equal(signed.raw.length, 64);
+  assert.equal(transport.calls.includes('TrentService.Sign'), true);
+
+  const anchorTransport = kmsTransport({
+    spki: material.spki,
+    onSign: () => ({
+      Signature: Buffer.from(made.der).toString('base64'),
+      SigningAlgorithm: 'ECDSA_SHA_256',
+    }),
+  });
+  const anchorClient = realKms(anchorTransport.requestHandler);
+  let anchorErr = null;
+  try {
+    await signMainnetCheckpoint({
+      env: signerEnv(MAINNET_CHECKPOINT),
+      client: anchorClient,
+      addressOf: () => MAINNET_CHECKPOINT,
+      digest,
+    });
+  } catch (err) {
+    anchorErr = err;
+  }
+  assert.equal(anchorErr && anchorErr.code, 'checkpoint_address_mismatch');
+  assert.equal(anchorTransport.calls.includes('TrentService.GetPublicKey'), true);
+  assert.equal(anchorTransport.calls.includes('TrentService.Sign'), true);
+
+  const armTransport = kmsTransport({ spki: material.spki });
+  const armed = await issueHouseReceipt({
+    env: {
+      CHIT_V13_MAINNET_SEALER: 'true',
+      CHIT_CHECKPOINT_KMS_KEY_ID: 'alias/test-checkpoint',
+      CHIT_CHECKPOINT_KMS_REGION: 'us-east-2',
+      CHIT_CHECKPOINT_ADDRESS: MAINNET_CHECKPOINT,
+    },
+    task: byteTask(),
+    receiptOpts: RECEIPT_OPTS,
+    client: realKms(armTransport.requestHandler),
+  });
+  assert.equal(armed.status, 200);
+  assert.equal(armTransport.calls.includes('TrentService.GetPublicKey'), true);
+});
+
+test('K3 a GetPublicKey transport error refuses to listen', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const keyId = dummyKeyId('4');
+  const profile = 'checkpoint-k3';
+  const creds = writeCredsFile(credsDir(tree.root), {
+    profile,
+    accessKey: 'k3-access-key',
+    secret: 'k3-secret-value',
+  });
+  const token = writeTokenFile(tree, { token: houseCanary('k3') });
+  const cases = [
+    kmsTransport({ spki: material.spki, fail: () => true }),
+    kmsTransport({ spki: material.spki, status: 500 }),
+  ];
+  for (const transport of cases) {
+    const outcome = await bootOutcome(
+      storeOnlyEnv(tree, token, creds, profile, { CHIT_CHECKPOINT_KMS_KEY_ID: keyId }),
+      productionPin(transport.requestHandler),
+    );
+    assert.equal(outcome.out, null);
+    assert.equal(outcome.err && outcome.err.code, 'v13_boot_refused');
+    assert.equal(outcome.runtime, null);
+    const packed = packedLeak([outcome.err, inspect(outcome.err, { depth: 8 })]);
+    assert.equal(packed.includes(keyId), false);
+    assert.equal(packed.includes('k3-access-key'), false);
+    assert.equal(packed.includes(creds), false);
+  }
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('K4 a Sign transport error is not a signature', async () => {
+  const material = checkpointMaterial();
+  const digest = Buffer.alloc(32, 5);
+  const cases = [
+    kmsTransport({ spki: material.spki, fail: (target) => target.endsWith('.Sign') }),
+    kmsTransport({ spki: material.spki, fail: (target) => target.endsWith('.Sign') && false, status: 0, bodyFor: null }),
+  ];
+  const throwing = cases[0];
+  const client = realKms(throwing.requestHandler);
+  const signer = await createCheckpointSigner({ client, env: signerEnv(material.address) });
+  let err = null;
+  try {
+    await signer.signDigest(digest);
+  } catch (caught) {
+    err = caught;
+  }
+  assert.equal(err && err.code, 'checkpoint_sign_unavailable');
+  assert.equal(throwing.calls.includes('TrentService.Sign'), true);
+
+  const http = kmsTransport({
+    spki: material.spki,
+    bodyFor(target) {
+      if (target.endsWith('.Sign')) return null;
+      return {
+        KeySpec: 'ECC_SECG_P256K1',
+        KeyUsage: 'SIGN_VERIFY',
+        SigningAlgorithms: ['ECDSA_SHA_256'],
+        PublicKey: Buffer.from(material.spki).toString('base64'),
+      };
+    },
+    status: 0,
+  });
+  const failing = {
+    requestHandler: {
+      async handle(request) {
+        const target = String((request.headers || {})['x-amz-target'] || '');
+        http.calls.push(target);
+        if (target.endsWith('.Sign')) {
+          return {
+            response: {
+              statusCode: 500,
+              headers: { 'content-type': 'application/x-amz-json-1.1' },
+              body: Buffer.from(JSON.stringify({ __type: 'KMSInternalException', message: 'unavailable' })),
+            },
+          };
+        }
+        return http.requestHandler.handle(request);
+      },
+    },
+    calls: http.calls,
+  };
+  const signer500 = await createCheckpointSigner({
+    client: realKms(failing.requestHandler),
+    env: signerEnv(material.address),
+  });
+  let err500 = null;
+  try {
+    await signer500.signDigest(digest);
+  } catch (caught) {
+    err500 = caught;
+  }
+  assert.equal(err500 && err500.code, 'checkpoint_sign_unavailable');
+});
+
+test('K5 a malformed GetPublicKey is not the pinned checkpoint', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const profile = 'checkpoint-k5';
+  const creds = writeCredsFile(credsDir(tree.root), {
+    profile,
+    accessKey: 'k5-access-key',
+    secret: 'k5-secret-value',
+  });
+  const token = writeTokenFile(tree, { token: houseCanary('k5') });
+  const { publicKey } = await import('node:crypto').then((crypto) => crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' }));
+  const p256 = publicKey.export({ type: 'spki', format: 'der' });
+  const bodies = [
+    {
+      KeySpec: 'ECC_NIST_P256',
+      KeyUsage: 'SIGN_VERIFY',
+      SigningAlgorithms: ['ECDSA_SHA_256'],
+      PublicKey: Buffer.from(material.spki).toString('base64'),
+    },
+    {
+      KeySpec: 'ECC_SECG_P256K1',
+      KeyUsage: 'SIGN_VERIFY',
+      SigningAlgorithms: ['ECDSA_SHA_256'],
+    },
+    {
+      KeySpec: 'ECC_SECG_P256K1',
+      KeyUsage: 'SIGN_VERIFY',
+      SigningAlgorithms: ['ECDSA_SHA_256'],
+      PublicKey: Buffer.from(p256).toString('base64'),
+    },
+  ];
+  for (const body of bodies) {
+    const transport = kmsTransport({ bodyFor: () => body });
+    const outcome = await bootOutcome(
+      storeOnlyEnv(tree, token, creds, profile),
+      productionPin(transport.requestHandler),
+    );
+    assert.equal(outcome.out, null);
+    assert.equal(outcome.err && outcome.err.code, 'v13_boot_refused');
+    assert.equal(outcome.runtime, null);
+  }
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('K6 a malformed Sign response is not a signature', async () => {
+  const material = checkpointMaterial();
+  const digest = Buffer.alloc(32, 6);
+  const made = material.sign(digest);
+  assert.ok(made);
+  const bodies = [
+    { SigningAlgorithm: 'ECDSA_SHA_256' },
+    { Signature: Buffer.from('not-a-der-signature').toString('base64'), SigningAlgorithm: 'ECDSA_SHA_256' },
+    { Signature: Buffer.from(highSDer(made.raw, SECP256K1)).toString('base64'), SigningAlgorithm: 'ECDSA_SHA_256' },
+  ];
+  for (const body of bodies.slice(0, 2)) {
+    const transport = kmsTransport({
+      spki: material.spki,
+      bodyFor(target) {
+        if (target.endsWith('.Sign')) return body;
+        return {
+          KeySpec: 'ECC_SECG_P256K1',
+          KeyUsage: 'SIGN_VERIFY',
+          SigningAlgorithms: ['ECDSA_SHA_256'],
+          PublicKey: Buffer.from(material.spki).toString('base64'),
+        };
+      },
+    });
+    const signer = await createCheckpointSigner({
+      client: realKms(transport.requestHandler),
+      env: signerEnv(material.address),
+    });
+    let err = null;
+    try {
+      await signer.signDigest(digest);
+    } catch (caught) {
+      err = caught;
+    }
+    assert.equal(err && err.code, 'checkpoint_sign_invalid');
+  }
+  const high = kmsTransport({
+    spki: material.spki,
+    onSign: () => ({
+      Signature: Buffer.from(highSDer(made.raw, SECP256K1)).toString('base64'),
+      SigningAlgorithm: 'ECDSA_SHA_256',
+    }),
+  });
+  let highErr = null;
+  try {
+    await signMainnetCheckpoint({
+      env: signerEnv(MAINNET_CHECKPOINT),
+      client: realKms(high.requestHandler),
+      addressOf: () => MAINNET_CHECKPOINT,
+      digest,
+    });
+  } catch (caught) {
+    highErr = caught;
+  }
+  assert.equal(highErr && highErr.code, 'checkpoint_sign_invalid');
+});
+
+test('K7 an unknown command name is refused before the client sends', async () => {
+  const transport = kmsTransport({ spki: Buffer.alloc(0) });
+  const client = realKms(transport.requestHandler);
+  let err = null;
+  try {
+    await sendCheckpointKms(client, { name: 'Decrypt', input: {} }, {});
+  } catch (caught) {
+    err = caught;
+  }
+  assert.equal(err && err.code, 'checkpoint_kms_command');
+  assert.equal(transport.calls.length, 0);
+  let raw = null;
+  try {
+    await client.send({ name: 'GetPublicKey', input: { KeyId: 'alias/test-checkpoint' } });
+  } catch (caught) {
+    raw = caught;
+  }
+  assert.equal(raw instanceof TypeError, true);
+  assert.equal(transport.calls.length, 0);
+});
+
+test('K8 missing checkpoint credentials refuse and an injected client does not stat them', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const token = writeTokenFile(tree, { token: houseCanary('k8') });
+  const profile = 'checkpoint-k8';
+  const creds = writeCredsFile(credsDir(tree.root), {
+    profile,
+    accessKey: 'k8-access-key',
+    secret: 'k8-secret-value',
+  });
+  const transport = kmsTransport({ spki: material.spki });
+  const saved = {
+    id: process.env.AWS_ACCESS_KEY_ID,
+    secret: process.env.AWS_SECRET_ACCESS_KEY,
+    profile: process.env.AWS_PROFILE,
+  };
+  process.env.AWS_ACCESS_KEY_ID = 'k8-env-access-key';
+  process.env.AWS_SECRET_ACCESS_KEY = 'k8-env-secret';
+  delete process.env.AWS_PROFILE;
+  try {
+    const base = storeOnlyEnv(tree, token, creds, profile);
+    const missing = [
+      { ...base, CHIT_CHECKPOINT_AWS_PROFILE: undefined },
+      { ...base, CHIT_CHECKPOINT_AWS_PROFILE: '' },
+      { ...base, CHIT_CHECKPOINT_AWS_PROFILE: '   ' },
+      { ...base, CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE: undefined },
+      { ...base, CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE: '' },
+      { ...base, CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE: '   ' },
+      { ...base, CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE: join(tree.root, 'missing-creds') },
+    ];
+    for (const env of missing) {
+      const outcome = await bootOutcome(env, productionPin(transport.requestHandler));
+      assert.equal(outcome.err && outcome.err.code, 'v13_boot_refused');
+      assert.equal(outcome.err.reason, 'checkpoint_creds_missing');
+      assert.equal(outcome.runtime, null);
+    }
+    assert.equal(transport.calls.length, 0);
+    const seen = { creds: false };
+    const injectedEnv = new Proxy(houseBootEnv(tree, token), {
+      get(target, prop, receiver) {
+        if (prop === 'CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE' || prop === 'CHIT_CHECKPOINT_AWS_PROFILE') {
+          seen.creds = true;
+        }
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const injected = await bootOutcome(injectedEnv, pinDeps());
+    assert.equal(injected.err, null);
+    assert.equal(injected.out && injected.out.wired, true);
+    assert.equal(seen.creds, false);
+  } finally {
+    if (saved.id == null) delete process.env.AWS_ACCESS_KEY_ID;
+    else process.env.AWS_ACCESS_KEY_ID = saved.id;
+    if (saved.secret == null) delete process.env.AWS_SECRET_ACCESS_KEY;
+    else process.env.AWS_SECRET_ACCESS_KEY = saved.secret;
+    if (saved.profile == null) delete process.env.AWS_PROFILE;
+    else process.env.AWS_PROFILE = saved.profile;
+    setV13Runtime(null);
+    rmSync(tree.root, { recursive: true, force: true });
+  }
+});
+
+test('K9 checkpoint credential file mode, owner, symlink, and parent are refused', async () => {
+  const material = checkpointMaterial();
+  const profile = 'checkpoint-k9';
+  async function refuse(prep) {
+    const tree = makeHouseTree();
+    const token = writeTokenFile(tree, { token: houseCanary('k9') });
+    const dir = credsDir(tree.root);
+    const prepared = prep(tree, dir);
+    const transport = kmsTransport({ spki: material.spki });
+    const outcome = await bootOutcome(
+      storeOnlyEnv(tree, token, prepared.file, profile),
+      { ...productionPin(transport.requestHandler), ...(prepared.deps || {}) },
+    );
+    assert.equal(outcome.err && outcome.err.reason, prepared.reason);
+    assert.equal(outcome.runtime, null);
+    rmSync(tree.root, { recursive: true, force: true });
+  }
+  await refuse((_tree, dir) => {
+    const file = writeCredsFile(dir, { profile, accessKey: 'k9-access', secret: 'k9-secret', mode: 0o644 });
+    return { file, reason: 'checkpoint_creds_mode' };
+  });
+  await refuse((_tree, dir) => {
+    const file = writeCredsFile(dir, { profile, accessKey: 'k9-access', secret: 'k9-secret', mode: 0o660, name: 'group' });
+    return { file, reason: 'checkpoint_creds_mode' };
+  });
+  await refuse((_tree, dir) => {
+    const file = writeCredsFile(dir, { profile, accessKey: 'k9-access', secret: 'k9-secret' });
+    const link = join(dir, 'link');
+    symlinkSync(file, link);
+    return { file: link, reason: 'checkpoint_creds_not_regular' };
+  });
+  await refuse((_tree, dir) => ({ file: dir, reason: 'checkpoint_creds_not_regular' }));
+  await refuse((_tree, dir) => {
+    const file = writeCredsFile(dir, { profile, accessKey: 'k9-access', secret: 'k9-secret' });
+    chmodSync(dir, 0o755);
+    return { file, reason: 'checkpoint_creds_dir' };
+  });
+  await refuse((tree, dir) => {
+    const real = join(tree.root, 'real-creds');
+    mkdirSync(real, { mode: 0o700 });
+    chmodSync(real, 0o700);
+    const file = writeCredsFile(real, { profile, accessKey: 'k9-access', secret: 'k9-secret' });
+    const via = join(tree.root, 'creds-link');
+    symlinkSync(real, via);
+    return { file: join(via, file.slice(file.lastIndexOf('/') + 1)), reason: 'checkpoint_creds_dir' };
+  });
+  await refuse((_tree, dir) => {
+    const file = writeCredsFile(dir, { profile, accessKey: 'k9-access', secret: 'k9-secret' });
+    const deps = {
+      fs: {
+        lstatSync(target) {
+          const st = lstatSync(target);
+          if (target !== file) return st;
+          return new Proxy(st, {
+            get(obj, prop, receiver) {
+              if (prop === 'uid') return obj.uid + 1;
+              const value = Reflect.get(obj, prop, receiver);
+              return typeof value === 'function' ? value.bind(obj) : value;
+            },
+          });
+        },
+        openSync(target, flags) { return openSync(target, flags); },
+        fstatSync(fd) { return fstatSync(fd); },
+        readSync(fd, buf, offset, length, position) { return readSync(fd, buf, offset, length, position); },
+        closeSync(fd) { closeSync(fd); },
+      },
+    };
+    return { file, reason: 'checkpoint_creds_owner', deps };
+  });
+
+  const accepted = makeHouseTree();
+  const token = writeTokenFile(accepted, { token: houseCanary('k9ok') });
+  const file = writeCredsFile(credsDir(accepted.root), {
+    profile,
+    accessKey: 'k9-access',
+    secret: 'k9-secret',
+    mode: 0o400,
+  });
+  const transport = kmsTransport({ spki: material.spki });
+  const outcome = await bootOutcome(
+    storeOnlyEnv(accepted, token, file, profile),
+    productionPin(transport.requestHandler),
+  );
+  assert.equal(outcome.err, null);
+  assert.equal(outcome.out && outcome.out.wired, true);
+  setV13Runtime(null);
+  rmSync(accepted.root, { recursive: true, force: true });
+});
+
+test('K10 flags off do not read or stat checkpoint credentials', async () => {
+  const tree = makeHouseTree();
+  const before = readFileSync(tree.state);
+  const loose = join(tree.root, 'loose-creds');
+  mkdirSync(loose, { mode: 0o755 });
+  const creds = writeCredsFile(loose, {
+    profile: 'checkpoint-k10',
+    accessKey: 'k10-access-key-canary',
+    secret: 'k10-secret-canary',
+    mode: 0o644,
+  });
+  const seen = { creds: false, fs: false };
+  const token = writeTokenFile(tree, { token: houseCanary('k10'), mode: 0o644 });
+  const base = {
+    CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE: creds,
+    CHIT_CHECKPOINT_AWS_PROFILE: 'checkpoint-k10',
+    CHIT_CHECKPOINT_KMS_REGION: 'us-east-2',
+    CHIT_CHECKPOINT_KMS_KEY_ID: 'alias/test-checkpoint',
+    CHIT_CHECKPOINT_ADDRESS: MAINNET_CHECKPOINT,
+    CHIT_V13_HOUSE_TOKEN_FILE: token,
+    CHIT_V13_STORE_PATH: tree.storeDir,
+    CHIT_V13_HOUSE_BOOK_ID: tree.bookId,
+  };
+  const watch = (target) => new Proxy(target, {
+    get(obj, prop, receiver) {
+      if (prop === 'CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE' || prop === 'CHIT_CHECKPOINT_AWS_PROFILE') {
+        seen.creds = true;
+      }
+      return Reflect.get(obj, prop, receiver);
+    },
+  });
+  const deps = {
+    fs: {
+      lstatSync() { seen.fs = true; throw new Error('statted'); },
+      openSync() { seen.fs = true; throw new Error('opened'); },
+    },
+    openStore() { throw new Error('opened store'); },
+  };
+  let err = null;
+  let out = null;
+  try {
+    out = await wireV13Runtime(watch(base), deps);
+  } catch (caught) {
+    err = caught;
+  }
+  assert.equal(err, null);
+  assert.equal(out.wired, false);
+  try {
+    out = await wireV13Runtime(watch({
+      ...base,
+      CHIT_V13_ISSUANCE: 'false',
+      CHIT_V13_MAINNET_SEALER: 'false',
+      CHIT_V13_STORE: 'false',
+    }), deps);
+  } catch (caught) {
+    err = caught;
+  }
+  assert.equal(err, null);
+  assert.equal(out.wired, false);
+  assert.equal(seen.creds, false);
+  assert.equal(seen.fs, false);
+  assert.equal(readFileSync(tree.state).equals(before), true);
+  const issued = await issueHouseReceipt({ env: {}, task: byteTask(), receiptOpts: RECEIPT_OPTS });
+  assert.equal(issued.status, 200);
+  assert.deepEqual(issued.bytes, FIXTURE);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('K11 the receipt-log client does not take checkpoint credentials', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const profile = 'checkpoint-k11';
+  const fileKey = 'k11-file-access-key';
+  const envKey = 'k11-env-access-key';
+  const creds = writeCredsFile(credsDir(tree.root), {
+    profile,
+    accessKey: fileKey,
+    secret: 'k11-file-secret',
+  });
+  const token = writeTokenFile(tree, { token: houseCanary('k11') });
+  const transport = kmsTransport({ spki: material.spki });
+  const saved = {
+    id: process.env.AWS_ACCESS_KEY_ID,
+    secret: process.env.AWS_SECRET_ACCESS_KEY,
+    profile: process.env.AWS_PROFILE,
+    file: process.env.AWS_SHARED_CREDENTIALS_FILE,
+    credFile: process.env.CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE,
+    credProfile: process.env.CHIT_CHECKPOINT_AWS_PROFILE,
+  };
+  const profileSentinel = 'profile-sentinel-k11';
+  const sharedSentinel = join(tree.root, 'not-the-checkpoint-file');
+  process.env.CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE = creds;
+  process.env.CHIT_CHECKPOINT_AWS_PROFILE = profile;
+  process.env.AWS_PROFILE = profileSentinel;
+  process.env.AWS_SHARED_CREDENTIALS_FILE = sharedSentinel;
+  delete process.env.AWS_ACCESS_KEY_ID;
+  delete process.env.AWS_SECRET_ACCESS_KEY;
+  try {
+    const outcome = await bootOutcome(
+      storeOnlyEnv(tree, token, creds, profile),
+      productionPin(transport.requestHandler),
+    );
+    assert.equal(outcome.err, null);
+    assert.equal(outcome.out && outcome.out.wired, true);
+    assert.equal(process.env.AWS_PROFILE, profileSentinel);
+    assert.equal(process.env.AWS_SHARED_CREDENTIALS_FILE, sharedSentinel);
+    delete process.env.AWS_PROFILE;
+    process.env.AWS_ACCESS_KEY_ID = envKey;
+    process.env.AWS_SECRET_ACCESS_KEY = 'k11-env-secret';
+    const s3 = await createS3Client({
+      region: 'us-east-2',
+      endpoint: 'http://127.0.0.1:9',
+      forcePathStyle: true,
+    });
+    const resolved = await s3.config.credentials();
+    assert.equal(resolved.accessKeyId, envKey);
+    assert.equal(resolved.accessKeyId === fileKey, false);
+    assert.equal(process.env.AWS_PROFILE, undefined);
+    process.env.AWS_PROFILE = profileSentinel;
+    assert.equal(process.env.AWS_PROFILE, profileSentinel);
+    assert.equal(process.env.AWS_SHARED_CREDENTIALS_FILE, sharedSentinel);
+  } finally {
+    const restore = (name, value) => {
+      if (value == null) delete process.env[name];
+      else process.env[name] = value;
+    };
+    restore('AWS_ACCESS_KEY_ID', saved.id);
+    restore('AWS_SECRET_ACCESS_KEY', saved.secret);
+    restore('AWS_PROFILE', saved.profile);
+    restore('AWS_SHARED_CREDENTIALS_FILE', saved.file);
+    restore('CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE', saved.credFile);
+    restore('CHIT_CHECKPOINT_AWS_PROFILE', saved.credProfile);
+    setV13Runtime(null);
+    rmSync(tree.root, { recursive: true, force: true });
+  }
+});
+
+test('K12 boot logs and errors do not contain checkpoint secrets', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const keyId = dummyKmsArn('7');
+  const accessKey = 'canary-access-k12';
+  const secret = 'canary-secret-k12';
+  const profile = 'prof-canary-k12';
+  const creds = writeCredsFile(credsDir(tree.root), { profile, accessKey, secret });
+  const token = writeTokenFile(tree, { token: houseCanary('k12') });
+  const log = [];
+  const transport = kmsTransport({ spki: material.spki });
+  const env = storeOnlyEnv(tree, token, creds, profile, { CHIT_CHECKPOINT_KMS_KEY_ID: keyId });
+  const outcome = await bootOutcome(env, {
+    ...productionPin(transport.requestHandler),
+    log: (row) => log.push(row),
+  });
+  assert.equal(outcome.err, null);
+  assert.equal(outcome.out && outcome.out.wired, true);
+  const success = packedLeak([
+    log,
+    outcome.runtime,
+    inspect(outcome.runtime, { depth: 8 }),
+    JSON.stringify(outcome.runtime),
+    inspect(log, { depth: 8 }),
+  ]);
+  for (const needle of [keyId, accessKey, secret, profile, creds]) {
+    assert.equal(success.includes(needle), false);
+  }
+  setV13Runtime(null);
+  chmodSync(creds, 0o644);
+  const refused = await bootOutcome(env, {
+    ...productionPin(transport.requestHandler),
+    log: (row) => log.push(row),
+  });
+  assert.equal(refused.err && refused.err.reason, 'checkpoint_creds_mode');
+  const failure = packedLeak([
+    refused.err,
+    refused.err.stack,
+    refused.err.cause,
+    inspect(refused.err, { depth: 8 }),
+    JSON.stringify(refused.err),
+    log,
+    inspect(log, { depth: 8 }),
+  ]);
+  for (const needle of [keyId, accessKey, secret, profile, creds]) {
+    assert.equal(failure.includes(needle), false);
+  }
+  setV13Runtime(null);
   rmSync(tree.root, { recursive: true, force: true });
 });

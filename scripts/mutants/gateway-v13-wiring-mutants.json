@@ -420,6 +420,76 @@
       "find": "function assertHouseFileMode(listed, st) {\n  if (!envFileModeOk(listed.mode)) throw bootRefused('token_file_mode');\n  if (!envFileModeOk(st.mode)) throw bootRefused('token_file_mode');\n}",
       "replace": "function assertHouseFileMode(listed, st) {\n  if (!envFileModeOk(listed.mode)) throw bootRefused('token_file_mode');\n  void st;\n}",
       "note": "S4 — only the lstat mode is checked, so a looser fstat mode is accepted"
+    },
+    {
+      "id": "KM1",
+      "file": "services/gateway/src/checkpoint-kms.js",
+      "find": "  if (name === 'GetPublicKey') command = new GetPublicKeyCommand(input);\n  else if (name === 'Sign') command = new SignCommand(input);\n  else throw refused();\n  command.name = name;\n  return client.send(command, options);",
+      "replace": "  return client.send(spec, options);",
+      "note": "K1 — production send passes the plain object to KMSClient.send"
+    },
+    {
+      "id": "KM2",
+      "file": "services/gateway/src/checkpoint-kms.js",
+      "find": "  else throw refused();",
+      "replace": "  else command = spec;",
+      "note": "K7 — an unknown command name is forwarded to the client"
+    },
+    {
+      "id": "KM3",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  } catch {\n    noteCheckpoint(env, deps);\n    throw bootRefused();\n  }",
+      "replace": "  } catch {\n    noteCheckpoint(env, deps);\n    return;\n  }",
+      "note": "K3 — a GetPublicKey transport error is treated as a pinned success"
+    },
+    {
+      "id": "KM4",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "      } catch (err) {\n        if (err?.code === 'checkpoint_sign_invalid') throw err;\n        throw unavailable();\n      }",
+      "replace": "      } catch (err) {\n        return { raw: Buffer.alloc(64), r: Buffer.alloc(32), s: Buffer.alloc(32), yParity: 0 };\n      }",
+      "note": "K4 — a Sign transport error is returned as a signature"
+    },
+    {
+      "id": "KM5",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  return { ok: true, wired: false };",
+      "replace": "  checkpointClient(env, deps);\n  return { ok: true, wired: false };",
+      "note": "K10 — flags off still construct the checkpoint client and stat the credentials file"
+    },
+    {
+      "id": "KM6",
+      "file": "services/gateway/src/receipt-log-s3.js",
+      "find": "  return new S3Client({\n    region: config.region,\n    endpoint: config.endpoint,\n    forcePathStyle: config.forcePathStyle,\n  });",
+      "replace": "  const { fromIni } = await import('@aws-sdk/credential-providers');\n  return new S3Client({\n    region: config.region,\n    endpoint: config.endpoint,\n    forcePathStyle: config.forcePathStyle,\n    credentials: fromIni({ profile: process.env.CHIT_CHECKPOINT_AWS_PROFILE, filepath: process.env.CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE }),\n  });",
+      "note": "K11 — fromIni is also passed into the receipt-log S3 client"
+    },
+    {
+      "id": "KM7",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function assertCheckpointCreds(io, file) {\n  let listed;\n  try {\n    listed = io.lstatSync(file);\n  } catch (err) {\n    if (err && err.code === 'ENOENT') throw bootRefused('checkpoint_creds_missing');\n    throw bootRefused('checkpoint_creds_not_regular');\n  }\n  if (typeof listed.isSymbolicLink === 'function' && listed.isSymbolicLink()) {\n    throw bootRefused('checkpoint_creds_not_regular');\n  }\n  if (typeof listed.isFile !== 'function' || listed.isFile() !== true) {\n    throw bootRefused('checkpoint_creds_not_regular');\n  }\n  const parent = path.dirname(file);\n  let dirSt;\n  try {\n    dirSt = io.lstatSync(parent);\n  } catch {\n    throw bootRefused('checkpoint_creds_dir');\n  }\n  if (typeof dirSt.isSymbolicLink === 'function' && dirSt.isSymbolicLink()) {\n    throw bootRefused('checkpoint_creds_dir');\n  }\n  if (typeof dirSt.isDirectory !== 'function' || dirSt.isDirectory() !== true) {\n    throw bootRefused('checkpoint_creds_dir');\n  }\n  if (dirSt.uid !== process.getuid()) throw bootRefused('checkpoint_creds_dir');\n  if (!dirModeOk(dirSt.mode)) throw bootRefused('checkpoint_creds_dir');\n  if (!envFileModeOk(listed.mode)) throw bootRefused('checkpoint_creds_mode');\n  if (listed.uid !== process.getuid()) throw bootRefused('checkpoint_creds_owner');\n}",
+      "replace": "function assertCheckpointCreds(io, file) {\n  void io;\n  void file;\n}",
+      "note": "K9 — owner, mode, symlink, and parent-directory checks are skipped"
+    },
+    {
+      "id": "KM8",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (!envFileModeOk(listed.mode)) throw bootRefused('checkpoint_creds_mode');",
+      "replace": "  if (!envFileModeOk(listed.mode)) {\n    const err = bootRefused('checkpoint_creds_mode');\n    err.message = file;\n    err.cause = file;\n    throw err;\n  }",
+      "note": "K12 — a credentials refusal puts the file path on the error"
+    },
+    {
+      "id": "KM9",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  const credentials = checkpointCredentials(env, deps);\n  const config = { region, credentials };",
+      "replace": "  void deps;\n  const config = { region };",
+      "note": "K8 — a missing credentials file falls back to the default AWS chain"
+    },
+    {
+      "id": "KM10",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "        out = await sendCheckpointKms(client, {\n          name: 'Sign',\n          input: {\n            KeyId: keyId,\n            Message: message,\n            MessageType: MESSAGE_TYPE,\n            SigningAlgorithm: SIGNING_ALGORITHM,\n          },\n        }, { abortSignal: AbortSignal.timeout(timeoutMs) });",
+      "replace": "        out = await client.send({\n          name: 'Sign',\n          input: {\n            KeyId: keyId,\n            Message: message,\n            MessageType: MESSAGE_TYPE,\n            SigningAlgorithm: SIGNING_ALGORITHM,\n          },\n        }, { abortSignal: AbortSignal.timeout(timeoutMs) });",
+      "note": "K2 — createCheckpointSigner Sign sends a plain object to a raw client"
     }
   ]
 }

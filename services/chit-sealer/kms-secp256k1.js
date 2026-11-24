@@ -35,6 +35,7 @@ import {
   yParityByTrial,
 } from '../../packages/cs2-core/ecdsa/index.js';
 import { ANCHOR_SELECTOR } from './calldata.js';
+import { sendCheckpointKms } from '../gateway/src/checkpoint-kms.js';
 
 const CURVE = SECP256K1;
 const MESSAGE_TYPE = 'DIGEST';
@@ -116,7 +117,7 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
   const { keyId, pinned, timeoutMs, ceiling } = kmsConfig(env);
   let pub;
   try {
-    pub = await client.send({
+    pub = await sendCheckpointKms(client, {
       name: 'GetPublicKey',
       input: { KeyId: keyId },
     }, { abortSignal: AbortSignal.timeout(timeoutMs) });
@@ -138,7 +139,7 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
       if (message.length !== 32) throw invalid();
       let out;
       try {
-        out = await client.send({
+        out = await sendCheckpointKms(client, {
           name: 'Sign',
           input: {
             KeyId: keyId,

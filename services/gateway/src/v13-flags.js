@@ -18,6 +18,10 @@
  * tighter. The token is not an environment value.
  * CHIT_CHECKPOINT_MAX_FEE_PER_GAS and CHIT_CHECKPOINT_KMS_TIMEOUT_MS are read
  * by the checkpoint signer. This module does not read their values.
+ * CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE — path of the checkpoint credentials
+ * file, mode 600 or tighter. The access key is not an environment value.
+ * CHIT_CHECKPOINT_AWS_PROFILE — profile name inside that file. This module
+ * does not read either name.
  */
 
 import { assertLivePin, mainnetPin, normHex, MAINNET_CHECKPOINT } from '../../chit-sealer/mainnet-pin.js';
