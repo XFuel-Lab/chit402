@@ -193,10 +193,20 @@ function callerForBook(store, id) {
  * on that book in the opened store. A missing id, an unknown id, or a book
  * with no in-memory token is not a caller. Nothing here reads the request.
  */
+function canonicalHouseId(env) {
+  const raw = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID : '';
+  return normalizeBookId(raw);
+}
+
+function requirePresentHouseBookId(env) {
+  const raw = env?.CHIT_V13_HOUSE_BOOK_ID;
+  if (typeof raw !== 'string' || raw.trim() === '') throw bootRefused('house_book_id');
+}
+
 function houseCaller(store, env) {
-  const configured = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';
-  if (!configured) return null;
-  return callerForBook(store, configured);
+  const id = canonicalHouseId(env);
+  if (!id) return null;
+  return callerForBook(store, id);
 }
 
 function pointFromGetPublicKey(out) {
@@ -369,6 +379,11 @@ function rejectHouseShape(parsed) {
   if (parsed.v !== 1) throw bootRefused('token_file_parse');
 }
 
+function assertHouseFileMode(listed, st) {
+  if (!envFileModeOk(listed.mode)) throw bootRefused('token_file_mode');
+  if (!envFileModeOk(st.mode)) throw bootRefused('token_file_mode');
+}
+
 function parseHouseBook(text, env) {
   if (typeof text !== 'string' || text.length === 0 || text.charCodeAt(0) === 0xfeff) throw bootRefused('token_file_parse');
   let parsed;
@@ -379,14 +394,13 @@ function parseHouseBook(text, env) {
   }
   rejectHouseShape(parsed);
   const fileNorm = normalizeBookId(parsed.bookId);
-  const envTrim = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';
-  const envNorm = normalizeBookId(envTrim);
+  const envId = canonicalHouseId(env);
   if (!fileNorm) throw bootRefused('house_book_id');
-  if (envTrim !== '' && (!envNorm || envNorm !== fileNorm)) throw bootRefused('house_book_id');
+  if (!envId || envId !== fileNorm) throw bootRefused('house_book_id');
   if (!houseTokenOk(parsed.token)) throw bootRefused('house_token');
   if (!housePkOk(parsed.bookPk)) throw bootRefused('house_book_pk');
   const book = {
-    id: envTrim !== '' ? envTrim : fileNorm,
+    id: envId,
     token: parsed.token,
     bookPk: parsed.bookPk,
   };
@@ -405,10 +419,13 @@ function readHouseBook(env, deps) {
   const fd = openHouseFile(io, file);
   try {
     const st = io.fstatSync(fd);
+    const listed = io.lstatSync(file);
     if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) throw bootRefused('token_file_not_regular');
     if (typeof st.isFile !== 'function' || st.isFile() !== true) throw bootRefused('token_file_not_regular');
+    if (typeof listed.isSymbolicLink === 'function' && listed.isSymbolicLink()) throw bootRefused('token_file_not_regular');
+    if (typeof listed.isFile !== 'function' || listed.isFile() !== true) throw bootRefused('token_file_not_regular');
     houseFileTooBig(st.size);
-    if (!envFileModeOk(st.mode)) throw bootRefused('token_file_mode');
+    assertHouseFileMode(listed, st);
     if (st.uid !== process.getuid()) throw bootRefused('token_file_owner');
     return parseHouseBook(readHouseFd(io, fd, st.size), env);
   } finally {
@@ -450,6 +467,7 @@ function openDurableStore(dir, env, deps) {
     return null;
   }
   if (!st.isFile()) return null;
+  requirePresentHouseBookId(env);
   const house = readHouseBook(env, deps);
   assertStoredHouseSalt(dir, house.id);
   const open = typeof deps.openStore === 'function' ? deps.openStore : openStore;
