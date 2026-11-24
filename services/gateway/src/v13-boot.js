@@ -12,6 +12,9 @@
  * The checkpoint client is the secp256k1 KMS client, not the P-256 issuer
  * signer. GetPublicKey must recover to the live checkpoint pin. The key id
  * is never written to a log or an error. A log may say that it is set.
+ * When the client is not injected, credentials come from
+ * CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE and CHIT_CHECKPOINT_AWS_PROFILE.
+ * The file is mode 600 or tighter. The access key is not logged.
  *
  * CHIT_V13_HOUSE_TOKEN_FILE is the path of the house book file. It is read
  * only when a v13 flag is on. The token stays in memory for openStore.
@@ -22,6 +25,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { inspect } from 'node:util';
 import { KMSClient } from '@aws-sdk/client-kms';
+import { fromIni } from '@aws-sdk/credential-providers';
 import { ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
 import { broadcastCommittedAnchor, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
 import { MAINNET_CHECKPOINT, normHex } from '../../chit-sealer/mainnet-pin.js';
@@ -30,6 +34,7 @@ import { loadDotenvFile } from './dotenv-load.js';
 import logger from './logger.js';
 import { testSwitchesOn } from './test-switch.js';
 import { v13Flags } from './v13-flags.js';
+import { sendCheckpointKms } from './checkpoint-kms.js';
 import { setV13Runtime } from './v13-issue.js';
 
 const HOUSE_REASONS = new Set([
@@ -46,10 +51,18 @@ const HOUSE_REASONS = new Set([
   'store_book',
 ]);
 
+const CRED_REASONS = new Set([
+  'checkpoint_creds_missing',
+  'checkpoint_creds_not_regular',
+  'checkpoint_creds_owner',
+  'checkpoint_creds_mode',
+  'checkpoint_creds_dir',
+]);
+
 function bootRefused(reason) {
   const err = new Error('v13 boot refused');
   err.code = 'v13_boot_refused';
-  if (HOUSE_REASONS.has(reason)) err.reason = reason;
+  if (HOUSE_REASONS.has(reason) || CRED_REASONS.has(reason)) err.reason = reason;
   return err;
 }
 
@@ -245,7 +258,7 @@ async function assertCheckpointPin(client, env, deps) {
   }
   let out;
   try {
-    out = await client.send({
+    out = await sendCheckpointKms(client, {
       name: 'GetPublicKey',
       input: { KeyId: keyId },
     }, { abortSignal: AbortSignal.timeout(timeoutMs) });
@@ -268,11 +281,72 @@ async function assertCheckpointPin(client, env, deps) {
   noteCheckpoint(env, deps);
 }
 
+function checkpointCredsIo(deps) {
+  if (deps && deps.fs && typeof deps.fs.lstatSync === 'function') return deps.fs;
+  return fs;
+}
+
+function checkpointProfile(env) {
+  const raw = env?.CHIT_CHECKPOINT_AWS_PROFILE;
+  if (typeof raw !== 'string' || raw.trim() === '') return '';
+  return raw.trim();
+}
+
+function checkpointCredsFile(env) {
+  const raw = env?.CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE;
+  if (typeof raw !== 'string' || raw.trim() === '') return '';
+  return raw;
+}
+
+function assertCheckpointCreds(io, file) {
+  let listed;
+  try {
+    listed = io.lstatSync(file);
+  } catch (err) {
+    if (err && err.code === 'ENOENT') throw bootRefused('checkpoint_creds_missing');
+    throw bootRefused('checkpoint_creds_not_regular');
+  }
+  if (typeof listed.isSymbolicLink === 'function' && listed.isSymbolicLink()) {
+    throw bootRefused('checkpoint_creds_not_regular');
+  }
+  if (typeof listed.isFile !== 'function' || listed.isFile() !== true) {
+    throw bootRefused('checkpoint_creds_not_regular');
+  }
+  const parent = path.dirname(file);
+  let dirSt;
+  try {
+    dirSt = io.lstatSync(parent);
+  } catch {
+    throw bootRefused('checkpoint_creds_dir');
+  }
+  if (typeof dirSt.isSymbolicLink === 'function' && dirSt.isSymbolicLink()) {
+    throw bootRefused('checkpoint_creds_dir');
+  }
+  if (typeof dirSt.isDirectory !== 'function' || dirSt.isDirectory() !== true) {
+    throw bootRefused('checkpoint_creds_dir');
+  }
+  if (dirSt.uid !== process.getuid()) throw bootRefused('checkpoint_creds_dir');
+  if (!dirModeOk(dirSt.mode)) throw bootRefused('checkpoint_creds_dir');
+  if (!envFileModeOk(listed.mode)) throw bootRefused('checkpoint_creds_mode');
+  if (listed.uid !== process.getuid()) throw bootRefused('checkpoint_creds_owner');
+}
+
+function checkpointCredentials(env, deps) {
+  const profile = checkpointProfile(env);
+  const file = checkpointCredsFile(env);
+  if (!profile || !file) throw bootRefused('checkpoint_creds_missing');
+  assertCheckpointCreds(checkpointCredsIo(deps), file);
+  return fromIni({ profile, filepath: file });
+}
+
 function checkpointClient(env, deps) {
   if (deps?.client !== undefined) return deps.client;
   const region = String(env?.CHIT_CHECKPOINT_KMS_REGION || '').trim();
   if (!region) return null;
-  return new KMSClient({ region });
+  const credentials = checkpointCredentials(env, deps);
+  const config = { region, credentials };
+  if (deps && deps.requestHandler) config.requestHandler = deps.requestHandler;
+  return new KMSClient(config);
 }
 
 function houseIo(deps) {

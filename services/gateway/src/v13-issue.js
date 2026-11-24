@@ -21,6 +21,7 @@ import {
   mainnetSealerEnabled,
   storeEnabled,
 } from './v13-flags.js';
+import { sendCheckpointKms } from './checkpoint-kms.js';
 import { testSwitchesOn } from './test-switch.js';
 
 const tails = new Map();
@@ -227,7 +228,10 @@ function legacyResponse(task, receiptOpts) {
 
 async function armSealer(input) {
   if (input.client && typeof input.client.send === 'function') {
-    await input.client.send({ name: 'GetPublicKey', input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') } }, {});
+    await sendCheckpointKms(input.client, {
+      name: 'GetPublicKey',
+      input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },
+    }, {});
     return;
   }
   if (typeof input.onSealer === 'function') await input.onSealer();

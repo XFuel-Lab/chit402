@@ -16,6 +16,7 @@ import {
   recoverPublicKey,
 } from '../../packages/cs2-core/ecdsa/index.js';
 import { createCheckpointSigner } from './kms-secp256k1.js';
+import { sendCheckpointKms } from '../gateway/src/checkpoint-kms.js';
 import { noteAnchored } from '../chit-store/store.js';
 import {
   MAINNET_CHECKPOINT,
@@ -94,7 +95,7 @@ function addressOfPoint(point, addressOf) {
 async function checkpointPoint(client, env) {
   let out;
   try {
-    out = await client.send({
+    out = await sendCheckpointKms(client, {
       name: 'GetPublicKey',
       input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },
     }, {});
