@@ -293,7 +293,7 @@
       "file": "services/gateway/src/v13-boot.js",
       "find": "  if (!runtime.caller || typeof runtime.caller.bookId !== 'string' || runtime.caller.bookId === '') return false;\n  if (typeof runtime.caller.token !== 'string' || runtime.caller.token === '') return false;\n",
       "replace": "",
-      "note": "B16 — runtimeComplete no longer requires the house caller"
+      "note": "S2 — runtimeComplete no longer requires the house caller. A blank id is refused before this check, so the kill is a valid file whose opened store has no token."
     },
     {
       "id": "BW16",
@@ -305,9 +305,9 @@
     {
       "id": "BW17",
       "file": "services/gateway/src/v13-boot.js",
-      "find": "  const configured = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';\n  if (!configured) return null;\n  return callerForBook(store, configured);",
-      "replace": "  const configured = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';\n  if (!configured) {\n    const ids = [];\n    if (store?.books && typeof store.books.keys === 'function') {\n      for (const id of store.books.keys()) ids.push(String(id));\n    }\n    ids.sort();\n    return callerForBook(store, ids[0]);\n  }\n  return callerForBook(store, configured);",
-      "note": "B16 — a missing house book id falls back to the smallest book id"
+      "find": "function requirePresentHouseBookId(env) {\n  const raw = env?.CHIT_V13_HOUSE_BOOK_ID;\n  if (typeof raw !== 'string' || raw.trim() === '') throw bootRefused('house_book_id');\n}",
+      "replace": "function requirePresentHouseBookId(env) {\n  void env;\n}",
+      "note": "S1 — a blank house book id is not refused before the token file is read. The smallest-id fallback can no longer run: a blank id is refused before houseCaller."
     },
     {
       "id": "HT1",
@@ -347,9 +347,9 @@
     {
       "id": "HT6",
       "file": "services/gateway/src/v13-boot.js",
-      "find": "    if (!envFileModeOk(st.mode)) throw bootRefused('token_file_mode');\n",
-      "replace": "",
-      "note": "H6 — the house token file mode check is skipped"
+      "find": "function assertHouseFileMode(listed, st) {\n  if (!envFileModeOk(listed.mode)) throw bootRefused('token_file_mode');\n  if (!envFileModeOk(st.mode)) throw bootRefused('token_file_mode');\n}",
+      "replace": "function assertHouseFileMode(listed, st) {\n  void listed;\n  void st;\n}",
+      "note": "H6 — both the lstat and fstat house-file mode checks are skipped"
     },
     {
       "id": "HT7",
@@ -368,7 +368,7 @@
     {
       "id": "HT9",
       "file": "services/gateway/src/v13-boot.js",
-      "find": "  if (envTrim !== '' && (!envNorm || envNorm !== fileNorm)) throw bootRefused('house_book_id');\n",
+      "find": "  if (!envId || envId !== fileNorm) throw bootRefused('house_book_id');\n",
       "replace": "  if (false) throw bootRefused('house_book_id');\n",
       "note": "H9 — the file book id need not match CHIT_V13_HOUSE_BOOK_ID"
     },
@@ -406,6 +406,20 @@
       "find": "      store = openDurableStore(storeDir, env, deps);\n    } catch (err) {\n      if (err?.code === 'v13_boot_refused') throw err;\n      throw bootRefused();\n    }",
       "replace": "      store = openDurableStore(storeDir, env, deps);\n    } catch {\n      throw bootRefused();\n    }",
       "note": "H3 — guardListen replaces a v13_boot_refused reason with a bare error"
+    },
+    {
+      "id": "HT15",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function canonicalHouseId(env) {\n  const raw = typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID : '';\n  return normalizeBookId(raw);\n}",
+      "replace": "function canonicalHouseId(env) {\n  return typeof env?.CHIT_V13_HOUSE_BOOK_ID === 'string' ? env.CHIT_V13_HOUSE_BOOK_ID.trim() : '';\n}",
+      "note": "S3 — the env book id is not normalized before the compare or the store key"
+    },
+    {
+      "id": "HT16",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "function assertHouseFileMode(listed, st) {\n  if (!envFileModeOk(listed.mode)) throw bootRefused('token_file_mode');\n  if (!envFileModeOk(st.mode)) throw bootRefused('token_file_mode');\n}",
+      "replace": "function assertHouseFileMode(listed, st) {\n  if (!envFileModeOk(listed.mode)) throw bootRefused('token_file_mode');\n  void st;\n}",
+      "note": "S4 — only the lstat mode is checked, so a looser fstat mode is accepted"
     }
   ]
 }
