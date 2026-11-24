@@ -2093,3 +2093,125 @@ test('H13 the house token and its path stay out of logs, errors, and inspect', a
     rmSync(tree.root, { recursive: true, force: true });
   }
 });
+
+test('S1 a blank house book id is refused before the token file is read', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('s1');
+  const file = writeTokenFile(tree, { token: canary });
+  const seen = { fs: 0, open: 0 };
+  const deps = {
+    ...pinDeps(),
+    fs: {
+      lstatSync() { seen.fs += 1; throw new Error('read'); },
+      openSync() { seen.fs += 1; throw new Error('read'); },
+      fstatSync() { seen.fs += 1; throw new Error('read'); },
+      readSync() { seen.fs += 1; throw new Error('read'); },
+      closeSync() { seen.fs += 1; },
+    },
+    openStore() { seen.open += 1; throw new Error('opened'); },
+  };
+  const cases = [undefined, '', '   ', '\n\t'];
+  for (const bookId of cases) {
+    seen.fs = 0;
+    seen.open = 0;
+    const before = readFileSync(tree.state);
+    const env = houseBootEnv(tree, file, bookId === undefined ? {} : { CHIT_V13_HOUSE_BOOK_ID: bookId });
+    if (bookId === undefined) delete env.CHIT_V13_HOUSE_BOOK_ID;
+    const err = await refuseHouse(env, 'house_book_id', deps);
+    assert.equal(seen.fs, 0);
+    assert.equal(seen.open, 0);
+    assert.equal(readFileSync(tree.state).equals(before), true);
+    const packed = packedLeak([err, err.stack, err.message]);
+    assert.equal(packed.includes(canary), false);
+    assert.equal(packed.includes(file), false);
+  }
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('S2 a valid house file with no in-memory token does not listen', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('s2');
+  const file = writeTokenFile(tree, { token: canary });
+  const before = readFileSync(tree.state);
+  let opened = 0;
+  setV13Runtime(null);
+  let thrown = null;
+  try {
+    await wireV13Runtime(houseBootEnv(tree, file), {
+      ...pinDeps(),
+      openStore(dir) {
+        opened += 1;
+        return openStore(dir);
+      },
+    });
+  } catch (err) {
+    thrown = err;
+  }
+  assert.ok(thrown);
+  assert.equal(thrown.code, 'v13_boot_refused');
+  assert.equal(thrown.message, 'v13 boot refused');
+  assert.equal(readV13Runtime(), null);
+  assert.equal(opened, 1);
+  assert.equal(readFileSync(tree.state).equals(before), true);
+  const packed = packedLeak([thrown, thrown.stack, inspect(thrown, { depth: 8 })]);
+  assert.equal(packed.includes(canary), false);
+  assert.equal(packed.includes(file), false);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('S3 an uppercase or 0x house book id boots as the canonical id', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('s3');
+  const before = readFileSync(tree.state);
+  const file = writeTokenFile(tree, { token: canary });
+  const prefixed = `0x${tree.bookId.toUpperCase()}`;
+  setV13Runtime(null);
+  let thrown = null;
+  let out = null;
+  try {
+    out = await wireV13Runtime(houseBootEnv(tree, file, { CHIT_V13_HOUSE_BOOK_ID: `  ${prefixed}  ` }), pinDeps());
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown, null);
+  assert.equal(out.wired, true);
+  const runtime = readV13Runtime();
+  assert.equal(runtime.caller.bookId, tree.bookId);
+  assert.equal(runtime.caller.token, canary);
+  assert.equal(readFileSync(tree.state).equals(before), true);
+  setV13Runtime(null);
+  await refuseHouse(
+    houseBootEnv(tree, file, { CHIT_V13_HOUSE_BOOK_ID: `0x${'bb'.repeat(32)}` }),
+    'house_book_id',
+  );
+  assert.equal(readFileSync(tree.state).equals(before), true);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('S4 a looser fstat mode is refused when lstat said 0600', async () => {
+  const tree = makeHouseTree();
+  const canary = houseCanary('s4');
+  const file = writeTokenFile(tree, { token: canary, mode: 0o600 });
+  const mask = (st, bits) => new Proxy(st, {
+    get(target, prop, receiver) {
+      if (prop === 'mode') return (target.mode & ~0o777) | bits;
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const deps = {
+    ...pinDeps(),
+    fs: {
+      lstatSync(target) { return mask(lstatSync(target), 0o600); },
+      openSync(target, flags) { return openSync(target, flags); },
+      fstatSync(fd) { return mask(fstatSync(fd), 0o644); },
+      readSync(fd, buf, offset, length, position) { return readSync(fd, buf, offset, length, position); },
+      closeSync(fd) { closeSync(fd); },
+    },
+  };
+  const err = await refuseHouse(houseBootEnv(tree, file), 'token_file_mode', deps);
+  const packed = packedLeak([err, err.stack, inspect(err, { depth: 8 }), JSON.stringify(err)]);
+  assert.equal(packed.includes(canary), false);
+  assert.equal(packed.includes(file), false);
+  rmSync(tree.root, { recursive: true, force: true });
+});
