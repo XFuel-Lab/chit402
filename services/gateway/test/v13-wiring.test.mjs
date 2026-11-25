@@ -3,6 +3,7 @@
  */
 import { createHash, createPublicKey } from 'node:crypto';
 import http from 'node:http';
+import net from 'node:net';
 import {
   chmodSync,
   closeSync,
@@ -16,6 +17,7 @@ import {
   readSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -2417,23 +2419,31 @@ test('K2 a real KMS client signs and the other checkpoint send sites do too', as
   } catch (err) {
     anchorErr = err;
   }
+  assert.equal(anchorErr instanceof TypeError, false);
   assert.equal(anchorErr && anchorErr.code, 'checkpoint_address_mismatch');
   assert.equal(anchorTransport.calls.includes('TrentService.GetPublicKey'), true);
   assert.equal(anchorTransport.calls.includes('TrentService.Sign'), true);
 
   const armTransport = kmsTransport({ spki: material.spki });
-  const armed = await issueHouseReceipt({
-    env: {
-      CHIT_V13_MAINNET_SEALER: 'true',
-      CHIT_CHECKPOINT_KMS_KEY_ID: 'alias/test-checkpoint',
-      CHIT_CHECKPOINT_KMS_REGION: 'us-east-2',
-      CHIT_CHECKPOINT_ADDRESS: MAINNET_CHECKPOINT,
-    },
-    task: byteTask(),
-    receiptOpts: RECEIPT_OPTS,
-    client: realKms(armTransport.requestHandler),
-  });
-  assert.equal(armed.status, 200);
+  let armErr = null;
+  let armed = null;
+  try {
+    armed = await issueHouseReceipt({
+      env: {
+        CHIT_V13_MAINNET_SEALER: 'true',
+        CHIT_CHECKPOINT_KMS_KEY_ID: 'alias/test-checkpoint',
+        CHIT_CHECKPOINT_KMS_REGION: 'us-east-2',
+        CHIT_CHECKPOINT_ADDRESS: MAINNET_CHECKPOINT,
+      },
+      task: byteTask(),
+      receiptOpts: RECEIPT_OPTS,
+      client: realKms(armTransport.requestHandler),
+    });
+  } catch (err) {
+    armErr = err;
+  }
+  assert.equal(armErr instanceof TypeError, false);
+  assert.equal(armed && armed.status, 200);
   assert.equal(armTransport.calls.includes('TrentService.GetPublicKey'), true);
 });
 
@@ -2988,6 +2998,212 @@ test('K12 boot logs and errors do not contain checkpoint secrets', async () => {
   for (const needle of [keyId, accessKey, secret, profile, creds]) {
     assert.equal(failure.includes(needle), false);
   }
+  setV13Runtime(null);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('CG5 production checkpoint client uses standard mode and two attempts', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const profile = 'checkpoint-cg5';
+  const creds = writeCredsFile(credsDir(tree.root), {
+    profile,
+    accessKey: 'cg5-file-access',
+    secret: 'cg5-file-secret',
+  });
+  const transport = kmsTransport({ spki: material.spki });
+  const saved = {
+    mode: process.env.AWS_DEFAULTS_MODE,
+    id: process.env.AWS_ACCESS_KEY_ID,
+    secret: process.env.AWS_SECRET_ACCESS_KEY,
+    meta: process.env.AWS_EC2_METADATA_DISABLED,
+  };
+  process.env.AWS_DEFAULTS_MODE = 'auto';
+  process.env.AWS_ACCESS_KEY_ID = 'cg5-env-access';
+  process.env.AWS_SECRET_ACCESS_KEY = 'cg5-env-secret';
+  delete process.env.AWS_EC2_METADATA_DISABLED;
+  const hits = [];
+  const orig = net.Socket.prototype.connect;
+  net.Socket.prototype.connect = function connect(...args) {
+    const blob = args.map((part) => (part && typeof part === 'object' ? JSON.stringify(part) : String(part))).join(' ');
+    if (blob.includes('169.254.169.254') || blob.includes('fd00:ec2::254')) hits.push('imds');
+    const err = new Error('socket opened');
+    err.code = 'socket_opened';
+    throw err;
+  };
+  let client = null;
+  try {
+    const outcome = await bootOutcome(
+      storeOnlyEnv(tree, writeTokenFile(tree, { token: houseCanary('cg5') }), creds, profile),
+      productionPin(transport.requestHandler),
+    );
+    assert.equal(outcome.err, null);
+    assert.equal(outcome.out && outcome.out.wired, true);
+    client = outcome.runtime.client;
+    const mode = client.config.defaultsMode;
+    const defaults = typeof mode === 'function' ? await mode() : mode;
+    assert.equal(String(defaults).toLowerCase(), 'standard');
+    const attempts = client.config.maxAttempts;
+    const maxAttempts = typeof attempts === 'function' ? await attempts() : attempts;
+    assert.equal(maxAttempts, 2);
+    assert.equal(hits.length, 0);
+  } finally {
+    net.Socket.prototype.connect = orig;
+    if (client && typeof client.destroy === 'function') client.destroy();
+    const restore = (name, value) => {
+      if (value == null) delete process.env[name];
+      else process.env[name] = value;
+    };
+    restore('AWS_DEFAULTS_MODE', saved.mode);
+    restore('AWS_ACCESS_KEY_ID', saved.id);
+    restore('AWS_SECRET_ACCESS_KEY', saved.secret);
+    restore('AWS_EC2_METADATA_DISABLED', saved.meta);
+    setV13Runtime(null);
+    rmSync(tree.root, { recursive: true, force: true });
+  }
+});
+
+test('CG6 the checkpoint login is not the process access key or AWS_PROFILE', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const profile = 'checkpoint-cg6';
+  const other = 'env-profile-cg6';
+  const fileKey = 'cg6-file-access';
+  const envKey = 'cg6-env-access';
+  const creds = writeCredsFile(credsDir(tree.root), { profile, accessKey: fileKey, secret: 'cg6-file-secret' });
+  writeFileSync(creds, `${readFileSync(creds, 'utf8')}[${other}]\naws_access_key_id = ${envKey}\naws_secret_access_key = cg6-env-secret\n`);
+  const transport = kmsTransport({ spki: material.spki });
+  const saved = {
+    id: process.env.AWS_ACCESS_KEY_ID,
+    secret: process.env.AWS_SECRET_ACCESS_KEY,
+    profile: process.env.AWS_PROFILE,
+    file: process.env.AWS_SHARED_CREDENTIALS_FILE,
+  };
+  process.env.AWS_ACCESS_KEY_ID = envKey;
+  process.env.AWS_SECRET_ACCESS_KEY = 'cg6-env-secret';
+  process.env.AWS_PROFILE = other;
+  process.env.AWS_SHARED_CREDENTIALS_FILE = join(tree.root, 'not-the-checkpoint-file');
+  let client = null;
+  try {
+    const token = writeTokenFile(tree, { token: houseCanary('cg6') });
+    const outcome = await bootOutcome(storeOnlyEnv(tree, token, creds, profile), productionPin(transport.requestHandler));
+    assert.equal(outcome.err, null);
+    client = outcome.runtime.client;
+    const resolved = await client.config.credentials();
+    assert.equal(resolved.accessKeyId, fileKey);
+    assert.equal(resolved.accessKeyId === envKey, false);
+    assert.equal(process.env.AWS_PROFILE, other);
+    const missing = await bootOutcome(
+      storeOnlyEnv(tree, token, creds, profile, { CHIT_CHECKPOINT_AWS_PROFILE: '' }),
+      productionPin(transport.requestHandler),
+    );
+    assert.equal(missing.err && missing.err.reason, 'checkpoint_creds_missing');
+  } finally {
+    if (client && typeof client.destroy === 'function') client.destroy();
+    const restore = (name, value) => {
+      if (value == null) delete process.env[name];
+      else process.env[name] = value;
+    };
+    restore('AWS_ACCESS_KEY_ID', saved.id);
+    restore('AWS_SECRET_ACCESS_KEY', saved.secret);
+    restore('AWS_PROFILE', saved.profile);
+    restore('AWS_SHARED_CREDENTIALS_FILE', saved.file);
+    setV13Runtime(null);
+    rmSync(tree.root, { recursive: true, force: true });
+  }
+});
+
+test('CG11 a creds symlink swapped in after lstat is refused', async () => {
+  const tree = makeHouseTree();
+  const material = checkpointMaterial();
+  const profile = 'checkpoint-cg11';
+  const token = writeTokenFile(tree, { token: houseCanary('cg11') });
+  const dir = credsDir(tree.root);
+  const decoy = writeCredsFile(dir, {
+    profile,
+    accessKey: 'cg11-decoy-access',
+    secret: 'cg11-decoy-secret',
+    name: 'decoy',
+  });
+  const file = writeCredsFile(dir, { profile, accessKey: 'cg11-real-access', secret: 'cg11-real-secret' });
+  let swapped = false;
+  const fs = {
+    lstatSync(target) {
+      const st = lstatSync(target);
+      if (target === file && !swapped && st.isFile()) {
+        swapped = true;
+        unlinkSync(file);
+        symlinkSync(decoy, file);
+        return st;
+      }
+      return lstatSync(target);
+    },
+    openSync(target, flags) { return openSync(target, flags); },
+    fstatSync(fd) { return fstatSync(fd); },
+    readSync(fd, buf, offset, length, position) { return readSync(fd, buf, offset, length, position); },
+    closeSync(fd) { closeSync(fd); },
+  };
+  const transport = kmsTransport({ spki: material.spki });
+  const outcome = await bootOutcome(storeOnlyEnv(tree, token, file, profile), {
+    ...productionPin(transport.requestHandler),
+    fs,
+  });
+  assert.equal(swapped, true);
+  assert.equal(outcome.out, null);
+  assert.equal(outcome.err && outcome.err.code, 'v13_boot_refused');
+  assert.equal(outcome.err.reason, 'checkpoint_creds_not_regular');
+  assert.equal(outcome.runtime, null);
+  assert.equal(transport.calls.length, 0);
+  setV13Runtime(null);
+  rmSync(tree.root, { recursive: true, force: true });
+});
+
+test('CG13 flags off do not open checkpoint creds or start a sealer loop', async () => {
+  const tree = makeHouseTree();
+  const token = writeTokenFile(tree, { token: houseCanary('cg13'), mode: 0o644 });
+  const loose = join(tree.root, 'loose');
+  mkdirSync(loose, { mode: 0o755 });
+  const creds = writeCredsFile(loose, {
+    profile: 'checkpoint-cg13',
+    accessKey: 'cg13-access',
+    secret: 'cg13-secret',
+    mode: 0o644,
+  });
+  const seen = { fs: false };
+  const deps = {
+    fs: {
+      lstatSync() { seen.fs = true; throw new Error('statted'); },
+      openSync() { seen.fs = true; throw new Error('opened'); },
+    },
+  };
+  const base = {
+    CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE: creds,
+    CHIT_CHECKPOINT_AWS_PROFILE: 'checkpoint-cg13',
+    CHIT_CHECKPOINT_KMS_REGION: 'us-east-2',
+    CHIT_V13_HOUSE_TOKEN_FILE: token,
+    CHIT_V13_STORE_PATH: tree.storeDir,
+    CHIT_V13_HOUSE_BOOK_ID: tree.bookId,
+  };
+  const before = new Set(process._getActiveHandles());
+  let err = null;
+  let out = null;
+  try {
+    out = await wireV13Runtime(base, deps);
+  } catch (caught) {
+    err = caught;
+  } finally {
+    for (const handle of process._getActiveHandles()) {
+      if (!before.has(handle)) clearInterval(handle);
+    }
+  }
+  assert.equal(err, null);
+  assert.equal(out && out.wired, false);
+  assert.equal(seen.fs, false);
+  assert.equal(process._getActiveHandles().filter((handle) => !before.has(handle)).length, 0);
+  const src = readFileSync(new URL('../src/server.js', import.meta.url), 'utf8');
+  const body = src.slice(src.indexOf('export async function startServer'), src.indexOf('export default createApp'));
+  assert.equal(body.includes('guardCloseHour'), false);
+  assert.equal(body.includes('closeHour'), false);
   setV13Runtime(null);
   rmSync(tree.root, { recursive: true, force: true });
 });
