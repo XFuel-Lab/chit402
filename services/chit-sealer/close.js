@@ -45,6 +45,7 @@ import {
   openAnchorIntentLog,
 } from './kms-secp256k1.js';
 import { buildAnchorCalldata } from './calldata.js';
+import { readPendingLines, sealIntakeLines } from '../chit-store/intake.js';
 import { openJournal } from './journal.js';
 import { acceptCoreLine } from './lines.js';
 import { TIER_N, padLeaves } from './pad.js';
@@ -395,10 +396,22 @@ function epochSlotKey(sealer) {
 }
 
 function commitBeforeBroadcast(sealer, record) {
+  const pub = publicRecord(record);
+  if (typeof sealer.store.acceptEpoch === 'function') {
+    const gate = sealer.store.acceptEpoch(pub);
+    if (!gate.ok) return { ok: false, reason: gate.reason, broadcast: false };
+  }
   const saved = saveCommit(sealer, record);
   if (!saved.ok) return saved;
-  const stored = sealer.store.commitEpoch(publicRecord(record));
-  if (!stored.ok) return { ok: false, reason: 'store_not_committed' };
+  const stored = sealer.store.commitEpoch(pub);
+  if (!stored.ok) {
+    const named = stored.reason === 'epoch_house_conflict'
+      || stored.reason === 'epoch_not_next'
+      || stored.reason === 'store_conflict'
+      ? stored.reason
+      : 'store_not_committed';
+    return { ok: false, reason: named, broadcast: false };
+  }
   return { ok: true };
 }
 
@@ -607,6 +620,55 @@ export function openSealer(config) {
   };
 }
 
+function mergeIntake(sealer, planned, explicit) {
+  const counted = tierCount(planned.k);
+  if (!counted.ok) return counted;
+  const room = counted.count - explicit.length;
+  const seen = new Set();
+  for (let i = 0; i < explicit.length; i += 1) {
+    const id = explicit[i].paymentId;
+    if (id) seen.add(Buffer.from(id).toString('hex'));
+  }
+  if (room <= 0 || !sealer.store || typeof sealer.store.dir !== 'string') {
+    return { ok: true, lines: explicit };
+  }
+  const pending = readPendingLines(sealer.store.dir, sealer.store.io);
+  if (!pending.ok) return pending;
+  const extra = [];
+  for (let i = 0; i < pending.lines.length && extra.length < room; i += 1) {
+    const item = pending.lines[i];
+    const accepted = acceptCoreLine(item.line);
+    if (!accepted.ok) return fail('intake_unreadable');
+    const id = canonicalPaymentId(accepted.payment);
+    if (!id.ok) return fail('intake_unreadable');
+    if (seen.has(id.hex)) continue;
+    seen.add(id.hex);
+    extra.push({
+      line: accepted.line,
+      bookId: item.bookId,
+      callerPk: null,
+      payment: accepted.payment,
+      paymentId: id.bytes,
+      paymentRef: item.paymentRef,
+    });
+  }
+  return { ok: true, lines: explicit.concat(extra) };
+}
+
+function rememberIntake(sealer, record, lines) {
+  const pairs = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const row = lines[i];
+    if (!row.paymentRef) continue;
+    const hex = Buffer.from(row.line).toString('hex');
+    const receipt = (record.receipts || []).find((item) => item.line === hex);
+    if (!receipt) return fail('intake_unreadable');
+    pairs.push({ paymentRef: row.paymentRef, receiptId: receipt.id, epoch: record.epoch });
+  }
+  if (pairs.length === 0) return { ok: true };
+  return sealIntakeLines(sealer.store.dir, pairs, sealer.store.io);
+}
+
 /**
  * Close one finished hour, or a catch-up through the last complete hour.
  * The clock is sealer.clock(), in unix seconds. input.now is not read.
@@ -626,16 +688,27 @@ export async function closeHour(sealer, input) {
   if (typeof body.send !== 'function') return fail('bad_broadcast');
   const accepted = acceptLines(body.lines);
   if (!accepted.ok) return accepted;
-  const booked = bindBooks(sealer, accepted.lines);
+  const merged = mergeIntake(sealer, planned, accepted.lines);
+  if (!merged.ok) return merged;
+  const booked = bindBooks(sealer, merged.lines);
   if (!booked.ok) return booked;
   sealer.fees = fees;
-  const built = buildEpoch(sealer, planned, accepted.lines);
+  const built = buildEpoch(sealer, planned, merged.lines);
   if (!built.ok) return built;
   const record = built.record;
   const committed = commitBeforeBroadcast(sealer, record);
-  if (!committed.ok || !sealer.store.hasCommitted(record)) {
+  if (!committed.ok) {
+    return {
+      ok: false,
+      reason: committed.reason || 'store_not_committed',
+      broadcast: false,
+    };
+  }
+  if (!sealer.store.hasCommitted(record)) {
     return { ok: false, reason: 'store_not_committed', broadcast: false };
   }
+  const sealed = rememberIntake(sealer, record, merged.lines);
+  if (!sealed.ok) return { ok: false, reason: sealed.reason, broadcast: false, committed: true };
   return broadcastRecord(sealer, record, body.send, body.signal);
 }
 
@@ -654,8 +727,10 @@ export async function recover(sealer, input) {
     const record = pending[i];
     if (!sealer.store.hasCommitted(record)) {
       const stored = sealer.store.commitEpoch(publicRecord(record));
-      if (stored.reason === 'store_conflict') {
-        return { ok: false, reason: 'store_conflict', broadcast: false };
+      if (stored.reason === 'store_conflict'
+        || stored.reason === 'epoch_house_conflict'
+        || stored.reason === 'epoch_not_next') {
+        return { ok: false, reason: stored.reason, broadcast: false };
       }
       if (!stored.ok || !sealer.store.hasCommitted(record)) {
         return { ok: false, reason: 'store_not_committed', broadcast: false };
