@@ -19,6 +19,7 @@ import {
   readOwnedPending,
   writeRefund,
 } from '../../chit-store/intake.js';
+import { fetchReceipt } from '../../chit-store/store.js';
 import { decisionHoldResult } from './x402-flags.js';
 import { buildReceipt } from './receipt.js';
 import {
@@ -373,6 +374,8 @@ async function issueV13(input) {
         if (booked && booked.reason === 'not_owner') return notFound();
         return refundOwed(input, key.hex);
       }
+      const released = releasedReceipt(input, booked.row);
+      if (released) return released;
       const kind = booked.row && booked.row.state === 'refund_owed' ? 'refund_owed' : 'pending_anchor';
       const held = holdResponse(kind, key.hex, input.baseUrl);
       try {
@@ -391,6 +394,25 @@ async function issueV13(input) {
     if (!key.ok) return refundOwed(input, '00'.repeat(80));
     return refundOwed(input, key.hex);
   }
+}
+
+function releasedReceipt(input, row) {
+  if (!row || typeof row.receiptId !== 'string' || row.receiptId === '' || !input?.store) return null;
+  if (!input.caller || typeof input.caller.bookId !== 'string' || typeof input.caller.token !== 'string') {
+    return null;
+  }
+  const viewed = fetchReceipt(input.store, {
+    receiptId: row.receiptId,
+    bookId: input.caller.bookId,
+    token: input.caller.token,
+  });
+  if (!viewed || viewed.status !== 200) return null;
+  return {
+    status: 200,
+    replay: true,
+    body: viewed.body,
+    bytes: Buffer.from(JSON.stringify(viewed.body)),
+  };
 }
 
 function holdFromIntake(row) {
@@ -421,7 +443,11 @@ export function readHouse(input) {
   if (typeof input?.dir === 'string' && input.dir) dirs.push(input.dir);
   for (let i = 0; i < dirs.length; i += 1) {
     const owned = readOwnedPending(dirs[i], input.receiptId, input.caller);
-    if (owned) return holdFromIntake(owned);
+    if (owned) {
+      const released = releasedReceipt({ store: input.store, caller: input.caller }, owned);
+      if (released) return released;
+      return holdFromIntake(owned);
+    }
   }
   const pending = pendings.get(input.receiptId);
   if (pending && pending.open === true) {

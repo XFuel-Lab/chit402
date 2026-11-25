@@ -23,6 +23,7 @@ import {
 } from '../../chit-sealer/kms-secp256k1.js';
 import { anchor } from '../../chit-sealer/anchor-mainnet.js';
 import { MAINNET_CHECKPOINT, MAINNET_USDC, mainnetPin } from '../../chit-sealer/mainnet-pin.js';
+import { bookLeaf, openIntake } from '../../chit-store/intake.js';
 import { fetchReceipt, migrateHouseEpochs, noteAnchored, openStore } from '../../chit-store/store.js';
 import { sendThroughCommittedAnchor } from '../src/v13-boot.js';
 import { v13PaidHookFailure } from '../src/openai-gateway.js';
@@ -350,6 +351,17 @@ test('T5 a paid house call ends pending, released, or refund_owed', async () => 
   });
   assert.equal(released.status, 200);
   assert.equal(typeof released.body.line, 'string');
+  const houseRead = await handleHouse({
+    method: 'GET',
+    receiptId: issued.body.pending_id,
+    caller: { bookId: box.book.id, token: box.book.token },
+  }, { dir: box.bindDir, store: box.store });
+  assert.equal(houseRead.status, 200);
+  assert.equal(houseRead.body.line, released.body.line);
+  const replay = await book(box, 5);
+  assert.equal(replay.status, 200);
+  assert.equal(replay.replay, true);
+  assert.equal(replay.body.line, released.body.line);
   const broken = fresh();
   const file = join(broken.root, 'not-a-directory');
   writeFileSync(file, 'x');
@@ -618,6 +630,58 @@ test('T13 canaries stay out of logs and error bodies', async () => {
   assert.equal(packed.includes(session), false);
   assert.equal(packed.includes(keyId), false);
   assert.equal(issued.status, 409);
+  rmSync(box.root, { recursive: true, force: true });
+});
+
+test('a stale intake snapshot does not drop a booked leaf', async () => {
+  const box = fresh();
+  const first = openIntake(box.storeDir);
+  const second = openIntake(box.storeDir);
+  const left = bookLeaf(first, {
+    paymentRef: authorizationKey({
+      chainId: 8453, token: USDC, authorizer: FROM, nonce: tagged(41, 0x11),
+    }).hex,
+    line: coreLeaf(41),
+    caller: { bookId: box.book.id, token: box.book.token },
+  });
+  const right = bookLeaf(second, {
+    paymentRef: authorizationKey({
+      chainId: 8453, token: USDC, authorizer: FROM, nonce: tagged(42, 0x11),
+    }).hex,
+    line: coreLeaf(42),
+    caller: { bookId: box.book.id, token: box.book.token },
+  });
+  assert.equal(left.ok, true, left.reason);
+  assert.equal(right.ok, true, right.reason);
+  assert.equal(leafCount(box.storeDir), 2);
+  rmSync(box.root, { recursive: true, force: true });
+});
+
+test('recover stamps a leaf the close left unsealed', async () => {
+  resetHouseState();
+  const box = fresh();
+  const issued = await book(box, 43);
+  assert.equal(issued.body.state, 'pending_anchor');
+  box.clock.now = HOUR;
+  const crashed = await closeHour(box.sealer, {
+    hourStart: 0,
+    lines: [],
+    fees: FEES,
+    send: async () => { throw new Error('crash'); },
+  });
+  assert.equal(crashed.ok, false);
+  assert.equal(crashed.committed, true);
+  const file = join(box.storeDir, 'pending-intake.json');
+  const parsed = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(typeof parsed.leaves[0].receiptId, 'string');
+  parsed.leaves[0].receiptId = null;
+  parsed.leaves[0].epoch = null;
+  writeFileSync(file, JSON.stringify(parsed));
+  const again = await recover(box.sealer, { send: recorder().send });
+  assert.equal(again.ok, true, again.reason);
+  const after = JSON.parse(readFileSync(file, 'utf8'));
+  assert.equal(typeof after.leaves[0].receiptId, 'string');
+  assert.notEqual(after.leaves[0].receiptId, null);
   rmSync(box.root, { recursive: true, force: true });
 });
 

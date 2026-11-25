@@ -45,7 +45,7 @@ import {
   openAnchorIntentLog,
 } from './kms-secp256k1.js';
 import { buildAnchorCalldata } from './calldata.js';
-import { readPendingLines, sealIntakeLines } from '../chit-store/intake.js';
+import { readPendingLines, sealCommittedIntake, sealIntakeLines } from '../chit-store/intake.js';
 import { openJournal } from './journal.js';
 import { acceptCoreLine } from './lines.js';
 import { TIER_N, padLeaves } from './pad.js';
@@ -669,6 +669,13 @@ function rememberIntake(sealer, record, lines) {
   return sealIntakeLines(sealer.store.dir, pairs, sealer.store.io);
 }
 
+function restampIntake(sealer, record) {
+  if (!sealer?.store || typeof sealer.store.dir !== 'string' || sealer.store.dir === '') {
+    return { ok: true };
+  }
+  return sealCommittedIntake(sealer.store.dir, record, sealer.store.io);
+}
+
 /**
  * Close one finished hour, or a catch-up through the last complete hour.
  * The clock is sealer.clock(), in unix seconds. input.now is not read.
@@ -736,6 +743,8 @@ export async function recover(sealer, input) {
         return { ok: false, reason: 'store_not_committed', broadcast: false };
       }
     }
+    const stamped = restampIntake(sealer, record);
+    if (!stamped.ok) return { ok: false, reason: stamped.reason, broadcast: false };
     const result = await broadcastRecord(sealer, record, input.send);
     sent.push(result);
     if (!result.ok) return { ok: false, reason: result.reason, committed: true, sent };
