@@ -12,7 +12,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { bookBoundLeaf, openIntake, readOwnedPending } from './intake.js';
+import { INTAKE_FILE, bookBoundLeaf, openIntake, readOwnedPending, sealIntakeLines } from './intake.js';
 
 export const STORE_STATUS = 404;
 
@@ -148,6 +148,9 @@ export function openStore(dir, { books = [], io = fs } = {}) {
     },
   };
   if (freshSalt) persist(store);
+  // Commit already stored the leaf on the receipt. If the process died
+  // before the intake seal, drop that leaf before the next closeHour.
+  reconcileCommittedIntake(store);
   return store;
 }
 
@@ -287,6 +290,71 @@ function maxSealerEpoch(store) {
   return max;
 }
 
+function committedLineReceipt(store) {
+  const sealerEpochs = new Set();
+  for (const row of store.epochs.values()) {
+    if (isHouseShapedEpoch(store, row)) continue;
+    const n = parseEpoch(row.epoch);
+    if (n != null) sealerEpochs.add(String(n));
+  }
+  const byLine = new Map();
+  if (sealerEpochs.size === 0) return byLine;
+  for (const item of store.receipts.values()) {
+    if (!item || typeof item.line !== 'string' || typeof item.id !== 'string' || item.id === '') continue;
+    if (!sealerEpochs.has(String(item.epoch))) continue;
+    const hex = item.line.toLowerCase();
+    if (!/^[0-9a-f]{2048}$/.test(hex)) continue;
+    if (!byLine.has(hex)) byLine.set(hex, item);
+  }
+  return byLine;
+}
+
+export function committedReceiptForLine(store, line) {
+  if (!store || !store.epochs || !store.receipts || typeof line !== 'string') return null;
+  const hex = line.toLowerCase();
+  if (!/^[0-9a-f]{2048}$/.test(hex)) return null;
+  return committedLineReceipt(store).get(hex) || null;
+}
+
+/**
+ * Startup recovery. A crash after commitEpoch and before the intake seal
+ * leaves the committed line pending. Stamp it from the committed receipt
+ * so the next closeHour cannot mint it again. A missing intake file is
+ * left missing. House-shaped epochs are not sealer commits.
+ */
+export function reconcileCommittedIntake(store) {
+  const io = store.io;
+  if (!io || typeof io.existsSync !== 'function') return;
+  const file = path.join(store.dir, INTAKE_FILE);
+  if (io.existsSync(file) !== true) return;
+  const byLine = committedLineReceipt(store);
+  if (byLine.size === 0) return;
+  let intake;
+  try {
+    intake = openIntake(store.dir, { io });
+  } catch {
+    return;
+  }
+  const pairs = [];
+  for (let i = 0; i < intake.leaves.length; i += 1) {
+    const row = intake.leaves[i];
+    if (!row || row.state !== 'pending_anchor' || row.receiptId != null) continue;
+    if (typeof row.line !== 'string' || typeof row.paymentRef !== 'string') continue;
+    const match = byLine.get(row.line.toLowerCase());
+    if (!match) continue;
+    const epoch = parseEpoch(match.epoch);
+    if (epoch == null) continue;
+    pairs.push({ paymentRef: row.paymentRef, receiptId: match.id, epoch });
+  }
+  if (pairs.length === 0) return;
+  const sealed = sealIntakeLines(store.dir, pairs, io);
+  if (!sealed || sealed.ok !== true) {
+    const err = new Error('committed intake was not sealed');
+    err.code = sealed && sealed.reason ? sealed.reason : 'intake_unreadable';
+    throw err;
+  }
+}
+
 /**
  * Sequential sealer epochs only. Empty store accepts 1.
  * The current max may be recommitted when the tuple matches.
@@ -354,6 +422,14 @@ export function migrateHouseEpochs(store) {
   } catch (err) {
     return { ok: false, reason: err?.code || 'intake_unreadable' };
   }
+  const savedEpochs = new Map(store.epochs);
+  const savedReceipts = new Map(store.receipts);
+  const savedRetired = store.houseRetired;
+  const undo = () => {
+    store.epochs = savedEpochs;
+    store.receipts = savedReceipts;
+    store.houseRetired = savedRetired;
+  };
   let booked = 0;
   const retired = [];
   for (let i = 0; i < found.length; i += 1) {
@@ -367,17 +443,21 @@ export function migrateHouseEpochs(store) {
         tokenHash: item.tokenHash,
         hourStart: row.hourStart,
       });
-      if (!result.ok) return { ok: false, reason: result.reason || 'intake_not_booked' };
+      if (!result.ok) {
+        undo();
+        return { ok: false, reason: result.reason || 'intake_not_booked' };
+      }
       if (result.replay !== true) booked += 1;
     }
     store.epochs.delete(String(row.epoch));
     if (item && store.receipts.has(item.id)) store.receipts.delete(item.id);
     retired.push({ epoch: row, receipt: item || null });
   }
-  store.houseRetired = (store.houseRetired || []).concat(retired);
+  store.houseRetired = (savedRetired || []).concat(retired);
   try {
     persist(store);
   } catch {
+    undo();
     return { ok: false, reason: 'store_not_committed' };
   }
   return { ok: true, migrated: found.length, booked };
