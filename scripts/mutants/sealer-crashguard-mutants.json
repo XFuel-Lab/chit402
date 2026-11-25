@@ -1,0 +1,111 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": [
+      "node",
+      "--test",
+      "--test-concurrency=1",
+      "services/chit-sealer/test/crash-guard.test.mjs"
+    ]
+  },
+  "mutants": [
+    {
+      "id": "CGM1",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "export function clampBoundedTimeout(raw, fallback) {\n  if (typeof raw === 'string' && raw.trim() === '') return fallback;\n  if (raw == null) return fallback;\n  const n = typeof raw === 'number' ? raw : Number(String(raw).trim());\n  if (!Number.isFinite(n)) return fallback;\n  const ms = Math.floor(n);\n  if (ms < CHECKPOINT_KMS_TIMEOUT_MIN_MS) return CHECKPOINT_KMS_TIMEOUT_MIN_MS;\n  if (ms > CHECKPOINT_KMS_TIMEOUT_MAX_MS) return CHECKPOINT_KMS_TIMEOUT_MAX_MS;\n  return ms;\n}",
+      "replace": "export function clampBoundedTimeout(raw, fallback) {\n  void fallback;\n  let timeoutMs = 3000;\n  if (raw != null && String(raw).trim() !== '') {\n    const n = Number(raw);\n    if (Number.isFinite(n) && n > 0) timeoutMs = Math.floor(n);\n    else return Number(raw);\n  }\n  return timeoutMs;\n}",
+      "note": "CG4 — no clamp, default stays 3000, non-finite becomes NaN"
+    },
+    {
+      "id": "CGM2",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "export function boundCheckpointAttempt(ms, fn) {\n  let timer;\n  let settled = false;\n  const work = Promise.resolve().then(fn);\n  return new Promise((resolve, reject) => {\n    const finish = (ok, value) => {\n      if (settled) return;\n      settled = true;\n      clearTimeout(timer);\n      if (ok) resolve(value);\n      else reject(value);\n    };\n    timer = setTimeout(() => {\n      logCheckpointRefusal('checkpoint_sign_unavailable');\n      finish(false, unavailable());\n    }, ms);\n    work.then((value) => finish(true, value), (err) => finish(false, err));\n  });\n}",
+      "replace": "export function boundCheckpointAttempt(ms, fn) {\n  void ms;\n  return Promise.resolve().then(fn);\n}",
+      "note": "CG1 — timeout is only the AbortSignal on client.send"
+    },
+    {
+      "id": "CGM3",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  config.defaultsMode = 'standard';\n  config.maxAttempts = 2;",
+      "replace": "  void 0;",
+      "note": "CG5 — defaultsMode and maxAttempts omitted"
+    },
+    {
+      "id": "CGM4",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  const credentials = checkpointCredentials(env, deps);\n  const config = { region, credentials };",
+      "replace": "  void deps;\n  const config = { region };",
+      "note": "CG6 — checkpoint client falls back to the default chain"
+    },
+    {
+      "id": "CGM5",
+      "file": "services/chit-sealer/guard.js",
+      "find": "  if (slot.busy) return { ok: false, reason: 'sealer_busy' };",
+      "replace": "  void 0;",
+      "note": "CG7 — re-entrancy guard deleted"
+    },
+    {
+      "id": "CGM6",
+      "file": "services/chit-sealer/guard.js",
+      "find": "  async function guardedSend(wire) {\n    if (stale()) throw sealerRefused();\n    const tx = await body.send(wire, { signal: ac.signal });\n    if (stale()) throw sealerRefused();\n    return tx;\n  }",
+      "replace": "  async function guardedSend(wire) {\n    const tx = await body.send(wire, { signal: ac.signal });\n    return tx;\n  }",
+      "note": "CG8 — a late Sign still calls send"
+    },
+    {
+      "id": "CGM7",
+      "file": "services/chit-sealer/guard.js",
+      "find": "    (err) => {\n      logCloseRefusal(log);\n      void err;\n      return { ok: false, reason: 'sealer_unavailable' };\n    },",
+      "replace": "    (err) => {\n      throw err;\n    },",
+      "note": "CG9 — unexpected close throw propagates"
+    },
+    {
+      "id": "CGM8",
+      "file": "services/chit-sealer/guard.js",
+      "find": "      logCloseRefusal(log);\n      void err;",
+      "replace": "      const sink = typeof log === 'function' ? log : refusalLog;\n      if (typeof sink === 'function') sink({ code: 'sealer_unavailable', err, message: err && err.message, cause: err && err.cause }, 'sealer close refused');",
+      "note": "CG10 — the close log includes the error"
+    },
+    {
+      "id": "CGM9",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  let fd;\n  const nofollow = fs.constants.O_NOFOLLOW;\n  if (\n    typeof nofollow !== 'number'\n    || typeof io.openSync !== 'function'\n    || typeof io.fstatSync !== 'function'\n    || typeof io.closeSync !== 'function'\n  ) {\n    throw bootRefused('checkpoint_creds_not_regular');\n  }\n  try {\n    fd = io.openSync(file, fs.constants.O_RDONLY | nofollow);\n  } catch {\n    throw bootRefused('checkpoint_creds_not_regular');\n  }\n  try {\n    let st;\n    try {\n      st = io.fstatSync(fd);\n    } catch (err) {\n      if (err && err.code === 'v13_boot_refused') throw err;\n      throw bootRefused('checkpoint_creds_not_regular');\n    }\n    if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) throw bootRefused('checkpoint_creds_not_regular');\n    if (typeof st.isFile !== 'function' || st.isFile() !== true) throw bootRefused('checkpoint_creds_not_regular');\n    if (st.dev !== listed.dev || st.ino !== listed.ino) throw bootRefused('checkpoint_creds_not_regular');\n    if (!envFileModeOk(st.mode)) throw bootRefused('checkpoint_creds_mode');\n    if (st.uid !== process.getuid()) throw bootRefused('checkpoint_creds_owner');\n    let again;\n    try {\n      again = io.lstatSync(file);\n    } catch (err) {\n      if (err && err.code === 'v13_boot_refused') throw err;\n      throw bootRefused('checkpoint_creds_not_regular');\n    }\n    if (typeof again.isSymbolicLink === 'function' && again.isSymbolicLink()) throw bootRefused('checkpoint_creds_not_regular');\n    if (typeof again.isFile !== 'function' || again.isFile() !== true) throw bootRefused('checkpoint_creds_not_regular');\n    if (again.dev !== st.dev || again.ino !== st.ino) throw bootRefused('checkpoint_creds_not_regular');\n    if (!envFileModeOk(again.mode)) throw bootRefused('checkpoint_creds_mode');\n  } finally {\n    try { io.closeSync(fd); } catch { /* the refusal is already set */ }\n  }",
+      "replace": "",
+      "note": "CG11 — O_NOFOLLOW and fstat re-check skipped"
+    },
+    {
+      "id": "CGM10",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "      await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(input.client, {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "replace": "      await boundCheckpointAttempt(timeoutMs, () => input.client.send( {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "note": "CG12 — armSealer sends a plain object"
+    },
+    {
+      "id": "CGM11",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  return { ok: true, wired: false };",
+      "replace": "  checkpointClient(env, deps);\n  setInterval(() => {}, 3600000);\n  return { ok: true, wired: false };",
+      "note": "CG13 — flags off still construct the client and install a loop"
+    },
+    {
+      "id": "CGM12",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "      await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(input.client, {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "replace": "      await sendCheckpointKms(input.client, {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) });",
+      "note": "CG14 — armSealer GetPublicKey is not bounded"
+    },
+    {
+      "id": "CGM13",
+      "file": "services/chit-sealer/anchor-mainnet.js",
+      "find": "    out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {\n      name: 'GetPublicKey',\n      input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "replace": "    out = await sendCheckpointKms(client, {\n      name: 'GetPublicKey',\n      input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, { abortSignal: AbortSignal.timeout(timeoutMs) });",
+      "note": "CG15 — checkpointPoint GetPublicKey is not bounded"
+    },
+    {
+      "id": "CGM14",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "    let st;\n    try {\n      st = io.fstatSync(fd);\n    } catch (err) {\n      if (err && err.code === 'v13_boot_refused') throw err;\n      throw bootRefused('checkpoint_creds_not_regular');\n    }",
+      "replace": "    const st = io.fstatSync(fd);",
+      "note": "CG17 — a creds fstat failure escapes as a raw filesystem error"
+    }
+  ]
+}

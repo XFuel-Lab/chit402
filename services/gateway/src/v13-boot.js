@@ -15,6 +15,8 @@
  * When the client is not injected, credentials come from
  * CHIT_CHECKPOINT_AWS_CREDENTIALS_FILE and CHIT_CHECKPOINT_AWS_PROFILE.
  * The file is mode 600 or tighter. The access key is not logged.
+ * The credential path is opened with O_NOFOLLOW and checked again with
+ * fstat before fromIni sees it. The client pins defaultsMode and maxAttempts.
  *
  * CHIT_V13_HOUSE_TOKEN_FILE is the path of the house book file. It is read
  * only when a v13 flag is on. The token stays in memory for openStore.
@@ -27,7 +29,7 @@ import { inspect } from 'node:util';
 import { KMSClient } from '@aws-sdk/client-kms';
 import { fromIni } from '@aws-sdk/credential-providers';
 import { ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
-import { broadcastCommittedAnchor, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
+import { boundCheckpointAttempt, broadcastCommittedAnchor, checkpointKmsTimeoutMs, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
 import { MAINNET_CHECKPOINT, normHex } from '../../chit-sealer/mainnet-pin.js';
 import { openStore } from '../../chit-store/store.js';
 import { loadDotenvFile } from './dotenv-load.js';
@@ -250,18 +252,13 @@ function seenAddress(point, env, deps) {
 async function assertCheckpointPin(client, env, deps) {
   const keyId = String(env?.CHIT_CHECKPOINT_KMS_KEY_ID || '').trim();
   if (!keyId || !client || typeof client.send !== 'function') throw bootRefused();
-  let timeoutMs = 3000;
-  const timeoutRaw = env?.CHIT_CHECKPOINT_KMS_TIMEOUT_MS;
-  if (timeoutRaw != null && String(timeoutRaw).trim() !== '') {
-    const n = Number(timeoutRaw);
-    if (Number.isFinite(n) && n > 0) timeoutMs = Math.floor(n);
-  }
+  const timeoutMs = checkpointKmsTimeoutMs(env);
   let out;
   try {
-    out = await sendCheckpointKms(client, {
+    out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {
       name: 'GetPublicKey',
       input: { KeyId: keyId },
-    }, { abortSignal: AbortSignal.timeout(timeoutMs) });
+    }, { abortSignal: AbortSignal.timeout(timeoutMs) }));
   } catch {
     noteCheckpoint(env, deps);
     throw bootRefused();
@@ -329,6 +326,48 @@ function assertCheckpointCreds(io, file) {
   if (!dirModeOk(dirSt.mode)) throw bootRefused('checkpoint_creds_dir');
   if (!envFileModeOk(listed.mode)) throw bootRefused('checkpoint_creds_mode');
   if (listed.uid !== process.getuid()) throw bootRefused('checkpoint_creds_owner');
+  let fd;
+  const nofollow = fs.constants.O_NOFOLLOW;
+  if (
+    typeof nofollow !== 'number'
+    || typeof io.openSync !== 'function'
+    || typeof io.fstatSync !== 'function'
+    || typeof io.closeSync !== 'function'
+  ) {
+    throw bootRefused('checkpoint_creds_not_regular');
+  }
+  try {
+    fd = io.openSync(file, fs.constants.O_RDONLY | nofollow);
+  } catch {
+    throw bootRefused('checkpoint_creds_not_regular');
+  }
+  try {
+    let st;
+    try {
+      st = io.fstatSync(fd);
+    } catch (err) {
+      if (err && err.code === 'v13_boot_refused') throw err;
+      throw bootRefused('checkpoint_creds_not_regular');
+    }
+    if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) throw bootRefused('checkpoint_creds_not_regular');
+    if (typeof st.isFile !== 'function' || st.isFile() !== true) throw bootRefused('checkpoint_creds_not_regular');
+    if (st.dev !== listed.dev || st.ino !== listed.ino) throw bootRefused('checkpoint_creds_not_regular');
+    if (!envFileModeOk(st.mode)) throw bootRefused('checkpoint_creds_mode');
+    if (st.uid !== process.getuid()) throw bootRefused('checkpoint_creds_owner');
+    let again;
+    try {
+      again = io.lstatSync(file);
+    } catch (err) {
+      if (err && err.code === 'v13_boot_refused') throw err;
+      throw bootRefused('checkpoint_creds_not_regular');
+    }
+    if (typeof again.isSymbolicLink === 'function' && again.isSymbolicLink()) throw bootRefused('checkpoint_creds_not_regular');
+    if (typeof again.isFile !== 'function' || again.isFile() !== true) throw bootRefused('checkpoint_creds_not_regular');
+    if (again.dev !== st.dev || again.ino !== st.ino) throw bootRefused('checkpoint_creds_not_regular');
+    if (!envFileModeOk(again.mode)) throw bootRefused('checkpoint_creds_mode');
+  } finally {
+    try { io.closeSync(fd); } catch { /* the refusal is already set */ }
+  }
 }
 
 function checkpointCredentials(env, deps) {
@@ -345,6 +384,8 @@ function checkpointClient(env, deps) {
   if (!region) return null;
   const credentials = checkpointCredentials(env, deps);
   const config = { region, credentials };
+  config.defaultsMode = 'standard';
+  config.maxAttempts = 2;
   if (deps && deps.requestHandler) config.requestHandler = deps.requestHandler;
   return new KMSClient(config);
 }
@@ -563,7 +604,13 @@ async function guardListen(env, deps) {
       throw bootRefused();
     }
   }
-  const client = checkpointClient(env, deps);
+  let client = null;
+  try {
+    client = checkpointClient(env, deps);
+  } catch (err) {
+    if (err?.code === 'v13_boot_refused') throw err;
+    throw bootRefused();
+  }
   let send = null;
   if (bindDir) {
     try {

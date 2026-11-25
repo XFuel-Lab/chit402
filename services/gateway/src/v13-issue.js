@@ -22,6 +22,7 @@ import {
   storeEnabled,
 } from './v13-flags.js';
 import { sendCheckpointKms } from './checkpoint-kms.js';
+import { boundCheckpointAttempt, checkpointKmsTimeoutMs } from '../../chit-sealer/kms-secp256k1.js';
 import { testSwitchesOn } from './test-switch.js';
 
 const tails = new Map();
@@ -228,10 +229,18 @@ function legacyResponse(task, receiptOpts) {
 
 async function armSealer(input) {
   if (input.client && typeof input.client.send === 'function') {
-    await sendCheckpointKms(input.client, {
-      name: 'GetPublicKey',
-      input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },
-    }, {});
+    const timeoutMs = checkpointKmsTimeoutMs(input.env || {});
+    try {
+      await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(input.client, {
+        name: 'GetPublicKey',
+        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },
+      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));
+    } catch (err) {
+      if (err?.code === 'checkpoint_sign_unavailable') throw err;
+      const refused = new Error('checkpoint sign unavailable');
+      refused.code = 'checkpoint_sign_unavailable';
+      throw refused;
+    }
     return;
   }
   if (typeof input.onSealer === 'function') await input.onSealer();

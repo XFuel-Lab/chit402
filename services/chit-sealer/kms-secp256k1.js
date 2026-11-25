@@ -51,6 +51,89 @@ function unavailable() {
   return coded('checkpoint sign unavailable', 'checkpoint_sign_unavailable');
 }
 
+const CHECKPOINT_KMS_TIMEOUT_DEFAULT_MS = 10000;
+const CHECKPOINT_KMS_TIMEOUT_MIN_MS = 1000;
+const CHECKPOINT_KMS_TIMEOUT_MAX_MS = 30000;
+
+let refusalLog = null;
+
+/** Test sink. Unset uses the gateway logger and still logs only `{ code }`. */
+export function setCheckpointRefusalLog(fn) {
+  refusalLog = typeof fn === 'function' ? fn : null;
+}
+
+function logCheckpointRefusal(code) {
+  const fields = { code };
+  const msg = 'checkpoint sign refused';
+  try {
+    if (refusalLog) {
+      refusalLog(fields, msg);
+      return;
+    }
+  } catch {
+    return;
+  }
+  import('../gateway/src/logger.js').then((mod) => {
+    try { mod.default.error(fields, msg); } catch { /* the refusal still rejects */ }
+  }, () => {});
+}
+
+/**
+ * Finite milliseconds in [1000, 30000]. Blank, null, and non-finite
+ * values use fallback. The result is never NaN.
+ * @param {unknown} raw
+ * @param {number} fallback
+ */
+export function clampBoundedTimeout(raw, fallback) {
+  if (typeof raw === 'string' && raw.trim() === '') return fallback;
+  if (raw == null) return fallback;
+  const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(n)) return fallback;
+  const ms = Math.floor(n);
+  if (ms < CHECKPOINT_KMS_TIMEOUT_MIN_MS) return CHECKPOINT_KMS_TIMEOUT_MIN_MS;
+  if (ms > CHECKPOINT_KMS_TIMEOUT_MAX_MS) return CHECKPOINT_KMS_TIMEOUT_MAX_MS;
+  return ms;
+}
+
+/** `CHIT_CHECKPOINT_KMS_TIMEOUT_MS`. Default 10000. Clamped to 1000–30000. */
+export function checkpointKmsTimeoutMs(env) {
+  const raw = env == null ? undefined : env.CHIT_CHECKPOINT_KMS_TIMEOUT_MS;
+  return clampBoundedTimeout(raw, CHECKPOINT_KMS_TIMEOUT_DEFAULT_MS);
+}
+
+/**
+ * Bound the whole Sign or GetPublicKey attempt. The AbortSignal on the
+ * send is not enough when the client never settles. A late result is dropped.
+ * @param {number} ms
+ * @param {() => Promise<unknown>} fn
+ */
+/** Timeout plus an optional caller signal. A missing external signal stays the timeout alone. */
+export function attemptSignal(timeoutMs, external) {
+  const timed = AbortSignal.timeout(timeoutMs);
+  if (external && typeof AbortSignal.any === 'function') return AbortSignal.any([timed, external]);
+  return timed;
+}
+
+export function boundCheckpointAttempt(ms, fn) {
+  let timer;
+  let settled = false;
+  const work = Promise.resolve().then(fn);
+  return new Promise((resolve, reject) => {
+    const finish = (ok, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (ok) resolve(value);
+      else reject(value);
+    };
+    timer = setTimeout(() => {
+      logCheckpointRefusal('checkpoint_sign_unavailable');
+      finish(false, unavailable());
+    }, ms);
+    work.then((value) => finish(true, value), (err) => finish(false, err));
+  });
+}
+
 function invalid() {
   return coded('checkpoint sign invalid', 'checkpoint_sign_invalid');
 }
@@ -71,12 +154,7 @@ function kmsConfig(env) {
     throw coded('checkpoint max fee is not configured', 'fee_ceiling');
   }
   if (ceiling <= 0n) throw coded('checkpoint max fee is not configured', 'fee_ceiling');
-  let timeoutMs = 3000;
-  const timeoutRaw = source.CHIT_CHECKPOINT_KMS_TIMEOUT_MS;
-  if (timeoutRaw != null && String(timeoutRaw).trim() !== '') {
-    const n = Number(timeoutRaw);
-    if (Number.isFinite(n) && n > 0) timeoutMs = Math.floor(n);
-  }
+  const timeoutMs = checkpointKmsTimeoutMs(source);
   return { keyId, region, pinned, timeoutMs, ceiling };
 }
 
@@ -117,10 +195,10 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
   const { keyId, pinned, timeoutMs, ceiling } = kmsConfig(env);
   let pub;
   try {
-    pub = await sendCheckpointKms(client, {
+    pub = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {
       name: 'GetPublicKey',
       input: { KeyId: keyId },
-    }, { abortSignal: AbortSignal.timeout(timeoutMs) });
+    }, { abortSignal: AbortSignal.timeout(timeoutMs) }));
   } catch (err) {
     if (err?.code === 'checkpoint_key_type' || err?.code === 'checkpoint_address_mismatch' || err?.code === 'checkpoint_kms_config') {
       throw err;
@@ -134,12 +212,13 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
     address: material.address,
     publicKey: material.publicKey,
     feeCeiling: ceiling.toString(),
-    async signDigest(digest) {
+    async signDigest(digest, opts) {
       const message = Buffer.isBuffer(digest) ? digest : Buffer.from(digest || []);
       if (message.length !== 32) throw invalid();
+      const abortSignal = attemptSignal(timeoutMs, opts && opts.signal);
       let out;
       try {
-        out = await sendCheckpointKms(client, {
+        out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {
           name: 'Sign',
           input: {
             KeyId: keyId,
@@ -147,7 +226,7 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
             MessageType: MESSAGE_TYPE,
             SigningAlgorithm: SIGNING_ALGORITHM,
           },
-        }, { abortSignal: AbortSignal.timeout(timeoutMs) });
+        }, { abortSignal }));
       } catch (err) {
         if (err?.code === 'checkpoint_sign_invalid') throw err;
         throw unavailable();
@@ -166,9 +245,9 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
       }
       return { raw, r: raw.subarray(0, 32), s: raw.subarray(32), yParity };
     },
-    async signEip1559(tx) {
+    async signEip1559(tx, opts) {
       const digest = eip1559Digest(tx);
-      const sig = await this.signDigest(digest);
+      const sig = await this.signDigest(digest, opts);
       const raw = eip1559Serialize(tx, sig);
       return { raw, hash: eip1559TxHash(raw), yParity: sig.yParity, from: material.address };
     },
@@ -429,7 +508,7 @@ export function commitAnchorIntent(log, anchor, from) {
   return record;
 }
 
-export async function signCommittedAnchor(signer, log, { nonce, fees }) {
+export async function signCommittedAnchor(signer, log, { nonce, fees, signal }) {
   const key = BigInt(nonce).toString();
   const rows = log.read().filter((row) => row.nonce === key);
   const intent = rows.find((row) => row.status === 'intent');
@@ -451,7 +530,7 @@ export async function signCommittedAnchor(signer, log, { nonce, fees }) {
     value: 0n,
     data: hexToBytes(intent.calldata),
   };
-  const signed = await signer.signEip1559(tx);
+  const signed = await signer.signEip1559(tx, signal ? { signal } : undefined);
   const decoded = eip1559Decode(signed.raw);
   if (
     decoded.data !== intent.calldata
@@ -512,9 +591,9 @@ export async function broadcastCommittedAnchor(log, { nonce, fees }, send) {
  * Commit, sign, then broadcast. send is not called unless both records are
  * already on the log.
  */
-export async function broadcastAnchor({ signer, log, anchor, fees, send }) {
+export async function broadcastAnchor({ signer, log, anchor, fees, send, signal }) {
   commitAnchorIntent(log, anchor, signer.address);
-  await signCommittedAnchor(signer, log, { nonce: anchor.nonce, fees });
+  await signCommittedAnchor(signer, log, { nonce: anchor.nonce, fees, signal });
   return broadcastCommittedAnchor(log, { nonce: anchor.nonce, fees }, send);
 }
 
