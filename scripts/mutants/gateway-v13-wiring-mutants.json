@@ -487,22 +487,22 @@
     {
       "id": "KM10",
       "file": "services/chit-sealer/kms-secp256k1.js",
-      "find": "        out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {\n          name: 'Sign',\n          input: {\n            KeyId: keyId,\n            Message: message,\n            MessageType: MESSAGE_TYPE,\n            SigningAlgorithm: SIGNING_ALGORITHM,\n          },\n        }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
-      "replace": "        out = await boundCheckpointAttempt(timeoutMs, () => client.send(client, {\n          name: 'Sign',\n          input: {\n            KeyId: keyId,\n            Message: message,\n            MessageType: MESSAGE_TYPE,\n            SigningAlgorithm: SIGNING_ALGORITHM,\n          },\n        }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "find": "        out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {\n          name: 'Sign',\n          input: {\n            KeyId: keyId,\n            Message: message,\n            MessageType: MESSAGE_TYPE,\n            SigningAlgorithm: SIGNING_ALGORITHM,\n          },\n        }, { abortSignal }));",
+      "replace": "        out = await boundCheckpointAttempt(timeoutMs, () => client.send(client, {\n          name: 'Sign',\n          input: {\n            KeyId: keyId,\n            Message: message,\n            MessageType: MESSAGE_TYPE,\n            SigningAlgorithm: SIGNING_ALGORITHM,\n          },\n        }, { abortSignal }));",
       "note": "K2 — createCheckpointSigner Sign sends a plain object. The call sits inside the attempt bound."
     },
     {
       "id": "LS1",
       "file": "services/gateway/src/v13-issue.js",
-      "find": "    await sendCheckpointKms(input.client, {\n      name: 'GetPublicKey',\n      input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, {});",
-      "replace": "    await input.client.send( {\n      name: 'GetPublicKey',\n      input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, {});",
+      "find": "      await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(input.client, {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "replace": "      await boundCheckpointAttempt(timeoutMs, () => input.client.send( {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
       "note": "CG12 — armSealer sends a plain object"
     },
     {
       "id": "LS2",
       "file": "services/chit-sealer/anchor-mainnet.js",
-      "find": "    out = await sendCheckpointKms(client, {\n      name: 'GetPublicKey',\n      input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, {});",
-      "replace": "    out = await client.send( {\n      name: 'GetPublicKey',\n      input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, {});",
+      "find": "    out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {\n      name: 'GetPublicKey',\n      input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "replace": "    out = await boundCheckpointAttempt(timeoutMs, () => client.send( {\n      name: 'GetPublicKey',\n      input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
       "note": "CG12 — checkpointPoint sends a plain object"
     }
   ]

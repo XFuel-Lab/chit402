@@ -948,4 +948,108 @@ describe('sealer crash guard', { concurrency: false }, () => {
     assert.equal(body.includes('setInterval'), false);
     rmSync(tree.root, { recursive: true, force: true });
   });
+
+  test('CG14 a hung armSealer GetPublicKey is checkpoint_sign_unavailable', async () => {
+    const started = Date.now();
+    const outcome = await Promise.race([
+      issueHouseReceipt({
+        env: {
+          CHIT_V13_MAINNET_SEALER: 'true',
+          CHIT_CHECKPOINT_KMS_KEY_ID: 'alias/cg-checkpoint',
+          CHIT_CHECKPOINT_KMS_REGION: 'us-east-2',
+          CHIT_CHECKPOINT_ADDRESS: MAINNET_CHECKPOINT,
+          CHIT_CHECKPOINT_KMS_TIMEOUT_MS: '1000',
+        },
+        task: byteTask(),
+        receiptOpts: { signingSecret: 'byte-pin-secret', baseUrl: 'http://127.0.0.1:9', readOnly: true },
+        client: { send() { return new Promise(() => {}); } },
+      }).then((value) => ({ value })).catch((err) => ({ err })),
+      delay(2500).then(() => ({ hung: true })),
+    ]);
+    assert.equal(outcome.hung, undefined);
+    assert.equal(outcome.err && outcome.err.code, 'checkpoint_sign_unavailable');
+    assert.ok(Date.now() - started < 2200);
+    assert.ok(Date.now() - started >= 700);
+  });
+
+  test('CG15 a hung checkpointPoint GetPublicKey is checkpoint_sign_unavailable', async () => {
+    const started = Date.now();
+    const outcome = await Promise.race([
+      signMainnetCheckpoint({
+        env: signerEnv(MAINNET_CHECKPOINT),
+        client: { send() { return new Promise(() => {}); } },
+        addressOf: () => MAINNET_CHECKPOINT,
+        digest: Buffer.alloc(32, 4),
+      }).then((value) => ({ value })).catch((err) => ({ err })),
+      delay(2500).then(() => ({ hung: true })),
+    ]);
+    assert.equal(outcome.hung, undefined);
+    assert.equal(outcome.err && outcome.err.code, 'checkpoint_sign_unavailable');
+    assert.ok(Date.now() - started < 2200);
+    assert.ok(Date.now() - started >= 700);
+  });
+
+  test('CG16 an aborted close cancels in-flight Sign and the broadcast send', async () => {
+    resetSealerGuardForTest();
+    const env = { CHIT_SEALER_CLOSE_TIMEOUT_MS: '1000' };
+    const first = fresh();
+    let signAborted = false;
+    const inner = mockSigner();
+    first.sealer.signer = {
+      address: inner.address,
+      feeCeiling: inner.feeCeiling,
+      signEip1559(_tx, opts) {
+        const signal = opts && opts.signal;
+        return new Promise((resolve, reject) => {
+          if (!signal) {
+            reject(new Error('missing signal'));
+            return;
+          }
+          signal.addEventListener('abort', () => {
+            signAborted = true;
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          }, { once: true });
+        });
+      },
+    };
+    const signed = await guardCloseHour(first.sealer, {
+      hourStart: 0,
+      lines: [lineItem(4)],
+      fees: FEES,
+      send: async () => `0x${'ab'.repeat(32)}`,
+    }, { env, log() {} });
+    assert.equal(signed.reason, 'sealer_unavailable');
+    assert.equal(signAborted, true);
+    resetSealerGuardForTest();
+    rmSync(first.root, { recursive: true, force: true });
+
+    const second = fresh();
+    let sendAborted = false;
+    const sent = await guardCloseHour(second.sealer, {
+      hourStart: 0,
+      lines: [lineItem(5)],
+      fees: FEES,
+      send(_wire, opts) {
+        const signal = opts && opts.signal;
+        return new Promise((resolve, reject) => {
+          if (!signal) {
+            reject(new Error('missing signal'));
+            return;
+          }
+          signal.addEventListener('abort', () => {
+            sendAborted = true;
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            reject(err);
+          }, { once: true });
+        });
+      },
+    }, { env, log() {} });
+    assert.equal(sent.reason, 'sealer_unavailable');
+    assert.equal(sendAborted, true);
+    resetSealerGuardForTest();
+    rmSync(second.root, { recursive: true, force: true });
+  });
 });

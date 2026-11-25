@@ -80,13 +80,13 @@ export async function guardCloseHour(sealer, input, deps = {}) {
 
   async function guardedSend(wire) {
     if (stale()) throw sealerRefused();
-    const tx = await body.send(wire);
+    const tx = await body.send(wire, { signal: ac.signal });
     if (stale()) throw sealerRefused();
     return tx;
   }
 
   const next = typeof body.send === 'function'
-    ? { ...body, send: guardedSend }
+    ? { ...body, send: guardedSend, signal: ac.signal }
     : body;
   const work = Promise.resolve().then(() => closeHour(sealer, next));
   const guarded = work.then(

@@ -15,7 +15,7 @@ import {
   lowS,
   recoverPublicKey,
 } from '../../packages/cs2-core/ecdsa/index.js';
-import { createCheckpointSigner } from './kms-secp256k1.js';
+import { boundCheckpointAttempt, checkpointKmsTimeoutMs, createCheckpointSigner } from './kms-secp256k1.js';
 import { sendCheckpointKms } from '../gateway/src/checkpoint-kms.js';
 import { noteAnchored } from '../chit-store/store.js';
 import {
@@ -93,12 +93,13 @@ function addressOfPoint(point, addressOf) {
 }
 
 async function checkpointPoint(client, env) {
+  const timeoutMs = checkpointKmsTimeoutMs(env || {});
   let out;
   try {
-    out = await sendCheckpointKms(client, {
+    out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {
       name: 'GetPublicKey',
       input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },
-    }, {});
+    }, { abortSignal: AbortSignal.timeout(timeoutMs) }));
   } catch (err) {
     if (err?.code === 'checkpoint_key_type' || err?.code === 'checkpoint_address_mismatch') throw err;
     throw coded('checkpoint sign unavailable', 'checkpoint_sign_unavailable');

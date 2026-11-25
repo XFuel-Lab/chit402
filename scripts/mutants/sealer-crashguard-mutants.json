@@ -47,8 +47,8 @@
     {
       "id": "CGM6",
       "file": "services/chit-sealer/guard.js",
-      "find": "  async function guardedSend(wire) {\n    if (stale()) throw sealerRefused();\n    const tx = await body.send(wire);\n    if (stale()) throw sealerRefused();\n    return tx;\n  }",
-      "replace": "  async function guardedSend(wire) {\n    const tx = await body.send(wire);\n    return tx;\n  }",
+      "find": "  async function guardedSend(wire) {\n    if (stale()) throw sealerRefused();\n    const tx = await body.send(wire, { signal: ac.signal });\n    if (stale()) throw sealerRefused();\n    return tx;\n  }",
+      "replace": "  async function guardedSend(wire) {\n    const tx = await body.send(wire, { signal: ac.signal });\n    return tx;\n  }",
       "note": "CG8 — a late Sign still calls send"
     },
     {
@@ -75,8 +75,8 @@
     {
       "id": "CGM10",
       "file": "services/gateway/src/v13-issue.js",
-      "find": "    await sendCheckpointKms(input.client, {\n      name: 'GetPublicKey',\n      input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, {});",
-      "replace": "    await input.client.send( {\n      name: 'GetPublicKey',\n      input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, {});",
+      "find": "      await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(input.client, {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "replace": "      await boundCheckpointAttempt(timeoutMs, () => input.client.send( {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
       "note": "CG12 — armSealer sends a plain object"
     },
     {
@@ -85,6 +85,20 @@
       "find": "  return { ok: true, wired: false };",
       "replace": "  checkpointClient(env, deps);\n  setInterval(() => {}, 3600000);\n  return { ok: true, wired: false };",
       "note": "CG13 — flags off still construct the client and install a loop"
+    },
+    {
+      "id": "CGM12",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "      await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(input.client, {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "replace": "      await sendCheckpointKms(input.client, {\n        name: 'GetPublicKey',\n        input: { KeyId: String(input.env?.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n      }, { abortSignal: AbortSignal.timeout(timeoutMs) });",
+      "note": "CG14 — armSealer GetPublicKey is not bounded"
+    },
+    {
+      "id": "CGM13",
+      "file": "services/chit-sealer/anchor-mainnet.js",
+      "find": "    out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {\n      name: 'GetPublicKey',\n      input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, { abortSignal: AbortSignal.timeout(timeoutMs) }));",
+      "replace": "    out = await sendCheckpointKms(client, {\n      name: 'GetPublicKey',\n      input: { KeyId: String(env.CHIT_CHECKPOINT_KMS_KEY_ID || '') },\n    }, { abortSignal: AbortSignal.timeout(timeoutMs) });",
+      "note": "CG15 — checkpointPoint GetPublicKey is not bounded"
     }
   ]
 }

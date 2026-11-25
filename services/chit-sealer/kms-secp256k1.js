@@ -107,6 +107,13 @@ export function checkpointKmsTimeoutMs(env) {
  * @param {number} ms
  * @param {() => Promise<unknown>} fn
  */
+/** Timeout plus an optional caller signal. A missing external signal stays the timeout alone. */
+export function attemptSignal(timeoutMs, external) {
+  const timed = AbortSignal.timeout(timeoutMs);
+  if (external && typeof AbortSignal.any === 'function') return AbortSignal.any([timed, external]);
+  return timed;
+}
+
 export function boundCheckpointAttempt(ms, fn) {
   let timer;
   let settled = false;
@@ -205,9 +212,10 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
     address: material.address,
     publicKey: material.publicKey,
     feeCeiling: ceiling.toString(),
-    async signDigest(digest) {
+    async signDigest(digest, opts) {
       const message = Buffer.isBuffer(digest) ? digest : Buffer.from(digest || []);
       if (message.length !== 32) throw invalid();
+      const abortSignal = attemptSignal(timeoutMs, opts && opts.signal);
       let out;
       try {
         out = await boundCheckpointAttempt(timeoutMs, () => sendCheckpointKms(client, {
@@ -218,7 +226,7 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
             MessageType: MESSAGE_TYPE,
             SigningAlgorithm: SIGNING_ALGORITHM,
           },
-        }, { abortSignal: AbortSignal.timeout(timeoutMs) }));
+        }, { abortSignal }));
       } catch (err) {
         if (err?.code === 'checkpoint_sign_invalid') throw err;
         throw unavailable();
@@ -237,9 +245,9 @@ export async function createCheckpointSigner({ client, env = {} } = {}) {
       }
       return { raw, r: raw.subarray(0, 32), s: raw.subarray(32), yParity };
     },
-    async signEip1559(tx) {
+    async signEip1559(tx, opts) {
       const digest = eip1559Digest(tx);
-      const sig = await this.signDigest(digest);
+      const sig = await this.signDigest(digest, opts);
       const raw = eip1559Serialize(tx, sig);
       return { raw, hash: eip1559TxHash(raw), yParity: sig.yParity, from: material.address };
     },
@@ -500,7 +508,7 @@ export function commitAnchorIntent(log, anchor, from) {
   return record;
 }
 
-export async function signCommittedAnchor(signer, log, { nonce, fees }) {
+export async function signCommittedAnchor(signer, log, { nonce, fees, signal }) {
   const key = BigInt(nonce).toString();
   const rows = log.read().filter((row) => row.nonce === key);
   const intent = rows.find((row) => row.status === 'intent');
@@ -522,7 +530,7 @@ export async function signCommittedAnchor(signer, log, { nonce, fees }) {
     value: 0n,
     data: hexToBytes(intent.calldata),
   };
-  const signed = await signer.signEip1559(tx);
+  const signed = await signer.signEip1559(tx, signal ? { signal } : undefined);
   const decoded = eip1559Decode(signed.raw);
   if (
     decoded.data !== intent.calldata
@@ -583,9 +591,9 @@ export async function broadcastCommittedAnchor(log, { nonce, fees }, send) {
  * Commit, sign, then broadcast. send is not called unless both records are
  * already on the log.
  */
-export async function broadcastAnchor({ signer, log, anchor, fees, send }) {
+export async function broadcastAnchor({ signer, log, anchor, fees, send, signal }) {
   commitAnchorIntent(log, anchor, signer.address);
-  await signCommittedAnchor(signer, log, { nonce: anchor.nonce, fees });
+  await signCommittedAnchor(signer, log, { nonce: anchor.nonce, fees, signal });
   return broadcastCommittedAnchor(log, { nonce: anchor.nonce, fees }, send);
 }
 

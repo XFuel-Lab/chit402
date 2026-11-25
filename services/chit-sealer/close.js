@@ -486,7 +486,7 @@ function anchorOf(sealer, record) {
   };
 }
 
-async function broadcastRecord(sealer, record, send) {
+async function broadcastRecord(sealer, record, send, signal) {
   const wireSend = async (wire) => {
     try {
       return await send(wire);
@@ -507,6 +507,7 @@ async function broadcastRecord(sealer, record, send) {
       anchor: anchorOf(sealer, record),
       fees: record.fees,
       send: wireSend,
+      signal,
     });
     markBroadcast(sealer, record.nonce);
     return { ok: true, raw: row.raw, tx: row.tx, calldata: record.calldata, record: publicView(record) };
@@ -635,7 +636,7 @@ export async function closeHour(sealer, input) {
   if (!committed.ok || !sealer.store.hasCommitted(record)) {
     return { ok: false, reason: 'store_not_committed', broadcast: false };
   }
-  return broadcastRecord(sealer, record, body.send);
+  return broadcastRecord(sealer, record, body.send, body.signal);
 }
 
 /**
