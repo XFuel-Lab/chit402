@@ -17,7 +17,7 @@ function coded(message, code) {
   return err;
 }
 
-function timeoutMs(env) {
+export function timeoutMs(env) {
   const n = Number(env.ISSUER_KMS_TIMEOUT_MS);
   if (Number.isFinite(n) && n > 0) return Math.floor(n);
   return 3000;
