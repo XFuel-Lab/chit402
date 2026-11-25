@@ -1052,4 +1052,68 @@ describe('sealer crash guard', { concurrency: false }, () => {
     resetSealerGuardForTest();
     rmSync(second.root, { recursive: true, force: true });
   });
+
+  test('CG17 a creds fstat or re-lstat failure does not leak the path', async () => {
+    const material = checkpointMaterial();
+    const profile = 'checkpoint-cg17';
+    async function refuse(which) {
+      const tree = makeHouseTree();
+      const file = writeIni(tree.credsDir, {
+        profile,
+        accessKey: 'cg17-access',
+        secret: 'cg17-secret',
+      });
+      let fileStats = 0;
+      const io = {
+        lstatSync(target) {
+          if (target === file) {
+            fileStats += 1;
+            if (which === 'lstat' && fileStats > 1) {
+              const err = new Error(`ENOENT: ${file}`);
+              err.code = 'ENOENT';
+              err.path = file;
+              throw err;
+            }
+          }
+          return lstatSync(target);
+        },
+        openSync(target, flags) { return openSync(target, flags); },
+        fstatSync(fd) {
+          const st = fstatSync(fd);
+          if (which === 'fstat' && st.ino === lstatSync(file).ino && st.dev === lstatSync(file).dev) {
+            const err = new Error(`EBADF: ${file}`);
+            err.code = 'EBADF';
+            err.path = file;
+            throw err;
+          }
+          return st;
+        },
+        readSync(fd, buf, offset, length, position) { return readSync(fd, buf, offset, length, position); },
+        closeSync(fd) { closeSync(fd); },
+      };
+      const transport = kmsTransport(material.spki);
+      const outcome = await boot(bootEnv(tree, file, profile), {
+        testInjection: true,
+        addressOf: () => MAINNET_CHECKPOINT,
+        requestHandler: transport.requestHandler,
+        fs: io,
+      });
+      assert.equal(outcome.out, null);
+      assert.equal(outcome.runtime, null);
+      assert.equal(outcome.err && outcome.err.code, 'v13_boot_refused');
+      assert.equal(outcome.err.reason, 'checkpoint_creds_not_regular');
+      const packed = [
+        outcome.err.message,
+        outcome.err.stack,
+        inspect(outcome.err, { depth: 8 }),
+        String(outcome.err.cause),
+      ].join('\n');
+      assert.equal(packed.includes(file), false);
+      assert.equal(packed.includes('cg17-access'), false);
+      setV13Runtime(null);
+      rmSync(tree.root, { recursive: true, force: true });
+    }
+    await refuse('fstat');
+    await refuse('lstat');
+  });
 });

@@ -342,13 +342,25 @@ function assertCheckpointCreds(io, file) {
     throw bootRefused('checkpoint_creds_not_regular');
   }
   try {
-    const st = io.fstatSync(fd);
+    let st;
+    try {
+      st = io.fstatSync(fd);
+    } catch (err) {
+      if (err && err.code === 'v13_boot_refused') throw err;
+      throw bootRefused('checkpoint_creds_not_regular');
+    }
     if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) throw bootRefused('checkpoint_creds_not_regular');
     if (typeof st.isFile !== 'function' || st.isFile() !== true) throw bootRefused('checkpoint_creds_not_regular');
     if (st.dev !== listed.dev || st.ino !== listed.ino) throw bootRefused('checkpoint_creds_not_regular');
     if (!envFileModeOk(st.mode)) throw bootRefused('checkpoint_creds_mode');
     if (st.uid !== process.getuid()) throw bootRefused('checkpoint_creds_owner');
-    const again = io.lstatSync(file);
+    let again;
+    try {
+      again = io.lstatSync(file);
+    } catch (err) {
+      if (err && err.code === 'v13_boot_refused') throw err;
+      throw bootRefused('checkpoint_creds_not_regular');
+    }
     if (typeof again.isSymbolicLink === 'function' && again.isSymbolicLink()) throw bootRefused('checkpoint_creds_not_regular');
     if (typeof again.isFile !== 'function' || again.isFile() !== true) throw bootRefused('checkpoint_creds_not_regular');
     if (again.dev !== st.dev || again.ino !== st.ino) throw bootRefused('checkpoint_creds_not_regular');
@@ -592,7 +604,13 @@ async function guardListen(env, deps) {
       throw bootRefused();
     }
   }
-  const client = checkpointClient(env, deps);
+  let client = null;
+  try {
+    client = checkpointClient(env, deps);
+  } catch (err) {
+    if (err?.code === 'v13_boot_refused') throw err;
+    throw bootRefused();
+  }
   let send = null;
   if (bindDir) {
     try {

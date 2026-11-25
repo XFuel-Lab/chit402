@@ -3207,3 +3207,67 @@ test('CG13 flags off do not open checkpoint creds or start a sealer loop', async
   setV13Runtime(null);
   rmSync(tree.root, { recursive: true, force: true });
 });
+
+test('CG17 a creds fstat or re-lstat failure is a named refusal without the path', async () => {
+  const material = checkpointMaterial();
+  const profile = 'checkpoint-cg17';
+  async function refuse(which) {
+    const tree = makeHouseTree();
+    const token = writeTokenFile(tree, { token: houseCanary('cg17') });
+    const file = writeCredsFile(credsDir(tree.root), {
+      profile,
+      accessKey: 'cg17-access',
+      secret: 'cg17-secret',
+    });
+    let fileStats = 0;
+    const fs = {
+      lstatSync(target) {
+        if (target === file) {
+          fileStats += 1;
+          if (which === 'lstat' && fileStats > 1) {
+            const err = new Error(`ENOENT: ${file}`);
+            err.code = 'ENOENT';
+            err.path = file;
+            throw err;
+          }
+        }
+        return lstatSync(target);
+      },
+      openSync(target, flags) { return openSync(target, flags); },
+      fstatSync(fd) {
+        const st = fstatSync(fd);
+        if (which === 'fstat' && st.ino === lstatSync(file).ino && st.dev === lstatSync(file).dev) {
+          const err = new Error(`EBADF: ${file}`);
+          err.code = 'EBADF';
+          err.path = file;
+          throw err;
+        }
+        return st;
+      },
+      readSync(fd, buf, offset, length, position) { return readSync(fd, buf, offset, length, position); },
+      closeSync(fd) { closeSync(fd); },
+    };
+    const transport = kmsTransport({ spki: material.spki });
+    const outcome = await bootOutcome(storeOnlyEnv(tree, token, file, profile), {
+      ...productionPin(transport.requestHandler),
+      fs,
+    });
+    assert.equal(outcome.out, null);
+    assert.equal(outcome.runtime, null);
+    assert.equal(outcome.err && outcome.err.code, 'v13_boot_refused');
+    assert.equal(outcome.err.reason, 'checkpoint_creds_not_regular');
+    const packed = packedLeak([
+      outcome.err,
+      outcome.err.message,
+      outcome.err.stack,
+      outcome.err.cause,
+      inspect(outcome.err, { depth: 8 }),
+    ]);
+    assert.equal(packed.includes(file), false);
+    assert.equal(packed.includes('cg17-access'), false);
+    setV13Runtime(null);
+    rmSync(tree.root, { recursive: true, force: true });
+  }
+  await refuse('fstat');
+  await refuse('lstat');
+});
