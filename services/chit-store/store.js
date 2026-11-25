@@ -12,6 +12,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { bookBoundLeaf, openIntake, readOwnedPending } from './intake.js';
 
 export const STORE_STATUS = 404;
 
@@ -114,6 +115,7 @@ export function openStore(dir, { books = [], io = fs } = {}) {
   for (const row of loaded.epochs) epochs.set(String(row.epoch), row);
   const receipts = new Map();
   for (const row of loaded.receipts) receipts.set(row.id, row);
+  const houseRetired = Array.isArray(loaded.houseRetired) ? loaded.houseRetired.slice() : [];
   const store = {
     dir,
     file,
@@ -122,8 +124,12 @@ export function openStore(dir, { books = [], io = fs } = {}) {
     books: bookRecords,
     epochs,
     receipts,
+    houseRetired,
     knowsBook(bookId) {
       return knowsBook(store, bookId);
+    },
+    acceptEpoch(record) {
+      return acceptEpoch(store, record);
     },
     commitEpoch(record) {
       return commitEpoch(store, record);
@@ -152,7 +158,9 @@ function persist(store) {
   for (const row of store.receipts.values()) receipts.push(row);
   const books = {};
   for (const [id, book] of store.books) books[id] = { bookSalt: Buffer.from(book.bookSalt).toString('hex') };
-  const text = JSON.stringify({ v: 1, epochs, receipts, books });
+  const body = { v: 1, epochs, receipts, books };
+  if (Array.isArray(store.houseRetired) && store.houseRetired.length > 0) body.houseRetired = store.houseRetired;
+  const text = JSON.stringify(body);
   atomicWrite(store.io, store.dir, store.file, text);
 }
 
@@ -198,10 +206,116 @@ function restore(store, saved) {
   store.receipts = saved.receipts;
 }
 
+function parseEpoch(value) {
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value < 1) return null;
+    return value;
+  }
+  if (typeof value === 'string' && /^[0-9]+$/.test(value)) {
+    let big;
+    try { big = BigInt(value); } catch { return null; }
+    if (big < 1n || big > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+    return Number(big);
+  }
+  return null;
+}
+
+function houseSingleton(store, row) {
+  const exact = [];
+  for (const item of store.receipts.values()) {
+    if (item && item.epoch != null && String(item.epoch) === String(row.epoch)) exact.push(item);
+  }
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
+  const loose = [];
+  for (const item of store.receipts.values()) {
+    if (!item || item.epoch != null) continue;
+    if (item.sealed != null || item.proof != null || item.index != null) continue;
+    loose.push(item);
+  }
+  const open = [];
+  for (const candidate of store.epochs.values()) {
+    if (Number(candidate.size) !== 1024) continue;
+    let exactCount = 0;
+    for (const item of store.receipts.values()) {
+      if (item && item.epoch != null && String(item.epoch) === String(candidate.epoch)) exactCount += 1;
+    }
+    if (exactCount === 0) open.push(candidate);
+  }
+  if (loose.length === 0 || loose.length !== open.length) return null;
+  open.sort((a, b) => Number(a.epoch) - Number(b.epoch));
+  loose.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  const at = open.findIndex((candidate) => String(candidate.epoch) === String(row.epoch));
+  if (at < 0) return null;
+  return loose[at];
+}
+
+/**
+ * A legacy house epoch: size 1024, one receipt, no sealer proof fields.
+ * When the receipt still has its line, the root must be sha256 of that line.
+ */
+export function isHouseShapedEpoch(store, row) {
+  if (!row || typeof row !== 'object') return false;
+  if (Number(row.size) !== 1024) return false;
+  const item = houseSingleton(store, row);
+  if (!item) return false;
+  if (item.sealed != null || item.proof != null || item.index != null) return false;
+  if (typeof item.bookId !== 'string' || item.bookId.length === 0) return false;
+  if (typeof item.id !== 'string' || item.id.length === 0) return false;
+  if (item.line != null) {
+    if (typeof item.line !== 'string' || !/^[0-9a-fA-F]{2048}$/.test(item.line)) return false;
+    const root = createHash('sha256').update(Buffer.from(item.line, 'hex')).digest('hex');
+    if (root !== String(row.root || '').toLowerCase()) return false;
+  }
+  return true;
+}
+
+function hasHouseEpoch(store) {
+  for (const row of store.epochs.values()) {
+    if (isHouseShapedEpoch(store, row)) return true;
+  }
+  return false;
+}
+
+function maxSealerEpoch(store) {
+  let max = 0;
+  for (const row of store.epochs.values()) {
+    if (isHouseShapedEpoch(store, row)) continue;
+    const n = parseEpoch(row.epoch);
+    if (n != null && n > max) max = n;
+  }
+  return max;
+}
+
+/**
+ * Sequential sealer epochs only. Empty store accepts 1.
+ * The current max may be recommitted when the tuple matches.
+ * Anything else is epoch_not_next. A legacy house row is epoch_house_conflict.
+ */
+export function acceptEpoch(store, record) {
+  if (!store || !record || typeof record !== 'object' || Array.isArray(record)) {
+    return { ok: false, reason: 'bad_epoch' };
+  }
+  if (record.epoch == null) return { ok: false, reason: 'bad_epoch' };
+  const epoch = parseEpoch(record.epoch);
+  if (epoch == null) return { ok: false, reason: 'bad_epoch' };
+  if (hasHouseEpoch(store)) return { ok: false, reason: 'epoch_house_conflict' };
+  const max = maxSealerEpoch(store);
+  const existing = store.epochs.get(String(epoch));
+  if (existing) {
+    if (epoch === max && tuplesMatch(existing, record)) return { ok: true, mode: 'replay', epoch };
+    if (!tuplesMatch(existing, record)) return { ok: false, reason: 'store_conflict' };
+    return { ok: false, reason: 'epoch_not_next' };
+  }
+  if (epoch !== max + 1) return { ok: false, reason: 'epoch_not_next' };
+  return { ok: true, mode: 'next', epoch };
+}
+
 export function commitEpoch(store, record) {
-  const key = String(record.epoch);
+  const gate = acceptEpoch(store, record);
+  if (!gate.ok) return gate;
+  const key = String(gate.epoch);
   const existing = store.epochs.get(key);
-  if (existing && !tuplesMatch(existing, record)) return { ok: false, reason: 'store_conflict' };
   const saved = snapshot(store);
   try {
     if (!existing) store.epochs.set(key, epochTuple(record));
@@ -220,6 +334,53 @@ export function commitEpoch(store, record) {
     restore(store, saved);
     return { ok: false, reason: 'store_not_committed' };
   }
+}
+
+/**
+ * Move house-shaped epochs out of the sealer counter.
+ * Bookable leaves (a line whose sha256 is the epoch root) go into the intake.
+ * The rows are kept under houseRetired. They are not deleted.
+ */
+export function migrateHouseEpochs(store) {
+  if (!store || !store.epochs || !store.receipts) return { ok: false, reason: 'bad_epoch' };
+  const found = [];
+  for (const row of store.epochs.values()) {
+    if (isHouseShapedEpoch(store, row)) found.push(row);
+  }
+  if (found.length === 0) return { ok: true, migrated: 0, booked: 0 };
+  let intake;
+  try {
+    intake = openIntake(store.dir, { io: store.io });
+  } catch (err) {
+    return { ok: false, reason: err?.code || 'intake_unreadable' };
+  }
+  let booked = 0;
+  const retired = [];
+  for (let i = 0; i < found.length; i += 1) {
+    const row = found[i];
+    const item = houseSingleton(store, row);
+    if (item && typeof item.line === 'string' && typeof item.paymentRef === 'string' && typeof item.tokenHash === 'string') {
+      const result = bookBoundLeaf(intake, {
+        paymentRef: item.paymentRef,
+        line: item.line,
+        bookId: item.bookId,
+        tokenHash: item.tokenHash,
+        hourStart: row.hourStart,
+      });
+      if (!result.ok) return { ok: false, reason: result.reason || 'intake_not_booked' };
+      if (result.replay !== true) booked += 1;
+    }
+    store.epochs.delete(String(row.epoch));
+    if (item && store.receipts.has(item.id)) store.receipts.delete(item.id);
+    retired.push({ epoch: row, receipt: item || null });
+  }
+  store.houseRetired = (store.houseRetired || []).concat(retired);
+  try {
+    persist(store);
+  } catch {
+    return { ok: false, reason: 'store_not_committed' };
+  }
+  return { ok: true, migrated: found.length, booked };
 }
 
 export function hasCommitted(store, record) {
@@ -325,9 +486,36 @@ export function fetchReceipt(store, input) {
     : null;
   if (!owns || epoch.released !== true) {
     if (pending) return { ok: false, status: 202, body: pending };
+    if (authed) {
+      const held = intakeHold(store, id, callerBook, token);
+      if (held) return held;
+    }
     return storeError();
   }
   return { ok: true, status: 200, body: servedBody(receipt, epoch) };
+}
+
+function intakeHold(store, id, bookId, token) {
+  const row = readOwnedPending(store.dir, id, { bookId, token }, store.io);
+  if (!row || row.bookId !== bookId) return null;
+  if (row.state === 'refund_owed') {
+    return {
+      ok: false,
+      status: 409,
+      body: { state: 'refund_owed', status: 'refund_owed', pending_id: row.pendingId },
+    };
+  }
+  if (row.receiptId && row.epoch != null) {
+    const receipt = store.receipts.get(row.receiptId);
+    const epoch = store.epochs.get(String(row.epoch));
+    if (receipt && epoch && epoch.released === true && receipt.bookId === bookId) {
+      return { ok: true, status: 200, body: servedBody(receipt, epoch) };
+    }
+  }
+  if (row.state === 'pending_anchor') {
+    return { ok: false, status: 202, body: { state: 'pending_anchor', pending_id: row.pendingId } };
+  }
+  return null;
 }
 
 function bytes32(value) {
