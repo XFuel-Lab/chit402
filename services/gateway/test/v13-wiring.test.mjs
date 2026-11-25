@@ -294,7 +294,7 @@ test('T3 high-S signature is refused and does not broadcast', async () => {
   const client = mockKms({ high: true });
   let sends = 0;
   await assert.rejects(
-    () => anchor({
+    () => signMainnetCheckpoint({
       env: flagsOn(),
       pin: mainnetPin(),
       calldata: 'high-s',
@@ -313,7 +313,7 @@ test('T4 a recovery that is not the pinned checkpoint does not broadcast', async
   const client = mockKms();
   let sends = 0;
   await assert.rejects(
-    () => anchor({
+    () => signMainnetCheckpoint({
       env: flagsOn(),
       pin: mainnetPin(),
       calldata: 'wrong-key',
@@ -332,7 +332,7 @@ test('T4 a signature that does not recover to the checkpoint key is invalid', as
   const client = mockKms({ corrupt: true });
   let sends = 0;
   await assert.rejects(
-    () => anchor({
+    () => signMainnetCheckpoint({
       env: flagsOn(),
       pin: mainnetPin(),
       calldata: 'corrupt',
@@ -351,7 +351,7 @@ test('T4 a low-S signature for a different key is not broadcast', async () => {
   const client = mockKms();
   let sends = 0;
   await assert.rejects(
-    () => anchor({
+    () => signMainnetCheckpoint({
       env: flagsOn(),
       pin: mainnetPin(),
       calldata: 'other-key',
@@ -417,10 +417,11 @@ test('T6 no line until the payment is final, then one line under that block hash
     addressOf: asCheckpoint,
     send: async () => '0xabc',
   });
-  assert.equal(done.status, 200);
-  assert.equal(done.body.v, 13);
-  assert.equal(done.body.blockHash, finalHash);
-  const line = Buffer.from(done.body.line, 'hex');
+  assert.equal(done.status, 202);
+  assert.equal(done.body.state, 'pending_anchor');
+  assert.equal(done.body.v, undefined);
+  const intake = JSON.parse(readFileSync(join(box.store.dir, 'pending-intake.json'), 'utf8'));
+  const line = Buffer.from(intake.leaves[0].line, 'hex');
   assert.equal(line.subarray(10, 42).toString('hex'), finalHash);
   assert.equal(paymentIsFinal(10, 10), true);
   assert.equal(paymentIsFinal(11, 10), false);
@@ -443,7 +444,8 @@ test('T7 one receipt for a repeated authorization, including concurrent callers'
   });
   const first = await issueHouseReceipt(input());
   const second = await issueHouseReceipt(input());
-  assert.equal(first.body.v, 13);
+  assert.equal(first.body.state, 'pending_anchor');
+  assert.equal(first.status, 202);
   assert.deepEqual(second.bytes, first.bytes);
   assert.equal(second.replay, true);
   const [a, b] = await Promise.all([issueHouseReceipt(input()), issueHouseReceipt(input())]);
@@ -479,7 +481,7 @@ test('T8 the authorization key keeps chain, token, authorizer, and nonce', async
     payment: payment({ nonce: '05'.repeat(32) }),
     observation: observation({ txHash: 'cd'.repeat(32) }),
   });
-  assert.equal(first.body.v, 13);
+  assert.equal(first.body.state, 'pending_anchor');
   assert.equal(otherChain.status, 400);
   assert.equal(otherChain.body.v, undefined);
   assert.equal(otherChain.body.pending_id, undefined);
@@ -488,7 +490,7 @@ test('T8 the authorization key keeps chain, token, authorizer, and nonce', async
   assert.equal(otherToken.body.pending_id, undefined);
   assert.notDeepEqual(otherToken.bytes, first.bytes);
   assert.notDeepEqual(otherTx.bytes, first.bytes);
-  assert.equal(otherTx.body.v, 13);
+  assert.equal(otherTx.body.state, 'pending_anchor');
   const replay = await issueHouseReceipt({ ...base, payment: payment() });
   assert.deepEqual(replay.bytes, first.bytes);
   const zero = await issueHouseReceipt({ ...base, payment: payment({ nonce: '00'.repeat(32) }) });
@@ -514,10 +516,18 @@ test('T9 a store throw after the payment is final returns a pending id and verif
       commitEpoch() { throw new Error(`${secret} signature-deadbeef`); },
       hasCommitted() { return false; },
     },
+    intakeIo: {
+      existsSync() { return false; },
+      mkdirSync() {},
+      openSync() { throw new Error(`${secret} signature-deadbeef`); },
+    },
     client: mockKms(),
     send: async () => { sends += 1; return '0x1'; },
   });
-  assert.equal(issued.status, 202);
+  assert.equal(issued.status, 409);
+  assert.equal(issued.body.state, 'refund_owed');
+  assert.equal(issued.body.status, 'refund_owed');
+  assert.equal(issued.retryAfter, null);
   assert.equal(issued.body.v, undefined);
   assert.match(issued.body.pending_id, /^[0-9a-f]{32}$/);
   assert.match(issued.body.verify_url, /^http:\/\/127\.0\.0\.1\/verify\/[0-9a-f]{32}$/);
@@ -538,7 +548,7 @@ test('T10 an identical anchor is not sent twice, and a repeated Anchored event i
     calldata: 'epoch-1',
     client,
     preparedTx: '0x11',
-    send: async () => { sends += 1; return '0xabc'; },
+    send: async () => { sends += 1; return `0x${'ab'.repeat(32)}`; },
   };
   const first = await anchor(ctx);
   const second = await anchor(ctx);
@@ -621,11 +631,11 @@ test('T12 a different caller with the same public id gets the same not-found bod
     addressOf: asCheckpoint,
     send: async () => '0xabc',
   });
-  const owner = readHouse({ dir: box.dir, receiptId: issued.body.line.slice(0, 32), caller: box.caller });
+  const owner = readHouse({ dir: box.dir, receiptId: issued.body.pending_id, caller: box.caller });
   const otherCaller = readHouse({ dir: box.dir, receiptId: issued.bytes.length ? createHash('sha256').update('01'.repeat(32)).digest('hex').slice(0, 32) : '', caller: box.other });
   const ownerRead = readHouse({
     dir: box.dir,
-    receiptId: createHash('sha256').update(issued.body.line).digest('hex').slice(0, 32),
+    receiptId: issued.body.pending_id,
     caller: box.caller,
   });
   void owner;
@@ -643,7 +653,8 @@ test('T12 a different caller with the same public id gets the same not-found bod
   const mine = readHouse({ dir: box.dir, receiptId: realId, caller: box.caller });
   const theirs = readHouse({ dir: box.dir, receiptId: realId, caller: box.other });
   const unknown = readHouse({ dir: box.dir, receiptId: 'ff'.repeat(16), caller: box.caller });
-  assert.equal(mine.status, 200);
+  assert.equal(mine.status, 202);
+  assert.equal(mine.body.state, 'pending_anchor');
   assert.deepEqual(theirs.body, unknown.body);
   assert.equal(theirs.status, unknown.status);
   assert.equal(JSON.stringify(theirs.body).includes(box.caller.token), false);
@@ -666,6 +677,11 @@ test('T13 dummy secrets and signatures stay out of logs and error bodies', async
     store: {
       commitEpoch() { throw new Error(`${arn} ${signature}`); },
       hasCommitted() { return false; },
+    },
+    intakeIo: {
+      existsSync() { return false; },
+      mkdirSync() {},
+      openSync() { throw new Error(`${arn} ${signature}`); },
     },
     client: { async send() { throw new Error(arn); } },
     send: async () => '0x1',
@@ -708,9 +724,9 @@ test('T14 the authorization binding is written by the request path', async () =>
     },
     caller,
   }, ctx);
-  assert.equal(issued.status, 200);
-  assert.equal(issued.body.v, 13);
-  assert.equal(issued.body.contract.toLowerCase(), MAINNET_ANCHOR.toLowerCase());
+  assert.equal(issued.status, 202);
+  assert.equal(issued.body.state, 'pending_anchor');
+  assert.equal(issued.body.v, undefined);
   const rows = JSON.parse(readFileSync(join(box.dir, 'auth-bindings.json'), 'utf8')).rows;
   const receiptId = rows[Object.keys(rows)[0]].receiptId;
   const mine = await handleHouse({ method: 'GET', receiptId, caller }, ctx);
@@ -724,7 +740,8 @@ test('T14 the authorization binding is written by the request path', async () =>
     receiptId: 'ff'.repeat(16),
     caller,
   }, ctx);
-  assert.equal(mine.status, 200);
+  assert.equal(mine.status, 202);
+  assert.equal(mine.body.state, 'pending_anchor');
   assert.equal(other.status, 404);
   assert.deepEqual(other.body, unknown.body);
 });
@@ -776,37 +793,40 @@ test('M1 buildReceipt stays the v1 document when the flags are off', async () =>
   assert.equal(Buffer.isBuffer(receipt.bytes), false);
 });
 
-test('M1 buildReceipt returns the v13 document when the flags are on', async () => {
+test('M1 buildReceipt returns a pending anchor when the flags are on', async () => {
   resetHouseState();
   resetAnchorLedger();
   const box = fresh();
-  const receipt = await withProcessFlags(true, async () => {
-    await wireOpenedHouse(box);
-    return buildV1Receipt({
-      task: {
-        taskId: 'chit-v13-hook',
-        status: 'completed',
-        createdAt: '2026-09-26T17:27:32Z',
-        updatedAt: '2026-09-26T17:27:32Z',
-        meta: {
-          housePayment: payment({ nonce: 'ff'.repeat(32), chainId: 1 }),
-          houseObservation: observation({ blockHash: 'ee'.repeat(32) }),
-          houseCaller: box.other,
+  let thrown = null;
+  try {
+    await withProcessFlags(true, async () => {
+      await wireOpenedHouse(box);
+      return buildV1Receipt({
+        task: {
+          taskId: 'chit-v13-hook',
+          status: 'completed',
+          createdAt: '2026-09-26T17:27:32Z',
+          updatedAt: '2026-09-26T17:27:32Z',
+          meta: {
+            housePayment: payment({ nonce: 'ff'.repeat(32), chainId: 1 }),
+            houseObservation: observation({ blockHash: 'ee'.repeat(32) }),
+            houseCaller: box.other,
+          },
         },
-      },
-      payment: { ...payment({ nonce: '0a'.repeat(32) }), observation: observation() },
-      taskId: 'chit-v13-hook',
-      provider: 'example-hub',
-      mock: true,
-      proverConfigured: false,
-      baseUrl: 'http://127.0.0.1:9',
+        payment: { ...payment({ nonce: '0a'.repeat(32) }), observation: observation() },
+        taskId: 'chit-v13-hook',
+        provider: 'example-hub',
+        mock: true,
+        proverConfigured: false,
+        baseUrl: 'http://127.0.0.1:9',
+      });
     });
-  });
-  assert.equal(receipt.v, 13);
-  assert.equal(receipt.schema, 'chit402.cs2.receipt.v1');
-  assert.equal(String(receipt.contract).toLowerCase(), MAINNET_ANCHOR.toLowerCase());
-  assert.equal(receipt.surface, undefined);
-  assert.equal(Buffer.isBuffer(receipt.bytes), false);
+  } catch (err) {
+    thrown = err;
+  }
+  assert.equal(thrown && thrown.code, 'pending_anchor');
+  assert.match(thrown.pending_id, /^[0-9a-f]{32}$/);
+  assert.equal(box.store.epochs.size, 0);
 });
 
 test('S3 addressOf is ignored without the test injection', async () => {
@@ -825,7 +845,7 @@ test('S3 addressOf is ignored without the test injection', async () => {
     addressOf: asCheckpoint,
     send: async () => '0xabc',
   });
-  assert.equal(issued.body.v, 13);
+  assert.equal(issued.body.state, 'pending_anchor');
   assert.equal(client.calls.includes('Sign'), false);
 });
 
@@ -1252,13 +1272,16 @@ test('B8 a paid hook throw is retryable JSON, 202 with a hold and 503 without', 
     const box = fresh();
     await wireOpenedHouse(box);
     const held = await withProcessFlags(true, () => settle('b8-hold'));
-    assert.equal(held.status, 202);
-    assert.equal(held.body.code, 'settle_pending');
+    assert.equal(held.status, 409);
+    assert.equal(held.body.code, 'refund_owed');
+    assert.equal(held.body.retryable, false);
+    assert.equal(held.body.state, 'refund_owed');
     assert.equal(typeof held.body.pending_id, 'string');
     assert.equal(typeof held.body.verify_url, 'string');
     assert.equal(typeof held.body.payment_ref, 'string');
     assert.equal(held.text.toLowerCase().includes('pay again'), false);
-    assert.equal(pendingOpen(held.body.pending_id), true);
+    assert.equal(held.text.toLowerCase().includes('retry-after'), false);
+    assert.equal(pendingOpen(held.body.pending_id), false);
   } finally {
     setV13Runtime(null);
     clearChainReaderForTests();
@@ -1286,8 +1309,8 @@ test('B9 the address stand-in is honored only when both gates are on', async () 
     testInjection: true,
     addressOf: asCheckpoint,
   });
-  assert.equal(honored.body.v, 13);
-  assert.equal(allowed.calls.includes('Sign'), true);
+  assert.equal(honored.body.state, 'pending_anchor');
+  assert.equal(allowed.calls.includes('Sign'), false);
 
   const prev = process.env.ISSUER_KMS_KEY_ID;
   process.env.ISSUER_KMS_KEY_ID = 'alias/test-only';
@@ -1305,7 +1328,7 @@ test('B9 the address stand-in is honored only when both gates are on', async () 
       testInjection: true,
       addressOf: asCheckpoint,
     });
-    assert.equal(ignored.body.v, 13);
+    assert.equal(ignored.body.state, 'pending_anchor');
     assert.equal(blocked.calls.includes('Sign'), false);
   } finally {
     if (prev == null) delete process.env.ISSUER_KMS_KEY_ID;
@@ -1324,7 +1347,7 @@ test('B9 the address stand-in is honored only when both gates are on', async () 
     send: async () => '0xabc',
     addressOf: asCheckpoint,
   });
-  assert.equal(noInjection.body.v, 13);
+  assert.equal(noInjection.body.state, 'pending_anchor');
   assert.equal(absent.calls.includes('Sign'), false);
 });
 
@@ -1374,8 +1397,8 @@ test('B10 settle-path payment, observation, and caller win over task.meta', asyn
   } catch (err) {
     thrown = err;
   }
-  assert.equal(thrown, null);
-  assert.equal(receipt.v, 13);
+  assert.equal(thrown && thrown.code, 'pending_anchor');
+  assert.equal(receipt, null);
   const rows = JSON.parse(readFileSync(join(box.dir, 'auth-bindings.json'), 'utf8')).rows;
   const row = rows[Object.keys(rows)[0]];
   assert.equal(row.bookId, box.caller.bookId);

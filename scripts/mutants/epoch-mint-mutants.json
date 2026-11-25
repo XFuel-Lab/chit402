@@ -1,0 +1,104 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": [
+      "node",
+      "--test",
+      "--test-concurrency=1",
+      "services/gateway/test/epoch-mint.test.mjs"
+    ]
+  },
+  "mutants": [
+    {
+      "id": "EM1",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "        booked = bookLeaf(intake, {\n          paymentRef: key.hex,\n          line,\n          caller: input.caller,\n          hourStart: observation.hourStart,\n        });",
+      "replace": "        const epoch = 1 + Number(BigInt(`0x${key.hex.slice(-8)}`) % 100000n);\n        booked = input.store.commitEpoch({\n          epoch,\n          hourStart: observation.hourStart,\n          size: 1024,\n          root: createHash('sha256').update(line).digest('hex'),\n          stateRoot: createHash('sha256').update(String(epoch)).digest('hex'),\n          chainId: '8453',\n          contract: '0x0000000000000000000000000000000000000000',\n          checkpoint: '0x0000000000000000000000000000000000000000',\n          receipts: [{ id: key.hex.slice(0, 32), bookId: input.caller.bookId }],\n        });",
+      "note": "EM1 — house mints 1+(key % 100000) and commitEpochs it"
+    },
+    {
+      "id": "EM2",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "      const held = holdResponse(kind, key.hex, input.baseUrl);",
+      "replace": "      if (input.client && typeof input.client.send === 'function') await input.client.send({ name: 'Sign' });\n      const held = holdResponse(kind, key.hex, input.baseUrl);",
+      "note": "EM2 — house calls checkpoint Sign"
+    },
+    {
+      "id": "EM3",
+      "file": "services/chit-sealer/anchor-mainnet.js",
+      "find": "  throw coded('anchor transaction is not prepared', 'anchor_unprepared');\n}",
+      "replace": "  if (typeof ctx.send !== 'function') throw coded('broadcast function missing', 'bad_broadcast');\n  const tx = await ctx.send(`0x${'11'.repeat(32)}`);\n  ledger.set(key, tx);\n  return { ok: true, resent: true, tx };\n}",
+      "note": "EM3 — production anchor sends 0x1111…"
+    },
+    {
+      "id": "EM4",
+      "file": "services/chit-store/store.js",
+      "find": "  if (epoch !== max + 1) return { ok: false, reason: 'epoch_not_next' };",
+      "replace": "  if (epoch < 1) return { ok: false, reason: 'epoch_not_next' };",
+      "note": "EM4 — commitEpoch accepts a non-next epoch"
+    },
+    {
+      "id": "EM5",
+      "file": "services/chit-store/intake.js",
+      "find": "  const tokenHash = tokenHashHex(token);\n  const existing = findRef(intake, paymentRef);\n  if (existing) {\n    if (!sameOwner(existing, input.caller)) return { ok: false, reason: 'not_owner' };\n    if (existing.state === 'refund_owed') return { ok: true, replay: true, row: existing };\n    if (existing.line !== lineHex) return { ok: false, reason: 'intake_conflict' };\n    return { ok: true, replay: true, row: existing };\n  }\n  const row = leafRow({\n    paymentRef,\n    bookId,\n    tokenHash,\n    hourStart: input.hourStart,\n  }, lineHex);\n  intake.leaves.push(row);\n  try {\n    persist(intake);",
+      "replace": "  const tokenHash = tokenHashHex(token);\n  const existing = findRef(intake, paymentRef);\n  if (existing) {\n    if (!sameOwner(existing, input.caller)) return { ok: false, reason: 'not_owner' };\n    if (existing.state === 'refund_owed') return { ok: true, replay: true, row: existing };\n    if (existing.line !== lineHex) return { ok: false, reason: 'intake_conflict' };\n    return { ok: true, replay: true, row: existing };\n  }\n  const row = leafRow({\n    paymentRef,\n    bookId,\n    tokenHash,\n    hourStart: input.hourStart,\n  }, lineHex);\n  intake.leaves.push(row);\n  try {\n    void intake;",
+      "note": "EM5 — bookLeaf skips the durable persist"
+    },
+    {
+      "id": "EM6",
+      "file": "services/chit-store/intake.js",
+      "find": "    if (existing.state === 'refund_owed') return { ok: true, replay: true, row: existing };\n    if (existing.line !== lineHex) return { ok: false, reason: 'intake_conflict' };\n    return { ok: true, replay: true, row: existing };",
+      "replace": "    if (existing.state === 'refund_owed') return { ok: true, replay: true, row: existing };\n    if (existing.line !== lineHex) return { ok: false, reason: 'intake_conflict' };\n    void existing;",
+      "note": "EM6 — a repeated payment ref books a second leaf"
+    },
+    {
+      "id": "EM7",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "function refundOwed(input, keyHex) {\n  const held = holdResponse('refund_owed', keyHex, input.baseUrl);",
+      "replace": "function refundOwed(input, keyHex) {\n  const held = holdResponse('pending_anchor', keyHex, input.baseUrl);\n  held.body.retryable = true;\n  held.status = 202;",
+      "note": "EM7 — a paid book failure returns pending_anchor and retryable"
+    },
+    {
+      "id": "EM8",
+      "file": "services/chit-store/store.js",
+      "find": "  if (hasHouseEpoch(store)) return { ok: false, reason: 'epoch_house_conflict' };",
+      "replace": "  if (false && hasHouseEpoch(store)) return { ok: false, reason: 'epoch_house_conflict' };",
+      "note": "EM8 — a planted house epoch is not refused"
+    },
+    {
+      "id": "EM9",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "      return { ...held, replay: booked.replay === true };",
+      "replace": "      if (input.client && typeof input.client.send === 'function') await input.client.send({ name: 'Sign', Message: line });\n      return { ...held, replay: booked.replay === true };",
+      "note": "EM9 — house Sign returns on the booked path"
+    },
+    {
+      "id": "EM10",
+      "file": "services/chit-store/intake.js",
+      "find": "    if (!sameOwner(row, caller)) return null;",
+      "replace": "    if (false && !sameOwner(row, caller)) return null;",
+      "note": "EM10 — a different caller can read the pending row"
+    },
+    {
+      "id": "EM11",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "        booked = bookLeaf(intake, {\n          paymentRef: key.hex,\n          line,\n          caller: input.caller,\n          hourStart: observation.hourStart,\n        });",
+      "replace": "        booked = { ok: true, replay: false, row: null };",
+      "note": "EM11 — the production booking write is gone"
+    },
+    {
+      "id": "EM12",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "        });\n      } catch (err) {\n        note(input, 'intake_not_booked');\n        void err;\n        return refundOwed(input, key.hex);\n      }\n      if (!booked || booked.ok !== true) {",
+      "replace": "        });\n      } catch (err) {\n        const leaked = (err && err.cause && err.cause.message) || (err && err.message) || '';\n        note(input, `intake_not_booked ${leaked}`);\n        void err;\n        return refundOwed(input, key.hex);\n      }\n      if (!booked || booked.ok !== true) {",
+      "note": "EM12 — a book failure logs the error message"
+    },
+    {
+      "id": "EM13",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "    const body = await legacyResponse(input.task, input.receiptOpts);\n    return { status: 200, body, bytes: Buffer.from(JSON.stringify(body)) };",
+      "replace": "    const body = await legacyResponse(input.task, input.receiptOpts);\n    if (input.store && typeof input.store.commitEpoch === 'function') input.store.commitEpoch({ epoch: 1 });\n    if (input.store && typeof input.store.dir === 'string') {\n      fs.mkdirSync(input.store.dir, { recursive: true });\n      fs.writeFileSync(`${input.store.dir}/pending-intake.json`, '{\"v\":1,\"leaves\":[{}]}');\n    }\n    return { status: 200, body, bytes: Buffer.from(JSON.stringify(body)) };",
+      "note": "EM13 — flags off still commits an epoch and writes intake"
+    }
+  ]
+}

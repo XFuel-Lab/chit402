@@ -175,15 +175,15 @@ export async function anchor(ctx) {
   const prior = ledger.get(key);
   if (prior) return { ok: true, resent: false, tx: prior };
   if (ctx.preparedTx) {
+    if (typeof ctx.send !== 'function') throw coded('broadcast function missing', 'bad_broadcast');
     const tx = await ctx.send(ctx.preparedTx);
+    if (typeof tx !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(tx)) {
+      throw coded('broadcast hash invalid', 'bad_broadcast');
+    }
     ledger.set(key, tx);
     return { ok: true, resent: true, tx };
   }
-  await signMainnetCheckpoint(ctx);
-  if (typeof ctx.send !== 'function') throw coded('broadcast function missing', 'bad_broadcast');
-  const tx = await ctx.send(`0x${'11'.repeat(32)}`);
-  ledger.set(key, tx);
-  return { ok: true, resent: true, tx };
+  throw coded('anchor transaction is not prepared', 'anchor_unprepared');
 }
 
 export function anchoredReplay(store, event) {

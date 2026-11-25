@@ -29,7 +29,7 @@ import { inspect } from 'node:util';
 import { KMSClient } from '@aws-sdk/client-kms';
 import { fromIni } from '@aws-sdk/credential-providers';
 import { ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
-import { boundCheckpointAttempt, broadcastCommittedAnchor, checkpointKmsTimeoutMs, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
+import { boundCheckpointAttempt, checkpointKmsTimeoutMs } from '../../chit-sealer/kms-secp256k1.js';
 import { MAINNET_CHECKPOINT, normHex } from '../../chit-sealer/mainnet-pin.js';
 import { openStore } from '../../chit-store/store.js';
 import { loadDotenvFile } from './dotenv-load.js';
@@ -91,28 +91,24 @@ function noteCheckpoint(env, deps) {
 }
 
 /**
- * anchor() calls send(rawTx) and wants a tx hash back.
- * broadcastCommittedAnchor(log, { nonce, fees }, send) broadcasts only a
- * signed row that is already on the intent log, then calls its own send.
- * This wrapper is that arity adapter. It does not sign and it does not
- * open a second broadcaster. With no committed signed row it throws.
+ * The house path does not broadcast. A send wired at boot refuses.
+ * It does not append a broadcast row and it does not invent a tx hash.
+ */
+export function refuseUnpreparedHouseSend() {
+  return async function send() {
+    const err = new Error('house anchor is not prepared');
+    err.code = 'anchor_unprepared';
+    throw err;
+  };
+}
+
+/**
+ * Kept so a caller cannot turn a raw argument into a broadcast row.
+ * Production boot uses refuseUnpreparedHouseSend.
  */
 export function sendThroughCommittedAnchor(log) {
-  return async function send(rawTx) {
-    const rows = typeof log?.read === 'function' ? log.read() : [];
-    const signed = [...rows].reverse().find((row) => row && row.status === 'signed' && row.raw && row.fees);
-    if (!signed) {
-      const err = new Error('signed anchor is not committed');
-      err.code = 'intent_missing';
-      throw err;
-    }
-    const record = await broadcastCommittedAnchor(
-      log,
-      { nonce: signed.nonce, fees: signed.fees },
-      async () => rawTx,
-    );
-    return record.tx;
-  };
+  void log;
+  return refuseUnpreparedHouseSend();
 }
 
 function runtimeComplete(runtime) {
@@ -612,13 +608,7 @@ async function guardListen(env, deps) {
     throw bootRefused();
   }
   let send = null;
-  if (bindDir) {
-    try {
-      send = sendThroughCommittedAnchor(openAnchorIntentLog(bindDir));
-    } catch {
-      send = null;
-    }
-  }
+  if (bindDir) send = refuseUnpreparedHouseSend();
   const runtime = {
     store,
     dir: bindDir,
