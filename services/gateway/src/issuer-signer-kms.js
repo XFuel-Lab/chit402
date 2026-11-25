@@ -17,10 +17,20 @@ function coded(message, code) {
   return err;
 }
 
-function timeoutMs(env) {
-  const n = Number(env.ISSUER_KMS_TIMEOUT_MS);
-  if (Number.isFinite(n) && n > 0) return Math.floor(n);
-  return 3000;
+const ISSUER_KMS_TIMEOUT_DEFAULT_MS = 10000;
+const ISSUER_KMS_TIMEOUT_MIN_MS = 1000;
+const ISSUER_KMS_TIMEOUT_MAX_MS = 30000;
+
+export function timeoutMs(env) {
+  const raw = env == null ? undefined : env.ISSUER_KMS_TIMEOUT_MS;
+  if (typeof raw === 'string' && raw.trim() === '') return ISSUER_KMS_TIMEOUT_DEFAULT_MS;
+  if (raw == null) return ISSUER_KMS_TIMEOUT_DEFAULT_MS;
+  const n = typeof raw === 'number' ? raw : Number(String(raw).trim());
+  if (!Number.isFinite(n)) return ISSUER_KMS_TIMEOUT_DEFAULT_MS;
+  const ms = Math.floor(n);
+  if (ms < ISSUER_KMS_TIMEOUT_MIN_MS) return ISSUER_KMS_TIMEOUT_MIN_MS;
+  if (ms > ISSUER_KMS_TIMEOUT_MAX_MS) return ISSUER_KMS_TIMEOUT_MAX_MS;
+  return ms;
 }
 
 function requireConfig(env) {

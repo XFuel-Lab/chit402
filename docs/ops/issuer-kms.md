@@ -13,7 +13,7 @@ No production cutover is in this change. Do not point a live host at KMS until P
 | `ISSUER_KID` | kms in production | production kid for the env signer | RFC 7638 thumbprint. KMS boot fails with `issuer_kid_mismatch` when it does not match `GetPublicKey`. |
 | `ISSUER_KMS_KEY_ID` | kms | unset | Key ARN or alias. |
 | `ISSUER_KMS_REGION` | kms | unset | Region of that key. |
-| `ISSUER_KMS_TIMEOUT_MS` | no | `3000` | AbortSignal timeout on `GetPublicKey` and `Sign`. |
+| `ISSUER_KMS_TIMEOUT_MS` | no | `10000` | Hard timeout for KMS issuer init (credential resolve and GetPublicKey) and the AbortSignal timeout on Sign. Finite values are clamped to 1000–30000. A blank or non-numeric value uses 10000. |
 | `ISSUER_SIGNER_LOW_S` | no | unset | `true` normalises env signatures to low-S. Unset leaves env signatures byte-identical to `crypto.sign`. KMS signatures are always low-S. |
 | `ISSUER_CAP_RECEIPTS_PER_HOUR` | no | unset | Receipt-kind signs per UTC hour. Unset means the cap is off. |
 | `ISSUER_CAP_RECEIPTS_PER_DAY` | no | unset | Receipt-kind signs per UTC day. Unset means that window is off. |
@@ -84,7 +84,7 @@ ISSUER_SIGNER=kms ISSUER_KMS_KEY_ID=alias/chit402-issuer-v1 ISSUER_KMS_REGION=eu
   node scripts/issuer-kms-check.mjs
 ```
 
-The script calls `GetPublicKey`, signs one fixed message, and verifies it locally. When `ISSUER_JWKS_URL` is set it must be `https`. The script sends one GET (5 second timeout, no body, redirects refused) and requires exactly one published key whose `kid`, `x`, and `y` match the signer, then verifies that same signature with the JWKS key. It prints three lines and nothing else:
+The script calls `GetPublicKey`, signs one fixed message, and verifies it locally. When `ISSUER_JWKS_URL` is set it must be `https`. The script sends one GET (5 second timeout, no body, redirects refused) and requires exactly one published key whose `kid`, `x`, and `y` match the signer, then verifies that same signature with the JWKS key. It prints three lines. A refused issuer init also logs its reason code:
 
 ```
 kid <kid>

@@ -192,7 +192,7 @@ import { resolveSplit, describeSplit } from './revenue-split.js';
 import { apiKeyHashFromReq } from './buyer-attr.js';
 import { getFloatManager } from './provider-float.js';
 import { getJwks } from './issuer-key.js';
-import { initIssuerSigner } from './issuer-signer.js';
+import { initIssuerSigner, logIssuerSignerBootRefusal } from './issuer-signer.js';
 import { issuanceCapHealth } from './issuance-cap.js';
 import {
   assertIssuerRootStartup,
@@ -6277,7 +6277,13 @@ export async function startServer() {
   // Initialize the issuer ECDSA key for receipt signing.
   // Production refuses a missing or empty ISSUER_PRIVATE_KEY. Local and test
   // runs still generate an ephemeral key when the variable is unset.
-  const signer = await initIssuerSigner();
+  let signer;
+  try {
+    signer = await initIssuerSigner();
+  } catch (err) {
+    logIssuerSignerBootRefusal(err, logger);
+    throw err;
+  }
   logger.info({ kid: signer.kid, signer: signer.kind }, 'Issuer ECDSA key initialized (JWKS at /.well-known/jwks.json)');
 
   // The signing key is never a guardian. A partial mirror pin refuses to
