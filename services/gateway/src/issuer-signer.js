@@ -2,6 +2,7 @@
  * Pluggable issuer signer. Unset ISSUER_SIGNER and `env` keep the process
  * key. `kms` is opt-in and never falls back to that key. KMS boot requires
  * the static AWS access-key pair and does not use the default credential chain.
+ * A non-empty session token is passed with that pair and is never logged.
  */
 import crypto from 'node:crypto';
 import { initIssuerKey } from './issuer-key.js';
@@ -35,7 +36,10 @@ function explicitIssuerCredentials(env) {
   if (accessKeyId == null || secretAccessKey == null) {
     throw coded('issuer credentials missing', 'issuer_creds_missing');
   }
-  return { accessKeyId, secretAccessKey };
+  const credentials = { accessKeyId, secretAccessKey };
+  const sessionToken = trimmedPairValue(env, 'AWS_SESSION_TOKEN');
+  if (sessionToken != null) credentials.sessionToken = sessionToken;
+  return credentials;
 }
 
 async function logBootRefusal(err) {

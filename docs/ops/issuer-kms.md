@@ -13,7 +13,7 @@ No production cutover is in this change. Do not point a live host at KMS until P
 | `ISSUER_KID` | kms in production | production kid for the env signer | RFC 7638 thumbprint. KMS boot fails with `issuer_kid_mismatch` when it does not match `GetPublicKey`. |
 | `ISSUER_KMS_KEY_ID` | kms | unset | Key ARN or alias. |
 | `ISSUER_KMS_REGION` | kms | unset | Region of that key. |
-| `ISSUER_KMS_TIMEOUT_MS` | no | `3000` | Hard timeout for KMS issuer init (credential resolve and GetPublicKey) and the AbortSignal timeout on Sign. |
+| `ISSUER_KMS_TIMEOUT_MS` | no | `10000` | Hard timeout for KMS issuer init (credential resolve and GetPublicKey) and the AbortSignal timeout on Sign. Finite values are clamped to 1000–30000. A blank or non-numeric value uses 10000. |
 | `ISSUER_SIGNER_LOW_S` | no | unset | `true` normalises env signatures to low-S. Unset leaves env signatures byte-identical to `crypto.sign`. KMS signatures are always low-S. |
 | `ISSUER_CAP_RECEIPTS_PER_HOUR` | no | unset | Receipt-kind signs per UTC hour. Unset means the cap is off. |
 | `ISSUER_CAP_RECEIPTS_PER_DAY` | no | unset | Receipt-kind signs per UTC day. Unset means that window is off. |

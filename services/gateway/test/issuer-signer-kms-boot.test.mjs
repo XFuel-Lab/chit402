@@ -5,6 +5,7 @@
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import net from 'node:net';
 import { readFileSync } from 'node:fs';
 
@@ -26,6 +27,7 @@ const WATCH = [
   'AWS_PROFILE',
   'AWS_SHARED_CREDENTIALS_FILE',
   'AWS_EC2_METADATA_DISABLED',
+  'AWS_DEFAULTS_MODE',
   'ISSUER_SIGNER',
   'ISSUER_PRIVATE_KEY',
   'ISSUER_KID',
@@ -43,7 +45,8 @@ const {
   _setIssuerSignerForTest,
 } = await import('../src/issuer-signer.js');
 const { createIssuerKmsClient } = await import('../src/issuer-kms-client.js');
-const { _resetIssuerKey } = await import('../src/issuer-key.js');
+const { timeoutMs } = await import('../src/issuer-signer-kms.js');
+const { _resetIssuerKey, computeJwkThumbprint } = await import('../src/issuer-key.js');
 const { wireV13Runtime } = await import('../src/v13-boot.js');
 const { default: logger } = await import('../src/logger.js');
 
@@ -225,7 +228,7 @@ test('kms init timeout bounds a send that ignores abort and logs only the code',
         },
       }),
       new Promise((_, reject) => {
-        setTimeout(() => reject(Object.assign(new Error('init hung'), { code: 'hung' })), 800);
+        setTimeout(() => reject(Object.assign(new Error('init hung'), { code: 'hung' })), 2500);
       }),
     ]);
   } catch (caught) {
@@ -238,11 +241,15 @@ test('kms init timeout bounds a send that ignores abort and logs only the code',
   }
   const elapsed = Date.now() - started;
   assert.equal(err && err.code, 'issuer_sign_unavailable');
-  assert.ok(elapsed < 500, `elapsed ${elapsed}`);
+  assert.ok(elapsed >= 500 && elapsed < 2500, `elapsed ${elapsed}`);
   assert.equal(sendCalled, true);
   assert.equal(seen.length, 1);
   assert.equal(seen[0].region, 'us-east-1');
-  assert.deepEqual(seen[0].credentials, { accessKeyId: ACCESS, secretAccessKey: SECRET });
+      assert.deepEqual(seen[0].credentials, {
+        accessKeyId: ACCESS,
+        secretAccessKey: SECRET,
+        sessionToken: SESSION,
+      });
   assert.equal(sockets.hits.length, 0);
   const text = logs.text();
   assert.match(text, /issuer_sign_unavailable/);
@@ -270,7 +277,7 @@ test('kms init timeout bounds client construction before send', async () => {
         },
       }),
       new Promise((_, reject) => {
-        setTimeout(() => reject(Object.assign(new Error('init hung'), { code: 'hung' })), 800);
+        setTimeout(() => reject(Object.assign(new Error('init hung'), { code: 'hung' })), 2500);
       }),
     ]);
   } catch (caught) {
@@ -282,7 +289,7 @@ test('kms init timeout bounds client construction before send', async () => {
   }
   const elapsed = Date.now() - started;
   assert.equal(err && err.code, 'issuer_sign_unavailable');
-  assert.ok(elapsed < 500, `elapsed ${elapsed}`);
+  assert.ok(elapsed >= 500 && elapsed < 2500, `elapsed ${elapsed}`);
   assert.equal(factoryCalled, true);
   assert.equal(sendCalled, false);
   assert.equal(sockets.hits.length, 0);
@@ -387,6 +394,143 @@ test('issuer boot refusal log is the reason code and not the secret-bearing erro
   });
   assert.deepEqual(seen, [[{ code: 'issuer_creds_missing' }, 'issuer signer boot refused']]);
   assertNoSecrets(JSON.stringify(seen));
+});
+
+test('ISSUER_KMS_TIMEOUT_MS defaults to 10000 and clamps into 1000..30000', () => {
+  assert.equal(timeoutMs({}), 10000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '' }), 10000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '   ' }), 10000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: 'nope' }), 10000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: 'NaN' }), 10000);
+  assert.equal(Number.isNaN(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: 'nope' })), false);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '40' }), 1000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: 0 }), 1000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '-5' }), 1000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '1000' }), 1000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '10000' }), 10000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '30000' }), 30000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '30001' }), 30000);
+  assert.equal(timeoutMs({ ISSUER_KMS_TIMEOUT_MS: '999999' }), 30000);
+});
+
+test('a whitespace session token is omitted from the static credentials', async () => {
+  fresh();
+  let seen = null;
+  let err = null;
+  try {
+    await initIssuerSigner(kmsEnv({
+      AWS_ACCESS_KEY_ID: ACCESS,
+      AWS_SECRET_ACCESS_KEY: SECRET,
+      AWS_SESSION_TOKEN: '   ',
+      ISSUER_KMS_TIMEOUT_MS: '1000',
+    }), {
+      clientFactory(opts) {
+        seen = opts.credentials;
+        throw Object.assign(new Error('stop'), { code: 'issuer_kms_config' });
+      },
+    });
+  } catch (caught) {
+    err = caught;
+  } finally {
+    fresh();
+  }
+  assert.equal(err && err.code, 'issuer_kms_config');
+  assert.deepEqual(seen, { accessKeyId: ACCESS, secretAccessKey: SECRET });
+  assert.equal(Object.prototype.hasOwnProperty.call(seen, 'sessionToken'), false);
+});
+
+test('the issuer kms client refuses when explicit credentials are missing', () => {
+  const cases = [
+    undefined,
+    null,
+    {},
+    { accessKeyId: ACCESS },
+    { secretAccessKey: SECRET },
+    { accessKeyId: '   ', secretAccessKey: SECRET },
+    { accessKeyId: ACCESS, secretAccessKey: ' \t ' },
+  ];
+  for (const credentials of cases) {
+    assert.throws(
+      () => createIssuerKmsClient({ region: 'us-east-1', credentials }),
+      (err) => err.code === 'issuer_creds_missing',
+    );
+  }
+});
+
+test('AWS_DEFAULTS_MODE=auto does not contact IMDS', async () => {
+  process.env.AWS_DEFAULTS_MODE = 'auto';
+  process.env.AWS_ACCESS_KEY_ID = ENV_ACCESS;
+  process.env.AWS_SECRET_ACCESS_KEY = ENV_SECRET;
+  process.env.AWS_SESSION_TOKEN = SESSION;
+  delete process.env.AWS_EC2_METADATA_DISABLED;
+  const sockets = guardSockets();
+  let client = null;
+  try {
+    client = createIssuerKmsClient({
+      region: 'us-east-1',
+      credentials: {
+        accessKeyId: `  ${ACCESS}  `,
+        secretAccessKey: `  ${SECRET}  `,
+        sessionToken: `  ${SESSION}  `,
+      },
+    });
+    const resolved = await client.config.credentials();
+    assert.equal(resolved.accessKeyId, ACCESS);
+    assert.equal(resolved.secretAccessKey, SECRET);
+    assert.equal(resolved.sessionToken, SESSION);
+    const mode = client.config.defaultsMode;
+    const defaults = typeof mode === 'function' ? await mode() : mode;
+    assert.equal(String(defaults).toLowerCase(), 'standard');
+    const attempts = client.config.maxAttempts;
+    const maxAttempts = typeof attempts === 'function' ? await attempts() : attempts;
+    assert.equal(maxAttempts, 2);
+    assert.equal(sockets.hits.length, 0);
+  } finally {
+    if (client && typeof client.destroy === 'function') client.destroy();
+    sockets.restore();
+    restoreEnv();
+  }
+});
+
+test('kms init succeeds with an explicit pair and a stubbed public key', async () => {
+  fresh();
+  const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = publicKey.export({ format: 'jwk' });
+  const kid = computeJwkThumbprint({ kty: 'EC', crv: 'P-256', x: jwk.x, y: jwk.y });
+  const spki = publicKey.export({ type: 'spki', format: 'der' });
+  const logs = captureLogs();
+  const sockets = guardSockets();
+  try {
+    const signer = await initIssuerSigner(kmsEnv({
+      AWS_ACCESS_KEY_ID: ACCESS,
+      AWS_SECRET_ACCESS_KEY: SECRET,
+      AWS_SESSION_TOKEN: `  ${SESSION}  `,
+      ISSUER_KID: kid,
+      ISSUER_KMS_TIMEOUT_MS: '10000',
+    }), {
+      clientFactory(opts) {
+        assert.equal(opts.credentials.sessionToken, SESSION);
+        return {
+          async send() {
+            return {
+              KeySpec: 'ECC_NIST_P256',
+              KeyUsage: 'SIGN_VERIFY',
+              SigningAlgorithms: ['ECDSA_SHA_256'],
+              PublicKey: spki,
+            };
+          },
+        };
+      },
+    });
+    assert.equal(signer.kind, 'kms');
+    assert.equal(signer.kid, kid);
+    assert.equal(sockets.hits.length, 0);
+    assertNoSecrets(logs.text());
+  } finally {
+    sockets.restore();
+    logs.restore();
+    fresh();
+  }
 });
 
 test('explicit issuer credentials resolve without IMDS or the process env pair', async () => {
