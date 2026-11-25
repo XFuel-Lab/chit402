@@ -309,13 +309,20 @@ function committedLineReceipt(store) {
   return byLine;
 }
 
+export function committedReceiptForLine(store, line) {
+  if (!store || !store.epochs || !store.receipts || typeof line !== 'string') return null;
+  const hex = line.toLowerCase();
+  if (!/^[0-9a-f]{2048}$/.test(hex)) return null;
+  return committedLineReceipt(store).get(hex) || null;
+}
+
 /**
  * Startup recovery. A crash after commitEpoch and before the intake seal
  * leaves the committed line pending. Stamp it from the committed receipt
  * so the next closeHour cannot mint it again. A missing intake file is
  * left missing. House-shaped epochs are not sealer commits.
  */
-function reconcileCommittedIntake(store) {
+export function reconcileCommittedIntake(store) {
   const io = store.io;
   if (!io || typeof io.existsSync !== 'function') return;
   const file = path.join(store.dir, INTAKE_FILE);

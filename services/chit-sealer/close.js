@@ -46,6 +46,7 @@ import {
 } from './kms-secp256k1.js';
 import { buildAnchorCalldata } from './calldata.js';
 import { readPendingLines, sealIntakeLines } from '../chit-store/intake.js';
+import { committedReceiptForLine, reconcileCommittedIntake } from '../chit-store/store.js';
 import { openJournal } from './journal.js';
 import { acceptCoreLine } from './lines.js';
 import { TIER_N, padLeaves } from './pad.js';
@@ -641,6 +642,8 @@ function mergeIntake(sealer, planned, explicit) {
     if (!accepted.ok) return fail('intake_unreadable');
     const id = canonicalPaymentId(accepted.payment);
     if (!id.ok) return fail('intake_unreadable');
+    const hex = Buffer.from(accepted.line).toString('hex');
+    if (committedReceiptForLine(sealer.store, hex)) continue;
     if (seen.has(id.hex)) continue;
     seen.add(id.hex);
     extra.push({
@@ -669,6 +672,15 @@ function rememberIntake(sealer, record, lines) {
   return sealIntakeLines(sealer.store.dir, pairs, sealer.store.io);
 }
 
+function healCommittedIntake(sealer) {
+  if (!sealer || !sealer.store || typeof sealer.store.dir !== 'string') return;
+  try {
+    reconcileCommittedIntake(sealer.store);
+  } catch {
+    // A full disk still must not rebook a committed line. mergeIntake skips those.
+  }
+}
+
 /**
  * Close one finished hour, or a catch-up through the last complete hour.
  * The clock is sealer.clock(), in unix seconds. input.now is not read.
@@ -679,6 +691,7 @@ function rememberIntake(sealer, record, lines) {
 export async function closeHour(sealer, input) {
   const body = input || {};
   sealer._input = body;
+  healCommittedIntake(sealer);
   const planned = planHours(sealer.state, readClock(sealer), body.hourStart);
   if (!planned.ok) return planned;
   const blocked = refuseRebuilt(sealer.state);
@@ -736,6 +749,7 @@ export async function recover(sealer, input) {
         return { ok: false, reason: 'store_not_committed', broadcast: false };
       }
     }
+    healCommittedIntake(sealer);
     const result = await broadcastRecord(sealer, record, input.send);
     sent.push(result);
     if (!result.ok) return { ok: false, reason: result.reason, committed: true, sent };
