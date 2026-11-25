@@ -1747,7 +1747,8 @@ export async function buildReceipt({
     });
     if (issued?.body?.v === 13) return issued.body;
     const err = new Error('v13 house receipt was not issued');
-    err.code = issued?.body?.code || 'verify_failed';
+    err.code = issued?.body?.state || issued?.body?.code || 'verify_failed';
+    err.state = issued?.body?.state || null;
     if (issued?.body?.pending_id) {
       err.pending_id = issued.body.pending_id;
       err.verify_url = issued.body.verify_url;
@@ -2475,6 +2476,8 @@ const V13_HOOK_CODES = new Set([
   'verify_failed',
   'settle_pending',
   'gateway_not_configured',
+  'pending_anchor',
+  'refund_owed',
 ]);
 
 /**
@@ -2483,20 +2486,53 @@ const V13_HOOK_CODES = new Set([
  */
 export function v13PaidHookFailure(err, payment) {
   const raw = err?.code;
-  const code = V13_HOOK_CODES.has(raw) ? raw : 'verify_failed';
   const pendingId = typeof err?.pending_id === 'string' && err.pending_id ? err.pending_id : null;
+  if (raw === 'refund_owed' || err?.state === 'refund_owed') {
+    const body = {
+      error: { code: 'refund_owed', type: 'server_error' },
+      code: 'refund_owed',
+      state: 'refund_owed',
+      status: 'refund_owed',
+      retryable: false,
+    };
+    if (payment?.ref) body.payment_ref = payment.ref;
+    if (pendingId) {
+      body.pending_id = pendingId;
+      body.verify_url = err.verify_url || null;
+    }
+    return { status: 409, body, retryAfter: null };
+  }
+  if (raw === 'pending_anchor' || err?.state === 'pending_anchor') {
+    const body = {
+      error: { code: 'pending_anchor', type: 'server_error' },
+      code: 'pending_anchor',
+      state: 'pending_anchor',
+      retryable: true,
+    };
+    if (payment?.ref) body.payment_ref = payment.ref;
+    if (pendingId) {
+      body.pending_id = pendingId;
+      body.verify_url = err.verify_url || null;
+    }
+    return { status: 202, body, retryAfter: 5 };
+  }
+  const code = V13_HOOK_CODES.has(raw) ? raw : 'verify_failed';
   const body = {
     error: { code, type: 'server_error' },
     code,
-    retryable: true,
+    retryable: pendingId ? false : true,
   };
   if (payment?.ref) body.payment_ref = payment.ref;
   if (pendingId) {
     body.pending_id = pendingId;
     body.verify_url = err.verify_url || null;
+    body.state = 'refund_owed';
+    body.status = 'refund_owed';
+    body.code = 'refund_owed';
+    body.error = { code: 'refund_owed', type: 'server_error' };
+    return { status: 409, body, retryAfter: null };
   }
-  const status = pendingId ? 202 : 503;
-  return { status, body };
+  return { status: 503, body, retryAfter: null };
 }
 
 export function registerOpenAIRoutes(app, {
@@ -2559,6 +2595,7 @@ export function registerOpenAIRoutes(app, {
       return await bookSpend(req, settleRecord, task, build);
     } catch (err) {
       const failure = v13PaidHookFailure(err, metering?.payment || null);
+      if (failure.retryAfter != null) res.set('Retry-After', String(failure.retryAfter));
       res.status(failure.status).json(failure.body);
       return null;
     }

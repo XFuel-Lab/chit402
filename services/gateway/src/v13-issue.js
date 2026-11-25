@@ -1,7 +1,7 @@
 /**
  * House receipt issuance. Flags off calls buildReceipt and returns those
- * bytes. Flags on admit a final EIP-3009 payment once, commit it in
- * chit-store, then anchor. The contract pin is the mainnet constant.
+ * bytes. Flags on admit a final EIP-3009 payment once and book the leaf.
+ * closeHour mints the epoch. The contract pin is the mainnet constant.
  * A request body cannot replace it.
  */
 
@@ -11,8 +11,14 @@ import path from 'node:path';
 import { LAYOUT, encodeLine } from '../../../packages/cs2-core/line/index.mjs';
 import { authorizationKey } from '../../../packages/cs2-core/line/index.mjs';
 import { SAMPLE } from '../../../packages/cs2-core/line/sample.mjs';
-import { anchor } from '../../chit-sealer/anchor-mainnet.js';
-import { MAINNET_ANCHOR, MAINNET_USDC, assertLivePin, mainnetPin, normHex } from '../../chit-sealer/mainnet-pin.js';
+import { MAINNET_USDC, assertLivePin, mainnetPin, normHex } from '../../chit-sealer/mainnet-pin.js';
+import {
+  bookLeaf,
+  openIntake,
+  pendingIdFor,
+  readOwnedPending,
+  writeRefund,
+} from '../../chit-store/intake.js';
 import { decisionHoldResult } from './x402-flags.js';
 import { buildReceipt } from './receipt.js';
 import {
@@ -23,7 +29,6 @@ import {
 } from './v13-flags.js';
 import { sendCheckpointKms } from './checkpoint-kms.js';
 import { boundCheckpointAttempt, checkpointKmsTimeoutMs } from '../../chit-sealer/kms-secp256k1.js';
-import { testSwitchesOn } from './test-switch.js';
 
 const tails = new Map();
 const pendings = new Map();
@@ -76,29 +81,44 @@ function notFound() {
   return { status: 404, body, bytes: Buffer.from(JSON.stringify(body)) };
 }
 
-function pendingPaid(keyHex, baseUrl, caller) {
-  const pendingId = createHash('sha256').update(String(keyHex)).digest('hex').slice(0, 32);
-  const root = baseUrl ? String(baseUrl).replace(/\/$/, '') : 'http://127.0.0.1';
-  const verifyUrl = `${root}/verify/${pendingId}`;
-  pendings.set(pendingId, {
-    key: keyHex,
-    open: true,
-    bookId: caller && typeof caller.bookId === 'string' ? caller.bookId : '',
-    tokenHash: caller && typeof caller.token === 'string' ? tokenHash(caller.token).toString('hex') : '',
-  });
+function verifyRoot(baseUrl) {
+  return baseUrl ? String(baseUrl).replace(/\/$/, '') : 'http://127.0.0.1';
+}
+
+function holdResponse(kind, keyHex, baseUrl) {
+  const pendingId = pendingIdFor(keyHex);
+  const verifyUrl = `${verifyRoot(baseUrl)}/verify/${pendingId}`;
+  const terminal = kind === 'refund_owed';
   const held = decisionHoldResult({
-    code: 'settle_pending',
-    holdClass: 'resolvable',
+    code: terminal ? 'settle_failed' : 'settle_pending',
+    holdClass: terminal ? 'terminal' : 'resolvable',
     pendingId,
     verifyUrl,
   });
   const body = {
-    error: held.error,
-    code: held.code,
-    pending_id: held.pending_id,
-    verify_url: held.verify_url,
+    error: kind,
+    code: kind,
+    state: kind,
+    pending_id: pendingId,
+    verify_url: verifyUrl,
   };
-  return { status: held.status, paid: true, body, bytes: Buffer.from(JSON.stringify(body)) };
+  if (terminal) body.status = 'refund_owed';
+  return {
+    status: held.status,
+    retryAfter: terminal ? null : (held.retryAfter ?? null),
+    paid: true,
+    body,
+    bytes: Buffer.from(JSON.stringify(body)),
+  };
+}
+
+function intakeDirOf(input) {
+  if (input?.store && typeof input.store.dir === 'string' && input.store.dir !== '') return input.store.dir;
+  return input?.dir || '';
+}
+
+function intakeIo(input) {
+  return input?.intakeIo || fs;
 }
 
 function tokenHash(token) {
@@ -150,12 +170,6 @@ function bindAuthorization(dir, keyHex, row) {
   return row;
 }
 
-function rowFor(dir, keyHex) {
-  const rows = readRows(dir);
-  if (!rows) return null;
-  return rows[keyHex] || null;
-}
-
 function rowById(dir, receiptId) {
   const rows = readRows(dir);
   if (!rows) return null;
@@ -190,10 +204,6 @@ async function withLock(key, fn) {
   }
 }
 
-function hexBytes(hex) {
-  return Uint8Array.from(Buffer.from(hex, 'hex'));
-}
-
 function coreLine(payment) {
   const encoded = encodeLine({
     payment,
@@ -209,18 +219,6 @@ function coreLine(payment) {
   // A core line has a zero sigma. This sealer does not attach a seller signature.
   line.fill(0, LAYOUT.sigma, LAYOUT.sigma + LAYOUT.sigmaBytes);
   return line;
-}
-
-function receiptDocument(line, blockHash, epoch) {
-  return {
-    v: 13,
-    schema: 'chit402.cs2.receipt.v1',
-    line: Buffer.from(line).toString('hex'),
-    index: 0,
-    epoch,
-    contract: MAINNET_ANCHOR,
-    blockHash,
-  };
 }
 
 function legacyResponse(task, receiptOpts) {
@@ -267,13 +265,40 @@ export async function issueHouseReceipt(input) {
   return issueV13(input);
 }
 
-async function issueV13(input) {
+function bindHold(dir, keyHex, caller, held) {
+  bindAuthorization(dir, keyHex, {
+    receiptId: held.body.pending_id,
+    bookId: caller.bookId,
+    tokenHash: tokenHash(caller.token).toString('hex'),
+    receipt: held.body,
+    bytes: held.bytes.toString('utf8'),
+    pendingId: held.body.pending_id,
+    state: held.body.state,
+  });
+}
+
+function refundOwed(input, keyHex) {
+  const held = holdResponse('refund_owed', keyHex, input.baseUrl);
   try {
-    await armIfSealer(input.env, input);
-  } catch (err) {
-    note(input, 'checkpoint_sign_unavailable');
-    return closed(503, 'gateway_not_configured');
+    const intake = openIntake(intakeDirOf(input), { io: intakeIo(input) });
+    writeRefund(intake, {
+      paymentRef: keyHex,
+      caller: input.caller,
+      hourStart: input.observation?.hourStart,
+    });
+  } catch {
+    note(input, 'refund_owed');
   }
+  try {
+    if (input.dir && input.caller) bindHold(input.dir, keyHex, input.caller, held);
+  } catch {
+    note(input, 'refund_owed');
+  }
+  note(input, 'refund_owed');
+  return held;
+}
+
+async function issueV13(input) {
   const pin = input.pin || mainnetPin();
   assertLivePin(pin);
   if (input.bodyPin || input.requestPin) {
@@ -302,98 +327,102 @@ async function issueV13(input) {
     }
     paid = true;
     const dir = input.dir;
-    if (!dir) return pendingPaid(key.hex, input.baseUrl, input.caller);
+    if (!dir) return refundOwed(input, key.hex);
     return await withLock(key.hex, async () => {
-      const existing = rowFor(dir, key.hex);
-      if (existing) {
-        if (existing.pendingId) pendings.delete(existing.pendingId);
-        return {
-          status: 200,
-          replay: true,
-          body: existing.receipt,
-          bytes: Buffer.from(existing.bytes, 'utf8'),
-        };
-      }
       const blockHash = String(observation.blockHash || '').replace(/^0x/, '').toLowerCase();
-      const line = coreLine({
-        ...payment,
-        blockHash,
-        blockNumber: observation.blockNumber,
-        blockTime: observation.blockTime,
-        txIndex: observation.txIndex,
-        localLogIndex: observation.localLogIndex,
-        txHash: String(observation.txHash || '').replace(/^0x/, '').toLowerCase(),
-        saltP: payment.saltP,
-      });
-      const epoch = 1 + Number(BigInt(`0x${key.hex.slice(-8)}`) % 100000n);
-      const document = receiptDocument(line, blockHash, epoch);
-      const bytes = JSON.stringify(document);
-      const record = {
-        epoch,
-        hourStart: observation.hourStart,
-        size: 1024,
-        root: createHash('sha256').update(line).digest('hex'),
-        stateRoot: createHash('sha256').update(bytes).digest('hex'),
-        chainId: String(pin.chainId),
-        contract: pin.address,
-        checkpoint: pin.checkpoint,
-        receipts: [{ id: key.hex.slice(0, 32), bookId: input.caller.bookId }],
-      };
-      let stored;
+      let line;
       try {
-        stored = input.store.commitEpoch(record);
+        line = coreLine({
+          ...payment,
+          blockHash,
+          blockNumber: observation.blockNumber,
+          blockTime: observation.blockTime,
+          txIndex: observation.txIndex,
+          localLogIndex: observation.localLogIndex,
+          txHash: String(observation.txHash || '').replace(/^0x/, '').toLowerCase(),
+          saltP: payment.saltP,
+        });
       } catch (err) {
-        note(input, 'store_not_committed');
-        return pendingPaid(key.hex, input.baseUrl, input.caller);
+        note(input, 'intake_not_booked');
+        void err;
+        return refundOwed(input, key.hex);
       }
-      if (!stored || stored.ok !== true) {
-        note(input, 'store_not_committed');
-        return pendingPaid(key.hex, input.baseUrl, input.caller);
+      let intake;
+      try {
+        intake = openIntake(intakeDirOf(input), { io: intakeIo(input) });
+      } catch (err) {
+        note(input, 'intake_not_booked');
+        void err;
+        return refundOwed(input, key.hex);
       }
-      const saved = {
-        receiptId: key.hex.slice(0, 32),
-        bookId: input.caller.bookId,
-        tokenHash: tokenHash(input.caller.token).toString('hex'),
-        receipt: document,
-        bytes,
-        pendingId: null,
-      };
-      bindAuthorization(dir, key.hex, saved);
-      const holdId = createHash('sha256').update(key.hex).digest('hex').slice(0, 32);
-      pendings.delete(holdId);
-      if (mainnetSealerEnabled(input.env) === true) {
-        try {
-          await anchor({
-            env: input.env,
-            pin,
-            store: input.store,
-            record,
-            calldata: `${record.root}:${record.epoch}`,
-            client: input.client,
-            send: input.send,
-            digest: hexBytes(record.root),
-            addressOf: testAddressOf(input),
-          });
-        } catch (err) {
-          note(input, err?.code || 'anchor_pending');
-          return {
-            status: 200,
-            body: document,
-            bytes: Buffer.from(bytes),
-          };
-        }
+      let booked;
+      try {
+        booked = bookLeaf(intake, {
+          paymentRef: key.hex,
+          line,
+          caller: input.caller,
+          hourStart: observation.hourStart,
+        });
+      } catch (err) {
+        note(input, 'intake_not_booked');
+        void err;
+        return refundOwed(input, key.hex);
       }
-      return { status: 200, body: document, bytes: Buffer.from(bytes) };
+      if (!booked || booked.ok !== true) {
+        note(input, booked && booked.reason === 'not_owner' ? 'not_owner' : 'intake_not_booked');
+        if (booked && booked.reason === 'not_owner') return notFound();
+        return refundOwed(input, key.hex);
+      }
+      const kind = booked.row && booked.row.state === 'refund_owed' ? 'refund_owed' : 'pending_anchor';
+      const held = holdResponse(kind, key.hex, input.baseUrl);
+      try {
+        bindHold(dir, key.hex, input.caller, held);
+      } catch (err) {
+        note(input, 'intake_not_booked');
+        void err;
+      }
+      return { ...held, replay: booked.replay === true };
     });
   } catch (err) {
-    note(input, paid ? 'v13_pending' : 'verify_failed');
+    note(input, paid ? 'refund_owed' : 'verify_failed');
+    void err;
     if (!paid) return closed(400, 'verify_failed');
     const key = houseAuthorizationKey(input.payment || {});
-    return pendingPaid(key.ok ? key.hex : 'unkeyed', input.baseUrl, input.caller);
+    if (!key.ok) return refundOwed(input, '00'.repeat(80));
+    return refundOwed(input, key.hex);
   }
 }
 
+function holdFromIntake(row) {
+  if (!row) return null;
+  if (row.state === 'refund_owed') {
+    const body = {
+      error: 'refund_owed',
+      code: 'refund_owed',
+      state: 'refund_owed',
+      status: 'refund_owed',
+      pending_id: row.pendingId,
+    };
+    return { status: 409, body, bytes: Buffer.from(JSON.stringify(body)) };
+  }
+  const body = {
+    error: 'pending_anchor',
+    code: 'pending_anchor',
+    state: 'pending_anchor',
+    pending_id: row.pendingId,
+  };
+  return { status: 202, body, bytes: Buffer.from(JSON.stringify(body)) };
+}
+
 export function readHouse(input) {
+  const dirs = [];
+  if (typeof input?.storeDir === 'string' && input.storeDir) dirs.push(input.storeDir);
+  if (input?.store && typeof input.store.dir === 'string') dirs.push(input.store.dir);
+  if (typeof input?.dir === 'string' && input.dir) dirs.push(input.dir);
+  for (let i = 0; i < dirs.length; i += 1) {
+    const owned = readOwnedPending(dirs[i], input.receiptId, input.caller);
+    if (owned) return holdFromIntake(owned);
+  }
   const pending = pendings.get(input.receiptId);
   if (pending && pending.open === true) {
     if (!input.caller || pending.bookId !== input.caller.bookId) return notFound();
@@ -402,6 +431,10 @@ export function readHouse(input) {
   }
   const row = rowById(input.dir, input.receiptId);
   if (!callerMatches(row, input.caller)) return notFound();
+  if (row.receipt?.state === 'pending_anchor' || row.receipt?.state === 'refund_owed') {
+    const status = row.receipt.state === 'refund_owed' ? 409 : 202;
+    return { status, body: row.receipt, bytes: Buffer.from(row.bytes, 'utf8') };
+  }
   return { status: 200, body: row.receipt, bytes: Buffer.from(row.bytes, 'utf8') };
 }
 
@@ -419,12 +452,6 @@ function issuanceRuntimeReady(input) {
   if (!input.caller || typeof input.caller.bookId !== 'string' || input.caller.bookId === '') return false;
   if (typeof input.caller.token !== 'string' || input.caller.token === '') return false;
   return true;
-}
-
-function testAddressOf(input) {
-  if (input?.testInjection !== true) return undefined;
-  if (!testSwitchesOn(process.env)) return undefined;
-  return typeof input.addressOf === 'function' ? input.addressOf : undefined;
 }
 
 export function clearPending(id) {
@@ -448,6 +475,7 @@ export async function handleHouse(request, ctx) {
   if (request.method === 'GET') {
     return readHouse({
       dir: ctx.dir,
+      store: ctx.store,
       receiptId: request.receiptId,
       caller: request.caller,
     });
