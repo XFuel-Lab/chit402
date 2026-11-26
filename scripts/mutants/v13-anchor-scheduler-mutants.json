@@ -4,6 +4,8 @@
     "argv": [
       "node",
       "--test",
+      "--test-force-exit",
+      "--test-concurrency=1",
       "services/chit-sealer/test/rpc-base.test.mjs",
       "services/gateway/test/v13-anchor-scheduler.test.mjs"
     ]

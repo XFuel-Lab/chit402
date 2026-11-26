@@ -23,7 +23,7 @@ If one of those hashes is on either RPC, the nonce is ours. Delete only `anchor-
 
 If none of those hashes is on either RPC, and both RPCs show the checkpoint account nonce above that commit, retire it:
 
-3. Leave `anchor-hold.json` in place. Write `anchor-nonce-clear.json` next to it, mode 600, owned by the gateway user, after the hold file. The JSON is exactly these two fields and nothing else:
+3. Leave `anchor-hold.json` in place. Write `anchor-nonce-clear.json` next to it, mode exactly 0600 (0400 and 0644 are ignored), owned by the gateway user, after the hold file. The JSON is exactly these two fields and nothing else. A repeated key or a nonce with a leading zero (`00`) is ignored:
 
 ```json
 { "v": 1, "nonce": "0" }

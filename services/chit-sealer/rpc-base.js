@@ -72,7 +72,7 @@ export function dirModeOk(mode) {
 }
 
 export function fileModeOk(mode) {
-  return (permissionBits(mode) & ~0o600) === 0;
+  return permissionBits(mode) === 0o600;
 }
 
 /**

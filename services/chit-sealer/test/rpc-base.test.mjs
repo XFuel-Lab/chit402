@@ -191,6 +191,13 @@ describe('v13 base rpc', { concurrency: false }, () => {
       txFromOf: () => `0x${'11'.repeat(20)}`,
     });
     assert.equal(other.length, 0);
+    const wrongAddress = { ...anchoredLog(4, 1), address: MAINNET_CHECKPOINT };
+    const foreign = selectFinalizedAnchored({
+      logs: [wrongAddress],
+      finalizedNumber: '0x5',
+      txFromOf: from,
+    });
+    assert.equal(foreign.length, 0);
   });
 
   test('a local RPC with the wrong chain is refused before a raw send', async () => {

@@ -208,38 +208,67 @@ function clearFile(dir) {
  * owned by this process, and newer than the current hold file.
  * @param {string} dir
  */
+function duplicateJsonKey(text) {
+  const seen = new Set();
+  const re = /"((?:\\.|[^"\\])*)"\s*:/g;
+  let match = re.exec(text);
+  while (match) {
+    if (seen.has(match[1])) return true;
+    seen.add(match[1]);
+    match = re.exec(text);
+  }
+  return false;
+}
+
 function readNonceClear(dir) {
   const file = clearFile(dir);
-  let st;
+  let fd;
   try {
-    st = fs.lstatSync(file);
+    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   } catch {
     return null;
   }
-  if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) return null;
-  if (typeof st.isFile !== 'function' || st.isFile() !== true) return null;
-  if (typeof st.uid === 'number' && typeof process.getuid === 'function' && st.uid !== process.getuid()) return null;
-  if (!fileModeOk(st.mode)) return null;
-  let holdStat;
   try {
-    holdStat = fs.lstatSync(holdFile(dir));
-  } catch {
-    return null;
+    let st;
+    try {
+      st = fs.fstatSync(fd);
+    } catch {
+      return null;
+    }
+    if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) return null;
+    if (typeof st.isFile !== 'function' || st.isFile() !== true) return null;
+    if (typeof st.uid === 'number' && typeof process.getuid === 'function' && st.uid !== process.getuid()) return null;
+    if (!fileModeOk(st.mode)) return null;
+    let holdStat;
+    try {
+      holdStat = fs.lstatSync(holdFile(dir));
+    } catch {
+      return null;
+    }
+    if (!(st.mtimeMs > holdStat.mtimeMs)) return null;
+    let text;
+    try {
+      text = fs.readFileSync(fd, 'utf8');
+    } catch {
+      return null;
+    }
+    if (duplicateJsonKey(text)) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const keys = Object.keys(parsed);
+    if (keys.length !== 2 || !Object.prototype.hasOwnProperty.call(parsed, 'v') || !Object.prototype.hasOwnProperty.call(parsed, 'nonce')) {
+      return null;
+    }
+    if (parsed.v !== 1 || typeof parsed.nonce !== 'string' || !/^(0|[1-9][0-9]*)$/.test(parsed.nonce)) return null;
+    return { nonce: parsed.nonce, file };
+  } finally {
+    fs.closeSync(fd);
   }
-  if (!(st.mtimeMs > holdStat.mtimeMs)) return null;
-  let parsed;
-  try {
-    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const keys = Object.keys(parsed);
-  if (keys.length !== 2 || !Object.prototype.hasOwnProperty.call(parsed, 'v') || !Object.prototype.hasOwnProperty.call(parsed, 'nonce')) {
-    return null;
-  }
-  if (parsed.v !== 1 || typeof parsed.nonce !== 'string' || !/^\d+$/.test(parsed.nonce)) return null;
-  return { nonce: parsed.nonce, file };
 }
 
 /**
