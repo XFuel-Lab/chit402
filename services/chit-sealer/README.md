@@ -14,29 +14,25 @@
 
 ## Clear a nonce conflict
 
-Deleting `anchor-hold.json` while the node still answers `nonce too low` for a hash this sealer did not sign writes the hold again on the next tick. Use one of the two steps below. Stop the gateway first.
+Deleting `anchor-hold.json` while the node still answers `nonce too low` for a hash this sealer did not sign writes the hold again. Stop the gateway before changing files in `CHIT_V13_SEALER_DIR`.
 
-1. Read `reason`. It must be `anchor_nonce_conflict`.
-2. Read the unbroadcast commit in `sealer-state.json` and every `hash` or `tx` for that `nonce` in `anchor-intents.jsonl`.
-3. On Base, call `eth_getTransactionByHash` for each of those hashes.
+1. Read `reason`. It must be `anchor_nonce_conflict`. A file left over from an earlier hour does nothing, and it must not be used to remove a fresh hold.
+2. Read the unbroadcast commit's `nonce` in `sealer-state.json`, and every `hash` or `tx` for that nonce in `anchor-intents.jsonl` and `anchor-bumps.json`.
 
-If one of those hashes is now present, the nonce is ours:
+If one of those hashes is on either RPC, the nonce is ours. Delete only `anchor-hold.json`. Do not write a clear file. The next tick marks that hash broadcast.
 
-4. Delete only `anchor-hold.json`. Do not write `anchor-nonce-clear.json`.
-5. Start the gateway. The next tick marks that hash broadcast and does not write the hold.
+If none of those hashes is on either RPC, and both RPCs show the checkpoint account nonce above that commit, retire it:
 
-If none of those hashes is present, retiring the nonce is the supported clear. A plain delete is not:
-
-4. Write `anchor-nonce-clear.json` in `CHIT_V13_SEALER_DIR`, mode 600, with the commit's nonce as a decimal string and nothing else:
+3. Leave `anchor-hold.json` in place. Write `anchor-nonce-clear.json` next to it, mode 600, owned by the gateway user, after the hold file. The JSON is exactly these two fields and nothing else:
 
 ```json
 { "v": 1, "nonce": "0" }
 ```
 
-5. Delete `anchor-hold.json`.
-6. Start the gateway. The scheduler does not send that nonce and does not write `anchor_nonce_conflict` again. It does not seal a later hour on the retired nonce.
+4. Start the gateway. The next tick checks both RPCs. When the file is mode 600, newer than the hold, and the chain agrees the nonce was taken by someone else, the tick writes `anchor-hold.json` as `{ "v": 1, "reason": "anchor_nonce_retired" }` and deletes the clear file. That file is used once. A mode other than 600, an extra JSON key, a nonce that is not the journal nonce, or a file written before the hold is ignored.
+5. Every later tick returns `ok: false` with `anchor_nonce_retired`. `/health` reports that code. The scheduler does not send.
 
-A clear file whose `nonce` is not the journal nonce does not suppress the hold.
+A retired hold does not replace `anchor_reverted`, and it does not hide a transaction this sealer signed. Anchoring does not resume until a builder updates the sealer journal so the next commit uses a nonce the chain will accept, and then removes `anchor-hold.json`. Deleting the hold file by itself is not that step: the next tick writes `anchor_nonce_conflict` again.
 
 ## One RPC
 

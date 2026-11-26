@@ -73,10 +73,11 @@ const REASONS = new Set([
   'anchor_simulation_failed',
   'anchor_quorum',
   'anchor_nonce_conflict',
+  'anchor_nonce_retired',
   'anchor_stalled',
 ]);
 
-const HOLD_REASONS = new Set(['anchor_reverted', 'anchor_nonce_conflict']);
+const HOLD_REASONS = new Set(['anchor_reverted', 'anchor_nonce_conflict', 'anchor_nonce_retired']);
 
 let active = null;
 let anchorStall = null;
@@ -198,21 +199,85 @@ function holdReason(dir) {
 
 const NONCE_CLEAR_FILE = 'anchor-nonce-clear.json';
 
-function retiredNonce(dir) {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(dir, NONCE_CLEAR_FILE), 'utf8'));
-    if (!parsed || parsed.v !== 1 || typeof parsed.nonce !== 'string') return '';
-    if (!/^\d+$/.test(parsed.nonce)) return '';
-    return parsed.nonce;
-  } catch {
-    return '';
-  }
+function clearFile(dir) {
+  return path.join(dir, NONCE_CLEAR_FILE);
 }
 
-function nonceIsRetired(session) {
-  const nonce = retiredNonce(session.dir);
+/**
+ * A clear file is ignored unless it is strictly {v:1, nonce}, mode 600,
+ * owned by this process, and newer than the current hold file.
+ * @param {string} dir
+ */
+function readNonceClear(dir) {
+  const file = clearFile(dir);
+  let st;
+  try {
+    st = fs.lstatSync(file);
+  } catch {
+    return null;
+  }
+  if (typeof st.isSymbolicLink === 'function' && st.isSymbolicLink()) return null;
+  if (typeof st.isFile !== 'function' || st.isFile() !== true) return null;
+  if (typeof st.uid === 'number' && typeof process.getuid === 'function' && st.uid !== process.getuid()) return null;
+  if (!fileModeOk(st.mode)) return null;
+  let holdStat;
+  try {
+    holdStat = fs.lstatSync(holdFile(dir));
+  } catch {
+    return null;
+  }
+  if (!(st.mtimeMs > holdStat.mtimeMs)) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const keys = Object.keys(parsed);
+  if (keys.length !== 2 || !Object.prototype.hasOwnProperty.call(parsed, 'v') || !Object.prototype.hasOwnProperty.call(parsed, 'nonce')) {
+    return null;
+  }
+  if (parsed.v !== 1 || typeof parsed.nonce !== 'string' || !/^\d+$/.test(parsed.nonce)) return null;
+  return { nonce: parsed.nonce, file };
+}
+
+/**
+ * Consume a clear file into an anchor_nonce_retired hold. A conflict hold
+ * that fails these checks is left in place. A reverted hold is never replaced.
+ * @param {object} session
+ */
+async function acceptNonceClear(session) {
+  if (holdReason(session.dir) !== 'anchor_nonce_conflict') return false;
+  const clear = readNonceClear(session.dir);
+  if (!clear) return false;
   const current = currentCommit(session);
-  return nonce !== '' && current && String(current.nonce) === nonce;
+  if (!current) return false;
+  let committed;
+  try {
+    committed = BigInt(current.nonce);
+  } catch {
+    return false;
+  }
+  if (BigInt(clear.nonce) !== committed) return false;
+  let chainNonce;
+  try {
+    chainNonce = await session.broadcaster.accountNonce();
+  } catch {
+    return false;
+  }
+  if (typeof chainNonce !== 'bigint' || chainNonce <= committed) return false;
+  const hashes = txHashesFor(session, current);
+  let absent = false;
+  try {
+    absent = hashes.length > 0 && await session.broadcaster.hashesAbsent(hashes);
+  } catch {
+    return false;
+  }
+  if (!absent) return false;
+  writeHold(session.dir, 'anchor_nonce_retired');
+  try { fs.unlinkSync(clear.file); } catch { /* the retired hold is already the record */ }
+  return true;
 }
 
 function writeHold(dir, reason) {
@@ -386,7 +451,7 @@ async function openSession(opts) {
       return await broadcaster.sendRaw(wire, sendOpts && sendOpts.signal);
     } catch (err) {
       if (err && err.code === 'anchor_nonce_conflict') {
-        const found = await lookupCommitted(broadcaster, sealer, sendOpts && sendOpts.signal);
+        const found = await lookupCommitted(broadcaster, sealer, sendOpts && sendOpts.signal, boot.dir);
         if (found) return found;
         throw err;
       }
@@ -494,13 +559,24 @@ function txHashesFor(session, commit) {
   return fromLog;
 }
 
-async function lookupCommitted(broadcaster, sealer, signal) {
+async function lookupCommitted(broadcaster, sealer, signal, dir) {
   const commits = sealer.state.commits || [];
   const current = commits.length > 0 ? commits[commits.length - 1] : null;
   if (!current) return '';
   let rows = [];
   try { rows = sealer.intentLog.read(); } catch { rows = []; }
   const hashes = hashList(rows, current.nonce);
+  const saved = dir ? readBumps(dir) : {};
+  const extra = saved[String(current.epoch)] && Array.isArray(saved[String(current.epoch)].hashes)
+    ? saved[String(current.epoch)].hashes
+    : [];
+  const seen = new Set(hashes);
+  for (let i = 0; i < extra.length; i += 1) {
+    if (typeof extra[i] === 'string' && /^0x[0-9a-fA-F]{64}$/.test(extra[i]) && !seen.has(extra[i].toLowerCase())) {
+      seen.add(extra[i].toLowerCase());
+      hashes.push(extra[i].toLowerCase());
+    }
+  }
   for (let i = 0; i < hashes.length; i += 1) {
     const found = await broadcaster.findTx(hashes[i], signal);
     if (found) return found;
@@ -680,12 +756,9 @@ export async function runAnchorTick(session) {
     return finish(session, end(false, err && err.code));
   }
   try {
-    if (nonceIsRetired(session)) {
-      if (holdReason(session.dir) === 'anchor_nonce_conflict') {
-        try { fs.unlinkSync(holdFile(session.dir)); } catch { /* the operator already removed it */ }
-      }
-      return finish(session, end(true, null));
-    }
+    const heldNow = holdReason(session.dir);
+    if (heldNow === 'anchor_nonce_retired') return finish(session, end(false, 'anchor_nonce_retired'));
+    if (await acceptNonceClear(session)) return finish(session, end(false, 'anchor_nonce_retired'));
     const released = await releaseFinalized(session);
     if (released && released.held === true) return finish(session, end(false, released.reason || 'anchor_reverted'));
     if (released && released.reason) return finish(session, end(false, released.reason));

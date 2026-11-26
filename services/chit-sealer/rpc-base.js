@@ -450,7 +450,8 @@ export function createBaseBroadcaster(opts) {
     }
     // A JSON-RPC error, a timeout, or a value that is not a chain id is
     // unreachable. Only a parsed chain id other than 8453 is a mismatch.
-    if (hexQuantity(chainId) == null) return { url, transport: true };
+    // Decimal "8453" and "zz" are junk, not a chain id. Only 0x quantities are well-formed.
+    if (typeof chainId !== 'string' || !/^0x[0-9a-fA-F]+$/.test(chainId.trim())) return { url, transport: true };
     if (!observedChainOk(chainId)) return { url, mismatch: 'anchor_chain_mismatch' };
     return { url, ok: true };
   }
@@ -514,6 +515,44 @@ export function createBaseBroadcaster(opts) {
     },
     async prepare(signal) {
       return prepare(signal);
+    },
+    async accountNonce(signal) {
+      const ready = await prepare(signal);
+      if (ready.length < 2) throw coded('anchor_quorum');
+      const values = [];
+      for (let i = 0; i < ready.length; i += 1) {
+        const raw = await rpcCall(
+          fetchImpl,
+          ready[i],
+          'eth_getTransactionCount',
+          [MAINNET_CHECKPOINT, 'latest'],
+          signal,
+          timeoutMs,
+        );
+        if (typeof raw !== 'string' || !/^0x[0-9a-fA-F]+$/.test(raw.trim())) throw coded('anchor_rpc_unavailable');
+        const parsed = hexQuantity(raw);
+        if (parsed == null) throw coded('anchor_rpc_unavailable');
+        values.push(parsed);
+      }
+      if (values[0] !== values[1]) throw coded('anchor_quorum');
+      return values[0];
+    },
+    async hashesAbsent(hashes, signal) {
+      const ready = await prepare(signal);
+      if (ready.length < 2) return false;
+      const list = Array.isArray(hashes) ? hashes : [];
+      for (let i = 0; i < list.length; i += 1) {
+        for (let j = 0; j < ready.length; j += 1) {
+          let seen = '';
+          try {
+            seen = await findTx(fetchImpl, ready[j], list[i], signal, timeoutMs);
+          } catch {
+            return false;
+          }
+          if (seen) return false;
+        }
+      }
+      return true;
     },
     async quote(signal) {
       return firstReady(signal, async (url) => {

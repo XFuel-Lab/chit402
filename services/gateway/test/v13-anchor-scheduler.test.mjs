@@ -3,7 +3,7 @@
  */
 import assert from 'node:assert/strict';
 import { createPublicKey } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -171,6 +171,11 @@ function listen(handler) {
         res.end(out.body || '');
         return;
       }
+      if (out && out.missingResult) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id ?? 1 }));
+        return;
+      }
       if (out && out.rpcError) {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({
@@ -188,19 +193,41 @@ function listen(handler) {
     server.listen(0, '127.0.0.1', () => {
       resolve({
         port: server.address().port,
-        close: () => new Promise((done) => server.close(done)),
+        close: () => new Promise((done) => {
+          if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+          server.close(done);
+        }),
       });
     });
   });
 }
 
 function handlerFor(state, role) {
-  return (method, params) => {
+  return async (method, params) => {
     state.methods.push(method);
+    if (role.hang && method === (role.hangMethod || 'eth_chainId')) {
+      await new Promise((resolve) => setTimeout(resolve, role.hangMs || 400));
+      return role.chainId == null ? state.chainId : role.chainId;
+    }
+    if (role.httpStatus && (!role.httpMethod || method === role.httpMethod)) {
+      return { httpStatus: role.httpStatus, body: role.rawBody == null ? '' : role.rawBody };
+    }
+    if (role.nonJson && method === (role.nonJsonMethod || 'eth_chainId')) {
+      return { httpStatus: 200, body: 'not-json' };
+    }
+    if (role.missingResult && method === (role.missingMethod || 'eth_chainId')) return { missingResult: true };
     if (role.rateLimit) return { rpcError: 'request limit reached' };
+    if (role.chainRpc && method === 'eth_chainId') return { rpcError: role.chainRpc };
     if (role.codeError && method === 'eth_getCode') return { rpcError: 'request limit reached' };
-    if (method === 'eth_chainId') return role.chainId == null ? state.chainId : role.chainId;
-    if (method === 'eth_getCode') return role.code == null ? state.code : role.code;
+    if (role.domainError && method === 'eth_call') return { rpcError: 'request limit reached' };
+    if (method === 'eth_chainId') {
+      if (role.chainNull) return null;
+      return role.chainId == null ? state.chainId : role.chainId;
+    }
+    if (method === 'eth_getCode') {
+      if (role.codeNull) return null;
+      return role.code == null ? state.code : role.code;
+    }
     if (method === 'eth_call') {
       const data = String((params[0] && params[0].data) || '');
       if (data === LATEST_CALL) return role.latest == null ? state.latest : role.latest;
@@ -209,7 +236,10 @@ function handlerFor(state, role) {
         if (state.revertSim) return { rpcError: 'execution reverted' };
         return '0x';
       }
-      if (data === DOMAIN_CALL) return role.domain == null ? state.domain : role.domain;
+      if (data === DOMAIN_CALL) {
+        if (role.domainNull) return null;
+        return role.domain == null ? state.domain : role.domain;
+      }
       return role.domain == null ? state.domain : role.domain;
     }
     if (method === 'eth_getBlockByNumber') {
@@ -232,6 +262,10 @@ function handlerFor(state, role) {
     if (method === 'eth_getLogs') {
       state.logQueries.push(params[0] || null);
       return state.logs;
+    }
+    if (method === 'eth_getTransactionCount') {
+      if (role.accountNonce != null) return role.accountNonce;
+      return state.accountNonce == null ? '0x0' : state.accountNonce;
     }
     if (method === 'eth_getTransactionByHash') {
       if (role.rejectLookups || state.rejectLookups) return null;
@@ -1969,7 +2003,8 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
     }
   });
 
-  test('deleting a nonce-conflict hold rewrites it until the clear file names the nonce', async () => {
+  test('K2 a retired nonce is a loud hold', async () => {
+    resetSealerGuardForTest();
     const world = freshWorld();
     bookPending(world, 1);
     const signer = await injectedSigner(CAP);
@@ -1985,31 +2020,172 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
         deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
       });
       assert.equal((await handle.tick()).reason, 'anchor_nonce_conflict');
-      const journal = JSON.parse(readFileSync(join(world.sealerDir, 'sealer-state.json'), 'utf8'));
-      const nonce = String(journal.commits[0].nonce);
-      await handle.stop();
-      rmSync(join(world.sealerDir, 'anchor-hold.json'));
-      const rewritten = await startV13AnchorScheduler({
+      const nonce = String(JSON.parse(readFileSync(join(world.sealerDir, 'sealer-state.json'), 'utf8')).commits[0].nonce);
+      writeClear(world.sealerDir, { v: 1, nonce: '999' });
+      assert.equal((await handle.tick()).reason, 'anchor_nonce_conflict');
+      state.accountNonce = '0x1';
+      writeClear(world.sealerDir, { v: 1, nonce });
+      const retired = await handle.tick();
+      assert.equal(retired.ok, false);
+      assert.equal(retired.reason, 'anchor_nonce_retired');
+      assert.equal(anchorStallStatus(), 'anchor_nonce_retired');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_nonce_retired');
+      assert.equal(existsSync(join(world.sealerDir, 'anchor-nonce-clear.json')), false);
+      assert.equal(JSON.parse(readFileSync(join(world.sealerDir, 'anchor-hold.json'), 'utf8')).reason, 'anchor_nonce_retired');
+      assert.equal(state.sends.length, 0);
+      const again = await handle.tick();
+      assert.equal(again.ok, false);
+      assert.equal(again.reason, 'anchor_nonce_retired');
+      assert.equal(state.sends.length, 0);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('K3 a pre-planted clear file does not delete a fresh conflict hold', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.nonceLow = true;
+    state.rejectLookups = true;
+    state.accountNonce = '0x5';
+    const pair = await rpcPair(state);
+    try {
+      writeClear(world.sealerDir, { v: 1, nonce: '0' }, 0o600, Date.now() - 10000);
+      const handle = await startV13AnchorScheduler({
         env: schedulerEnv(world.sealerDir),
         clock: () => world.clock.now,
         runtime: { store: world.store, client: signer.client },
         deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
       });
-      assert.equal((await rewritten.tick()).reason, 'anchor_nonce_conflict');
+      assert.equal((await handle.tick()).reason, 'anchor_nonce_conflict');
+      const again = await handle.tick();
+      assert.equal(again.ok, false);
+      assert.equal(again.reason, 'anchor_nonce_conflict');
       assert.equal(existsSync(join(world.sealerDir, 'anchor-hold.json')), true);
-      writeFileSync(join(world.sealerDir, 'anchor-nonce-clear.json'), `${JSON.stringify({ v: 1, nonce: '999' })}\n`, { mode: 0o600 });
-      rmSync(join(world.sealerDir, 'anchor-hold.json'));
-      assert.equal((await rewritten.tick()).reason, 'anchor_nonce_conflict');
-      writeFileSync(join(world.sealerDir, 'anchor-nonce-clear.json'), `${JSON.stringify({ v: 1, nonce })}\n`, { mode: 0o600 });
-      rmSync(join(world.sealerDir, 'anchor-hold.json'));
-      const cleared = await rewritten.tick();
-      assert.notEqual(cleared.reason, 'anchor_nonce_conflict');
-      assert.equal(existsSync(join(world.sealerDir, 'anchor-hold.json')), false);
-      assert.equal(journal.commits[0].broadcast, false);
-      assert.equal(state.sends.length, 0);
+      assert.equal(JSON.parse(readFileSync(join(world.sealerDir, 'anchor-hold.json'), 'utf8')).reason, 'anchor_nonce_conflict');
+      assert.equal(existsSync(join(world.sealerDir, 'anchor-nonce-clear.json')), true);
     } finally {
       await pair.close();
       rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('K4 a clear file does not hide a reverted anchor', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const epoch = world.store.epochs.get('1');
+      state.receipt = { status: '0x0', blockNumber: '0x4', logs: [] };
+      writeClear(world.sealerDir, { v: 1, nonce: '0' }, 0o600, Date.now() - 10000);
+      const reverted = await handle.tick();
+      assert.equal(reverted.ok, false);
+      assert.equal(reverted.reason, 'anchor_reverted');
+      state.accountNonce = '0x5';
+      state.rejectLookups = true;
+      state.receipt = null;
+      writeClear(world.sealerDir, { v: 1, nonce: '0' });
+      const still = await handle.tick();
+      assert.equal(still.reason, 'anchor_reverted');
+      assert.equal(JSON.parse(readFileSync(join(world.sealerDir, 'anchor-hold.json'), 'utf8')).reason, 'anchor_reverted');
+      assert.equal(epoch.released, false);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('K5 a clear file does not freeze a finalized anchor', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    try {
+      writeClear(world.sealerDir, { v: 1, nonce: '0' });
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const epoch = world.store.epochs.get('1');
+      state.logs = [anchoredLog(epoch, 4)];
+      state.receipt = { status: '0x1', blockNumber: '0x4', logs: state.logs };
+      state.finalized = '0x5';
+      state.accountNonce = '0x5';
+      const released = await handle.tick();
+      assert.notEqual(released.reason, 'anchor_nonce_retired');
+      assert.equal(epoch.released, true);
+      assert.equal(existsSync(join(world.sealerDir, 'anchor-hold.json')), false);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('K6 a mode 0644 clear file is ignored', async () => {
+    const opened = await conflictHandle();
+    try {
+      opened.state.accountNonce = '0x2';
+      writeClear(opened.world.sealerDir, { v: 1, nonce: '0' }, 0o644);
+      const tick = await opened.handle.tick();
+      assert.equal(tick.reason, 'anchor_nonce_conflict');
+      assert.equal(existsSync(join(opened.world.sealerDir, 'anchor-nonce-clear.json')), true);
+    } finally {
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('K7 extra clear-file keys and a non-decimal nonce are ignored', async () => {
+    const opened = await conflictHandle();
+    try {
+      opened.state.accountNonce = '0x2';
+      writeClear(opened.world.sealerDir, { v: 1, nonce: '0', note: 'extra' });
+      assert.equal((await opened.handle.tick()).reason, 'anchor_nonce_conflict');
+      writeClear(opened.world.sealerDir, { v: 2, nonce: '0' });
+      assert.equal((await opened.handle.tick()).reason, 'anchor_nonce_conflict');
+      writeClear(opened.world.sealerDir, { v: 1, nonce: '0x0' });
+      assert.equal((await opened.handle.tick()).reason, 'anchor_nonce_conflict');
+      assert.equal(JSON.parse(readFileSync(join(opened.world.sealerDir, 'anchor-hold.json'), 'utf8')).reason, 'anchor_nonce_conflict');
+    } finally {
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('K8 the clear file is consumed once and does not apply without a conflict hold', async () => {
+    const opened = await conflictHandle();
+    try {
+      opened.state.accountNonce = '0x2';
+      writeClear(opened.world.sealerDir, { v: 1, nonce: '0' });
+      assert.equal((await opened.handle.tick()).reason, 'anchor_nonce_retired');
+      assert.equal(existsSync(join(opened.world.sealerDir, 'anchor-nonce-clear.json')), false);
+      writeClear(opened.world.sealerDir, { v: 1, nonce: '0' });
+      assert.equal((await opened.handle.tick()).reason, 'anchor_nonce_retired');
+      assert.equal(existsSync(join(opened.world.sealerDir, 'anchor-nonce-clear.json')), true);
+      rmSync(join(opened.world.sealerDir, 'anchor-hold.json'));
+      const fresh = await opened.handle.tick();
+      assert.notEqual(fresh.reason, 'anchor_nonce_retired');
+      assert.equal(fresh.reason, 'anchor_nonce_conflict');
+    } finally {
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
     }
   });
 
@@ -2100,3 +2276,98 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
 function readIntent(dir) {
   return `[${readFileSync(join(dir, 'anchor-intents.jsonl'), 'utf8').trim().split('\n').join(',')}]`;
 }
+
+function writeClear(dir, body, mode = 0o600, when = Date.now() + 5000) {
+  const file = join(dir, 'anchor-nonce-clear.json');
+  writeFileSync(file, `${JSON.stringify(body)}\n`, { mode });
+  chmodSync(file, mode);
+  const stamp = new Date(when);
+  utimesSync(file, stamp, stamp);
+  return file;
+}
+
+async function conflictHandle() {
+  resetSealerGuardForTest();
+  const world = freshWorld();
+  bookPending(world, 1);
+  const signer = await injectedSigner(CAP);
+  const state = chainState();
+  state.nonceLow = true;
+  state.rejectLookups = true;
+  const pair = await rpcPair(state);
+  const handle = await startV13AnchorScheduler({
+    env: schedulerEnv(world.sealerDir),
+    clock: () => world.clock.now,
+    runtime: { store: world.store, client: signer.client },
+    deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+  });
+  assert.equal((await handle.tick()).reason, 'anchor_nonce_conflict');
+  return { world, signer, state, pair, handle };
+}
+
+test('boot edge probes refuse only a well-formed mismatch', async () => {
+  const world = freshWorld();
+  const signer = await injectedSigner(CAP);
+  const before = signCount(signer);
+  const cases = [
+    { name: 'J3', primary: { httpStatus: 429, httpMethod: 'eth_chainId' }, boot: false },
+    { name: 'J4', primary: { chainRpc: 'request limit reached' }, boot: false },
+    { name: 'J5a', primary: { chainId: 'zz' }, boot: false },
+    { name: 'J5b', primary: { missingResult: true }, boot: false },
+    { name: 'J5c', primary: { chainNull: true }, boot: false },
+    { name: 'J6', primary: { codeNull: true }, boot: false },
+    { name: 'J6b', primary: { codeError: true }, boot: false },
+    { name: 'J7', primary: { hang: true, hangMs: 400 }, boot: false, timeoutMs: 150 },
+    { name: 'J8', primary: { nonJson: true }, boot: false },
+    { name: 'J9', primary: { httpStatus: 429 }, secondary: { httpStatus: 429 }, boot: false },
+    { name: 'J10', primary: { domainError: true }, boot: false },
+    { name: 'J10b', primary: { domainNull: true }, boot: false },
+    { name: 'J10c', primary: { httpStatus: 503, httpMethod: 'eth_getCode' }, boot: false },
+    { name: 'J11', primary: { code: '0x' }, boot: true },
+    { name: 'J12', primary: { domain: `0x${'12'.repeat(32)}` }, boot: true },
+    { name: 'J13', primary: { chainId: '0x1' }, secondary: { httpStatus: 429 }, boot: true },
+    { name: 'J14', primary: { code: '0x' }, secondary: { rateLimit: true }, boot: true },
+    { name: 'decimal', primary: { chainId: '8453' }, boot: false },
+  ];
+  try {
+    for (let i = 0; i < cases.length; i += 1) {
+      const item = cases[i];
+      const pair = await rpcPair(chainState(), { primary: item.primary, secondary: item.secondary || {} });
+      const logs = [];
+      let handle = null;
+      let err = null;
+      try {
+        handle = await startV13AnchorScheduler({
+          env: schedulerEnv(world.sealerDir),
+          clock: () => world.clock.now,
+          runtime: { store: world.store, client: signer.client },
+          deps: {
+            testInjection: true,
+            signer: signer.signer,
+            fetch: pair.fetchImpl,
+            log: (fields) => logs.push(fields && fields.code),
+            timeoutMs: item.timeoutMs || 1000,
+          },
+        });
+      } catch (caught) {
+        err = caught;
+      } finally {
+        if (handle) await handle.stop();
+        await pair.close();
+      }
+      if (item.boot) {
+        assert.equal(err && err.code, 'v13_boot_refused', item.name);
+        assert.equal(handle, null, item.name);
+      } else {
+        assert.equal(err, null, item.name);
+        assert.equal(handle && handle.started, true, item.name);
+        assert.equal(logs.includes('anchor_chain_mismatch'), false, item.name);
+        assert.equal(logs.includes('v13_pin_refused'), false, item.name);
+        assert.equal(logs.includes('anchor_rpc_unavailable'), true, item.name);
+      }
+    }
+    assert.equal(signCount(signer), before);
+  } finally {
+    rmSync(world.root, { recursive: true, force: true });
+  }
+});

@@ -61,7 +61,12 @@ export function publicHealthBody({
       cap: issuanceCap || { hour_used: 0, day_used: 0, state: 'off' },
     },
   };
-  if (anchorStall === 'anchor_reverted' || anchorStall === 'anchor_nonce_conflict' || anchorStall === 'anchor_stalled') {
+  if (
+    anchorStall === 'anchor_reverted'
+    || anchorStall === 'anchor_nonce_conflict'
+    || anchorStall === 'anchor_nonce_retired'
+    || anchorStall === 'anchor_stalled'
+  ) {
     body.anchor_stall = anchorStall;
   }
   // Absent when nothing is quarantined, so a clean boot keeps the extra list off.

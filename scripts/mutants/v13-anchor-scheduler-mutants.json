@@ -292,8 +292,8 @@
     {
       "id": "AS41",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "async function lookupCommitted(broadcaster, sealer, signal) {\n  const commits = sealer.state.commits || [];",
-      "replace": "async function lookupCommitted(broadcaster, sealer, signal) {\n  void broadcaster; void sealer; void signal; return '';\n  const commits = sealer.state.commits || [];",
+      "find": "async function lookupCommitted(broadcaster, sealer, signal, dir) {\n  const commits = sealer.state.commits || [];",
+      "replace": "async function lookupCommitted(broadcaster, sealer, signal, dir) {\n  void broadcaster; void sealer; void signal; void dir; return '';\n  const commits = sealer.state.commits || [];",
       "note": "lookupCommitted never finds our hash"
     },
     {
@@ -327,16 +327,16 @@
     {
       "id": "AS46",
       "file": "services/gateway/src/public-metrics.js",
-      "find": "  if (anchorStall === 'anchor_reverted' || anchorStall === 'anchor_nonce_conflict' || anchorStall === 'anchor_stalled') {\n    body.anchor_stall = anchorStall;\n  }",
-      "replace": "  if (typeof anchorStall === 'string' && anchorStall) {\n    body.anchor_stall = anchorStall;\n  }",
+      "find": "    anchorStall === 'anchor_reverted'\n    || anchorStall === 'anchor_nonce_conflict'\n    || anchorStall === 'anchor_nonce_retired'\n    || anchorStall === 'anchor_stalled'\n  ) {\n    body.anchor_stall = anchorStall;\n  }",
+      "replace": "    typeof anchorStall === 'string' && anchorStall\n  ) {\n    body.anchor_stall = anchorStall;\n  }",
       "note": "health publishes any stall string"
     },
     {
       "id": "AS47",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "function nonceIsRetired(session) {\n  const nonce = retiredNonce(session.dir);",
-      "replace": "function nonceIsRetired(session) {\n  void session; return false;\n  const nonce = retiredNonce(session.dir);",
-      "note": "the nonce clear file does not retire the nonce"
+      "find": "  if (holdReason(session.dir) !== 'anchor_nonce_conflict') return false;",
+      "replace": "  if (false) return false;",
+      "note": "a clear file can replace an anchor_reverted hold"
     },
     {
       "id": "AS48",
