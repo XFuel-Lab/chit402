@@ -26,6 +26,7 @@ import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter, stampFailureBody, decisionHoldResult, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { assertV13Boot } from './v13-flags.js';
 import { wireV13Runtime } from './v13-boot.js';
+import { anchorStallStatus, stopV13AnchorScheduler } from './v13-anchor-scheduler.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { holdPageForReceiptId, holdPagePayload, terminalStampHold } from './hold-handle.js';
@@ -4655,6 +4656,7 @@ export async function createApp() {
         unanchoredLeaves: log?.unanchored_leaves ?? 0,
         receiptFailures: receiptFailureCount(),
         issuanceCap: issuanceCapHealth(),
+        anchorStall: anchorStallStatus(),
       }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');
@@ -6360,6 +6362,12 @@ export async function startServer() {
       if (shuttingDown) return;
       shuttingDown = true;
       logger.info({ signal }, 'Shutting down M2M API server…');
+      void (async () => {
+      try {
+        await stopV13AnchorScheduler();
+      } catch {
+        // The stop is already bounded. Shutdown continues.
+      }
       // Flush any in-place task mutations to disk so the public verify_url receipt
       // reflects the latest state after a restart (best-effort; safe if unsupported).
       try {
@@ -6397,6 +6405,7 @@ export async function startServer() {
         logger.info('HTTP server closed cleanly');
         process.exit(0);
       });
+      })();
     };
     process.once('SIGTERM', () => shutdown('SIGTERM'));
     process.once('SIGINT', () => shutdown('SIGINT'));

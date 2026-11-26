@@ -53,7 +53,8 @@ import { TIER_N, padLeaves } from './pad.js';
 import { addLogSize, leafIndex } from './size.js';
 
 const HOUR = 3600;
-const MAX_BACKLOG = 168;
+/** Hours one closeHour may span. A larger gap is backlog_too_large. */
+export const MAX_BACKLOG = 168;
 
 export function csprng(n) {
   const cryptoObj = globalThis.crypto;
@@ -505,6 +506,15 @@ async function broadcastRecord(sealer, record, send, signal) {
     try {
       return await send(wire);
     } catch (err) {
+      const named = err && err.code;
+      if (
+        named === 'anchor_simulation_failed'
+        || named === 'anchor_head_mismatch'
+        || named === 'anchor_reverted'
+        || named === 'anchor_nonce_conflict'
+        || named === 'anchor_quorum'
+        || named === 'sealer_unavailable'
+      ) throw err;
       const kind = classifyAnchorSendError(err);
       if (kind === 'known') return `0x${bytesToHex(eip1559TxHash(wire))}`;
       const wrapped = new Error('broadcast_failed');
@@ -526,9 +536,17 @@ async function broadcastRecord(sealer, record, send, signal) {
     markBroadcast(sealer, record.nonce);
     return { ok: true, raw: row.raw, tx: row.tx, calldata: record.calldata, record: publicView(record) };
   } catch (err) {
+    const named = err && err.code;
+    const reason = named === 'anchor_simulation_failed'
+      || named === 'anchor_head_mismatch'
+      || named === 'anchor_reverted'
+      || named === 'anchor_nonce_conflict'
+      || named === 'anchor_quorum'
+      ? named
+      : 'broadcast_failed';
     return {
       ok: false,
-      reason: 'broadcast_failed',
+      reason,
       committed: true,
       kind: err.kind || classifyAnchorSendError(err),
       backoffMs: err.backoffMs || anchorBackoffMs(1),
@@ -750,7 +768,7 @@ export async function recover(sealer, input) {
       }
     }
     healCommittedIntake(sealer);
-    const result = await broadcastRecord(sealer, record, input.send);
+    const result = await broadcastRecord(sealer, record, input.send, input.signal);
     sent.push(result);
     if (!result.ok) return { ok: false, reason: result.reason, committed: true, sent };
   }
@@ -790,6 +808,7 @@ export async function feeBump(sealer, input) {
       log: sealer.intentLog,
       nonce: key,
       fees: quote,
+      signal: input.signal,
       send: async (wire) => {
         const decoded = eip1559Decode(wire);
         if (decoded.data !== calldata) {

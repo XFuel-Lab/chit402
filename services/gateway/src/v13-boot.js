@@ -37,7 +37,12 @@ import logger from './logger.js';
 import { testSwitchesOn } from './test-switch.js';
 import { v13Flags } from './v13-flags.js';
 import { sendCheckpointKms } from './checkpoint-kms.js';
-import { setV13Runtime } from './v13-issue.js';
+import { readV13Runtime, setV13Runtime } from './v13-issue.js';
+import {
+  anchorSchedulerEnabled,
+  assertAnchorSchedulerBoot,
+  startV13AnchorScheduler,
+} from './v13-anchor-scheduler.js';
 
 const HOUSE_REASONS = new Set([
   'token_file_missing',
@@ -626,13 +631,29 @@ async function guardListen(env, deps) {
  * The production boot function startServer calls after assertV13Boot and
  * before listen. Any one v13 flag requires a complete runtime. Flags off
  * do not open the store, the bind dir, or KMS.
+ *
+ * CHIT_V13_ANCHOR_SCHEDULER is a separate closed flag. Off leaves this
+ * function on the path above: no sealer directory, no Base RPC, no timer.
+ * On checks the sealer directory, the fee cap, and the two RPC URLs before
+ * the house runtime is opened, then starts the hourly scheduler. The house
+ * send stays refuseUnpreparedHouseSend.
  * @param {object} [env]
  * @param {object} [deps]
  */
 export async function wireV13Runtime(env = process.env, deps = {}) {
-  const flags = v13Flags(env || {});
-  if (flags.issuance === true) return guardListen(env, deps);
-  if (flags.mainnetSealer === true) return guardListen(env, deps);
-  if (flags.store === true) return guardListen(env, deps);
-  return { ok: true, wired: false };
+  const source = env || {};
+  const flags = v13Flags(source);
+  const schedule = anchorSchedulerEnabled(source);
+  if (flags.issuance !== true && flags.mainnetSealer !== true && flags.store !== true && schedule !== true) {
+    return { ok: true, wired: false };
+  }
+  if (schedule === true) assertAnchorSchedulerBoot(source);
+  if (flags.issuance === true || flags.mainnetSealer === true || flags.store === true) {
+    const wired = await guardListen(source, deps);
+    if (schedule === true) {
+      await startV13AnchorScheduler({ env: source, deps, runtime: readV13Runtime() });
+    }
+    return wired;
+  }
+  throw bootRefused();
 }
