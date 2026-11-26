@@ -808,6 +808,7 @@ export async function feeBump(sealer, input) {
       log: sealer.intentLog,
       nonce: key,
       fees: quote,
+      signal: input.signal,
       send: async (wire) => {
         const decoded = eip1559Decode(wire);
         if (decoded.data !== calldata) {

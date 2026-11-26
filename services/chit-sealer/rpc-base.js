@@ -292,6 +292,18 @@ export function observedChainOk(value) {
   return parsed === BASE_CHAIN_ID;
 }
 
+function codeWellFormed(code) {
+  if (typeof code !== 'string') return false;
+  const hex = code.toLowerCase().replace(/^0x/, '');
+  return /^[0-9a-f]*$/.test(hex) && hex.length % 2 === 0;
+}
+
+function domainWellFormed(word) {
+  if (typeof word !== 'string') return false;
+  const hex = word.toLowerCase().replace(/^0x/, '');
+  return /^[0-9a-f]{64}$/.test(hex);
+}
+
 function codeHasBody(code) {
   if (typeof code !== 'string') return false;
   const hex = code.toLowerCase().replace(/^0x/, '');
@@ -427,15 +439,20 @@ export function createBaseBroadcaster(opts) {
     : RPC_TIMEOUT_MS;
   if (urls.length !== 2 || typeof fetchImpl !== 'function') throw coded('v13_boot_refused');
 
+  let sawUnreachable = false;
+
   async function probe(url, signal) {
+    let chainId;
     try {
-      const chainId = await rpcCall(fetchImpl, url, 'eth_chainId', [], signal, timeoutMs);
-      if (!observedChainOk(chainId)) return { url, mismatch: 'anchor_chain_mismatch' };
-      return { url, ok: true };
-    } catch (err) {
-      if (err && err.transport === true) return { url, transport: true };
-      return { url, mismatch: 'anchor_chain_mismatch' };
+      chainId = await rpcCall(fetchImpl, url, 'eth_chainId', [], signal, timeoutMs);
+    } catch {
+      return { url, transport: true };
     }
+    // A JSON-RPC error, a timeout, or a value that is not a chain id is
+    // unreachable. Only a parsed chain id other than 8453 is a mismatch.
+    if (hexQuantity(chainId) == null) return { url, transport: true };
+    if (!observedChainOk(chainId)) return { url, mismatch: 'anchor_chain_mismatch' };
+    return { url, ok: true };
   }
 
   async function pin(url, signal) {
@@ -451,23 +468,26 @@ export function createBaseBroadcaster(opts) {
         signal,
         timeoutMs,
       );
-    } catch (err) {
-      if (err && err.transport === true) return { transport: true };
-      return { mismatch: 'v13_pin_refused' };
+    } catch {
+      return { transport: true };
     }
+    if (!codeWellFormed(code) || !domainWellFormed(domain)) return { transport: true };
     if (!codeHasBody(code) || !domainMatches(domain)) return { mismatch: 'v13_pin_refused' };
     return { ok: true };
   }
 
   async function prepare(signal) {
+    sawUnreachable = false;
     const probed = await Promise.all([probe(urls[0], signal), probe(urls[1], signal)]);
     if (probed.some((row) => row.mismatch)) throw coded('anchor_chain_mismatch');
+    if (probed.some((row) => row.transport)) sawUnreachable = true;
     const up = probed.filter((row) => row.ok === true);
     if (up.length === 0) throw coded('anchor_rpc_unavailable');
     const ready = [];
     for (let i = 0; i < up.length; i += 1) {
       const checked = await pin(up[i].url, signal);
       if (checked.mismatch) throw coded('v13_pin_refused');
+      if (checked.transport) sawUnreachable = true;
       if (checked.ok === true) ready.push(up[i].url);
     }
     if (ready.length === 0) throw coded('anchor_rpc_unavailable');
@@ -489,6 +509,9 @@ export function createBaseBroadcaster(opts) {
   }
 
   return {
+    bootUnreachable() {
+      return sawUnreachable;
+    },
     async prepare(signal) {
       return prepare(signal);
     },

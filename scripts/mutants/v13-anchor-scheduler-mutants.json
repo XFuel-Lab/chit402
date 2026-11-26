@@ -260,6 +260,97 @@
       "find": "  if (gap >= need) return row;\n  return { ...row, finalized: false };",
       "replace": "  void need;\n  if (gap >= 0n) return row;\n  return { ...row, finalized: false };",
       "note": "one live RPC releases a receipt without the depth gap"
+    },
+    {
+      "id": "AS37",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    } catch {\n      return { url, transport: true };\n    }",
+      "replace": "    } catch {\n      return { url, mismatch: 'anchor_chain_mismatch' };\n    }",
+      "note": "a JSON-RPC error at boot is a chain mismatch"
+    },
+    {
+      "id": "AS38",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    } catch {\n      return { transport: true };\n    }\n    if (!codeWellFormed(code) || !domainWellFormed(domain)) return { transport: true };",
+      "replace": "    } catch {\n      return { mismatch: 'v13_pin_refused' };\n    }\n    if (!codeWellFormed(code) || !domainWellFormed(domain)) return { transport: true };",
+      "note": "a JSON-RPC error while reading code is a pin refusal"
+    },
+    {
+      "id": "AS39",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "  await signCommittedAnchor(signer, log, { nonce: key, fees, signal });",
+      "replace": "  await signCommittedAnchor(signer, log, { nonce: key, fees });",
+      "note": "a timed-out bump sign is stored"
+    },
+    {
+      "id": "AS40",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "  await signCommittedAnchor(signer, log, { nonce: anchor.nonce, fees, signal });",
+      "replace": "  await signCommittedAnchor(signer, log, { nonce: anchor.nonce, fees });",
+      "note": "a timed-out recover sign is stored"
+    },
+    {
+      "id": "AS41",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "async function lookupCommitted(broadcaster, sealer, signal) {\n  const commits = sealer.state.commits || [];",
+      "replace": "async function lookupCommitted(broadcaster, sealer, signal) {\n  void broadcaster; void sealer; void signal; return '';\n  const commits = sealer.state.commits || [];",
+      "note": "lookupCommitted never finds our hash"
+    },
+    {
+      "id": "AS42",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "      if (reason === 'anchor_nonce_conflict') {\n        writeHold(session.dir, 'anchor_nonce_conflict');\n        report(session.log, 'anchor_nonce_conflict');\n        return finish(session, end(false, 'anchor_nonce_conflict'));\n      }",
+      "replace": "      if (reason === 'anchor_nonce_conflict') {\n        report(session.log, 'anchor_nonce_conflict');\n        return finish(session, end(false, 'anchor_nonce_conflict'));\n      }",
+      "note": "recover nonce conflict does not hold the sealer"
+    },
+    {
+      "id": "AS43",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (reason === 'anchor_nonce_conflict') writeHold(session.dir, 'anchor_nonce_conflict');\n  if (reason) report(session.log, reason);\n  return end(bumped && bumped.ok === true, reason);",
+      "replace": "  if (false) writeHold(session.dir, 'anchor_nonce_conflict');\n  if (reason) report(session.log, reason);\n  return end(bumped && bumped.ok === true, reason);",
+      "note": "a bump nonce conflict does not hold the sealer"
+    },
+    {
+      "id": "AS44",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const FINALITY_DEPTH_DEFAULT = 64;",
+      "replace": "const FINALITY_DEPTH_DEFAULT = 1;",
+      "note": "finality depth default is one block"
+    },
+    {
+      "id": "AS45",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (elapsed > stallHours(session.env) * 3600) return 'anchor_stalled';",
+      "replace": "  if (elapsed > stallHours(session.env) * 1) return 'anchor_stalled';",
+      "note": "stall hours are treated as seconds"
+    },
+    {
+      "id": "AS46",
+      "file": "services/gateway/src/public-metrics.js",
+      "find": "  if (anchorStall === 'anchor_reverted' || anchorStall === 'anchor_nonce_conflict' || anchorStall === 'anchor_stalled') {\n    body.anchor_stall = anchorStall;\n  }",
+      "replace": "  if (typeof anchorStall === 'string' && anchorStall) {\n    body.anchor_stall = anchorStall;\n  }",
+      "note": "health publishes any stall string"
+    },
+    {
+      "id": "AS47",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "function nonceIsRetired(session) {\n  const nonce = retiredNonce(session.dir);",
+      "replace": "function nonceIsRetired(session) {\n  void session; return false;\n  const nonce = retiredNonce(session.dir);",
+      "note": "the nonce clear file does not retire the nonce"
+    },
+    {
+      "id": "AS48",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  rememberBump(session.dir, current.epoch, hashes);\n  const bumped = await withSealerGuard(({ signal }) => feeBump(session.sealer, {",
+      "replace": "  const bumped = await withSealerGuard(({ signal }) => feeBump(session.sealer, {",
+      "note": "the bump file is not written before the replacement send"
+    },
+    {
+      "id": "AS49",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const CLOSE_MARGIN_DEFAULT_SEC = 120;",
+      "replace": "const CLOSE_MARGIN_DEFAULT_SEC = 0;",
+      "note": "the close margin default is zero"
     }
   ]
 }

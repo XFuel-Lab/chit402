@@ -625,10 +625,10 @@ export function bumpFeeQuote(fees, ceiling = null) {
  * Re-sign the committed payload at the same nonce with new fees, then broadcast.
  * A different epoch at that nonce is refused by the commit already on the log.
  */
-export async function bumpAnchorFees({ signer, log, nonce, fees, send }) {
+export async function bumpAnchorFees({ signer, log, nonce, fees, send, signal }) {
   const key = BigInt(nonce).toString();
   const intent = log.read().find((row) => row.nonce === key && row.status === 'intent');
   if (!intent) throw coded('anchor intent is not committed', 'intent_missing');
-  await signCommittedAnchor(signer, log, { nonce: key, fees });
+  await signCommittedAnchor(signer, log, { nonce: key, fees, signal });
   return broadcastCommittedAnchor(log, { nonce: key, fees }, send);
 }

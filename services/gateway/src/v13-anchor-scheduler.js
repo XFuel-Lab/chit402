@@ -196,6 +196,25 @@ function holdReason(dir) {
   return '';
 }
 
+const NONCE_CLEAR_FILE = 'anchor-nonce-clear.json';
+
+function retiredNonce(dir) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(dir, NONCE_CLEAR_FILE), 'utf8'));
+    if (!parsed || parsed.v !== 1 || typeof parsed.nonce !== 'string') return '';
+    if (!/^\d+$/.test(parsed.nonce)) return '';
+    return parsed.nonce;
+  } catch {
+    return '';
+  }
+}
+
+function nonceIsRetired(session) {
+  const nonce = retiredNonce(session.dir);
+  const current = currentCommit(session);
+  return nonce !== '' && current && String(current.nonce) === nonce;
+}
+
 function writeHold(dir, reason) {
   const code = HOLD_REASONS.has(reason) ? reason : 'anchor_reverted';
   const file = holdFile(dir);
@@ -607,12 +626,13 @@ async function maybeBump(session) {
   const bumped = await withSealerGuard(({ signal }) => feeBump(session.sealer, {
     nonce: current.nonce,
     send: (wire) => session.send(wire, { signal }),
+    signal,
   }), { env: session.env, log: (fields) => report(session.log, fields && fields.code) });
   rememberBump(session.dir, current.epoch, txHashesFor(session, current));
-    const reason = bumped && bumped.ok === true ? null : (bumped && bumped.reason) || 'broadcast_failed';
-    if (reason === 'anchor_nonce_conflict') writeHold(session.dir, 'anchor_nonce_conflict');
-    if (reason) report(session.log, reason);
-    return end(bumped && bumped.ok === true, reason);
+  const reason = bumped && bumped.ok === true ? null : (bumped && bumped.reason) || 'broadcast_failed';
+  if (reason === 'anchor_nonce_conflict') writeHold(session.dir, 'anchor_nonce_conflict');
+  if (reason) report(session.log, reason);
+  return end(bumped && bumped.ok === true, reason);
 }
 
 function intakeStall(session) {
@@ -660,6 +680,12 @@ export async function runAnchorTick(session) {
     return finish(session, end(false, err && err.code));
   }
   try {
+    if (nonceIsRetired(session)) {
+      if (holdReason(session.dir) === 'anchor_nonce_conflict') {
+        try { fs.unlinkSync(holdFile(session.dir)); } catch { /* the operator already removed it */ }
+      }
+      return finish(session, end(true, null));
+    }
     const released = await releaseFinalized(session);
     if (released && released.held === true) return finish(session, end(false, released.reason || 'anchor_reverted'));
     if (released && released.reason) return finish(session, end(false, released.reason));
@@ -746,6 +772,9 @@ export async function startV13AnchorScheduler(opts = {}) {
   const session = await openSession(opts);
   try {
     await session.broadcaster.prepare();
+    if (typeof session.broadcaster.bootUnreachable === 'function' && session.broadcaster.bootUnreachable()) {
+      report(session.log, 'anchor_rpc_unavailable');
+    }
   } catch (err) {
     const code = err && err.code;
     if (code === 'anchor_chain_mismatch' || code === 'v13_pin_refused') throw bootRefused();

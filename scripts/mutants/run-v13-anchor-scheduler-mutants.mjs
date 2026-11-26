@@ -189,6 +189,8 @@ const must = new Set([
   'AS11', 'AS12', 'AS13', 'AS14', 'AS15', 'AS16', 'AS17', 'AS18', 'AS19', 'AS20',
   'AS21', 'AS22', 'AS23', 'AS24', 'AS25', 'AS26', 'AS27', 'AS28', 'AS29', 'AS30',
   'AS31', 'AS32', 'AS33', 'AS34', 'AS35', 'AS36',
+  'AS37', 'AS38', 'AS39', 'AS40', 'AS41', 'AS42', 'AS43', 'AS44', 'AS45',
+  'AS46', 'AS47', 'AS48', 'AS49',
 ]);
 const missed = rows.filter((row) => must.has(row.id) && row.result !== 'KILLED');
 

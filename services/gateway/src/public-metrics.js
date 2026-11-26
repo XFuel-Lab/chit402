@@ -61,7 +61,9 @@ export function publicHealthBody({
       cap: issuanceCap || { hour_used: 0, day_used: 0, state: 'off' },
     },
   };
-  if (typeof anchorStall === 'string' && anchorStall) body.anchor_stall = anchorStall;
+  if (anchorStall === 'anchor_reverted' || anchorStall === 'anchor_nonce_conflict' || anchorStall === 'anchor_stalled') {
+    body.anchor_stall = anchorStall;
+  }
   // Absent when nothing is quarantined, so a clean boot keeps the extra list off.
   // An acknowledged head stays in the list. It does not flip status to degraded.
   if (quarantinedHeads && Number(quarantinedHeads.count) > 0) {
