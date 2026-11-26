@@ -53,7 +53,8 @@ import { TIER_N, padLeaves } from './pad.js';
 import { addLogSize, leafIndex } from './size.js';
 
 const HOUR = 3600;
-const MAX_BACKLOG = 168;
+/** Hours one closeHour may span. A larger gap is backlog_too_large. */
+export const MAX_BACKLOG = 168;
 
 export function csprng(n) {
   const cryptoObj = globalThis.crypto;

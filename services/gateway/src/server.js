@@ -26,6 +26,7 @@ import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter, stampFailureBody, decisionHoldResult, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { assertV13Boot } from './v13-flags.js';
 import { wireV13Runtime } from './v13-boot.js';
+import { stopV13AnchorScheduler } from './v13-anchor-scheduler.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { holdPageForReceiptId, holdPagePayload, terminalStampHold } from './hold-handle.js';
@@ -6360,6 +6361,11 @@ export async function startServer() {
       if (shuttingDown) return;
       shuttingDown = true;
       logger.info({ signal }, 'Shutting down M2M API server…');
+      try {
+        stopV13AnchorScheduler();
+      } catch {
+        // Never blocks shutdown.
+      }
       // Flush any in-place task mutations to disk so the public verify_url receipt
       // reflects the latest state after a restart (best-effort; safe if unsupported).
       try {

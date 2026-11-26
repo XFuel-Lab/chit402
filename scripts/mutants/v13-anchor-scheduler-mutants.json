@@ -1,0 +1,83 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": [
+      "node",
+      "--test",
+      "services/chit-sealer/test/rpc-base.test.mjs",
+      "services/gateway/test/v13-anchor-scheduler.test.mjs"
+    ]
+  },
+  "mutants": [
+    {
+      "id": "AS1",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "export function anchorSchedulerEnabled(env) {\n  return readClosedFlag(env, ANCHOR_SCHEDULER_FLAG) === true;\n}",
+      "replace": "export function anchorSchedulerEnabled(env) {\n  void env;\n  return true;\n}",
+      "note": "scheduler flag off still starts the anchor path"
+    },
+    {
+      "id": "AS2",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    if (!leftDomain || !rightDomain || leftDomain === rightDomain) {\n      return { ok: false, reason: 'same registrable domain' };\n    }",
+      "replace": "    if (false) {\n      return { ok: false, reason: 'same registrable domain' };\n    }",
+      "note": "same registrable domain accepted as two RPCs"
+    },
+    {
+      "id": "AS3",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "export const BASE_CHAIN_ID = 8453n;",
+      "replace": "export const BASE_CHAIN_ID = 84532n;",
+      "note": "Base Sepolia chain id accepted before broadcast"
+    },
+    {
+      "id": "AS4",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    if (!codeHasBody(code) || !domainMatches(domain)) return { mismatch: 'v13_pin_refused' };",
+      "replace": "    if (false) return { mismatch: 'v13_pin_refused' };",
+      "note": "anchor code and domain check skipped"
+    },
+    {
+      "id": "AS5",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    assertFeeCeiling(quote, session.signer.feeCeiling);\n    const closed = await guardCloseHour(session.sealer, {",
+      "replace": "    const closed = await guardCloseHour(session.sealer, {",
+      "note": "fee ceiling not checked before guardCloseHour"
+    },
+    {
+      "id": "AS6",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "export const ANCHOR_GAS_LIMIT = 300000n;",
+      "replace": "export const ANCHOR_GAS_LIMIT = 100000n;",
+      "note": "anchor gas limit dropped below the measured genesis call"
+    },
+    {
+      "id": "AS7",
+      "file": "services/gateway/src/v13-boot.js",
+      "find": "  if (bindDir) send = refuseUnpreparedHouseSend();",
+      "replace": "  if (bindDir) send = async () => '0x' + '11'.repeat(32);",
+      "note": "house runtime send can return a broadcast hash"
+    },
+    {
+      "id": "AS8",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    if (blockNumber == null || finalizedNumber == null || blockNumber > finalized) continue;",
+      "replace": "    if (blockNumber == null) continue;",
+      "note": "unfinalized Anchored log admitted for release"
+    },
+    {
+      "id": "AS9",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    if (pending.length > 0) {\n      const recovered = await recover(session.sealer, { send: session.send });",
+      "replace": "    if (pending.length > 0) {\n      const recovered = { ok: false, reason: 'nothing_pending' };",
+      "note": "interrupted commit is not recovered"
+    },
+    {
+      "id": "AS10",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  } catch (err) {\n    report(session.log, err && err.code);\n    return end(false, err && err.code);\n  }",
+      "replace": "  } catch (err) {\n    report(session.log, err && err.code);\n    try { session.log({ err, secret: err && err.cause && err.cause.message, key: session.env && session.env.CHIT_CHECKPOINT_KMS_KEY_ID }); } catch { /* leaked */ }\n    return end(false, err && err.code);\n  }",
+      "note": "tick log includes the RPC error and the key id"
+    }
+  ]
+}
