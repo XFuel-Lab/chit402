@@ -164,6 +164,7 @@ function memoryLog(hooks = {}) {
       if (hooks.fsyncSync) hooks.fsyncSync(order);
     },
     closeSync() { order.push('close'); },
+    fstatSync() { return { isFile() { return true; }, isSymbolicLink() { return false; } }; },
     existsSync() { return mem.text.length > 0; },
     readFileSync() { return mem.text; },
   };

@@ -3,10 +3,12 @@
  */
 import assert from 'node:assert/strict';
 import { createPublicKey } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { describe, test, afterEach } from 'node:test';
 import { inspect } from 'node:util';
 import { SECP256K1, bytesToBig, ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
@@ -18,7 +20,8 @@ import { deriveKeyPair } from '../../../packages/cs2-core/seal/hpke.js';
 import { ANCHOR_SELECTOR } from '../../chit-sealer/calldata.js';
 import { guardKmsClient } from '../../chit-sealer/anchor-mainnet.js';
 import { resetSealerGuardForTest } from '../../chit-sealer/guard.js';
-import { createCheckpointSigner } from '../../chit-sealer/kms-secp256k1.js';
+import { openJournal } from '../../chit-sealer/journal.js';
+import { createCheckpointSigner, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
 import { MAINNET_ANCHOR, MAINNET_CHECKPOINT, MAINNET_DOMAIN } from '../../chit-sealer/mainnet-pin.js';
 import { ANCHORED_TOPIC, DOMAIN_CALL, LATEST_CALL, encodeLatestHead } from '../../chit-sealer/rpc-base.js';
 import { bookLeaf, openIntake } from '../../chit-store/intake.js';
@@ -2721,7 +2724,200 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
       rmSync(recoverWorld.root, { recursive: true, force: true });
     }
   });
+
+  test('a fifo clear file is refused without stalling the tick', async () => {
+    const opened = await conflictHandle();
+    const file = join(opened.world.sealerDir, 'anchor-nonce-clear.json');
+    const worker = releaseFifo(plantFifo(file));
+    try {
+      opened.state.accountNonce = '0x2';
+      const started = Date.now();
+      const tick = await opened.handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `clear fifo blocked ${Date.now() - started}ms`);
+      assert.equal(tick.ok, false);
+      assert.equal(tick.reason, 'anchor_nonce_conflict');
+      assert.equal(lstatSync(file).isFIFO(), true);
+      assert.equal(JSON.parse(readFileSync(join(opened.world.sealerDir, 'anchor-hold.json'), 'utf8')).reason, 'anchor_nonce_conflict');
+    } finally {
+      await worker.terminate();
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlinked clear file is refused', async () => {
+    const opened = await conflictHandle();
+    const dir = opened.world.sealerDir;
+    const target = join(dir, 'clear-body.json');
+    const link = join(dir, 'anchor-nonce-clear.json');
+    try {
+      const nonce = String(JSON.parse(readFileSync(join(dir, 'sealer-state.json'), 'utf8')).commits[0].nonce);
+      writeFileSync(target, `${JSON.stringify({ v: 1, nonce })}\n`, { mode: 0o600 });
+      chmodSync(target, 0o600);
+      const stamp = new Date(Date.now() + 5000);
+      utimesSync(target, stamp, stamp);
+      symlinkSync(target, link);
+      assert.equal(statSync(target).mode & 0o777, 0o600);
+      opened.state.accountNonce = '0x2';
+      const tick = await opened.handle.tick();
+      assert.equal(tick.reason, 'anchor_nonce_conflict');
+      assert.equal(lstatSync(link).isSymbolicLink(), true);
+      assert.equal(JSON.parse(readFileSync(join(dir, 'anchor-hold.json'), 'utf8')).reason, 'anchor_nonce_conflict');
+    } finally {
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('the clear checks share one prepared RPC set', async () => {
+    const opened = await conflictHandle();
+    try {
+      opened.state.accountNonce = '0x2';
+      opened.state.methods.length = 0;
+      writeClear(opened.world.sealerDir, { v: 1, nonce: '0' });
+      const tick = await opened.handle.tick();
+      assert.equal(tick.reason, 'anchor_nonce_retired');
+      const chainIds = opened.state.methods.filter((method) => method === 'eth_chainId').length;
+      assert.equal(chainIds, 4, `eth_chainId calls ${chainIds}`);
+      assert.ok(opened.state.methods.filter((method) => method === 'eth_getTransactionCount').length >= 2);
+      assert.equal(opened.state.methods.includes('eth_getTransactionByHash'), true);
+    } finally {
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo anchor-hold.json does not stall the tick', async () => {
+    const world = freshWorld();
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const file = join(world.sealerDir, 'anchor-hold.json');
+    plantFifo(file);
+    let handle = null;
+    let worker = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      worker = releaseFifo(file);
+      const started = Date.now();
+      const tick = await handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `hold fifo blocked ${Date.now() - started}ms`);
+      assert.equal(tick.reason, 'empty_hour');
+      assert.equal(lstatSync(file).isFIFO(), true);
+    } finally {
+      if (worker) await worker.terminate();
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo anchor-bumps.json does not stall the tick', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    let handle = null;
+    let worker = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const file = join(world.sealerDir, 'anchor-bumps.json');
+      worker = releaseFifo(plantFifo(file));
+      const started = Date.now();
+      const tick = await handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `bumps fifo blocked ${Date.now() - started}ms`);
+      assert.equal(lstatSync(file).isFIFO(), true);
+      assert.notEqual(tick.reason, 'anchor_bump_spent');
+    } finally {
+      if (worker) await worker.terminate();
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo sealer journal is refused without blocking', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'v13-journal-'));
+    const file = join(dir, 'sealer-state.json');
+    const worker = releaseFifo(plantFifo(file));
+    try {
+      const started = Date.now();
+      assert.throws(
+        () => openJournal(dir, { chainId: 8453n, contract: MAINNET_ANCHOR }),
+        (err) => err.code === 'journal_unreadable',
+      );
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `journal fifo blocked ${Date.now() - started}ms`);
+      assert.equal(lstatSync(file).isFIFO(), true);
+    } finally {
+      await worker.terminate();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo intent log is refused without blocking', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'v13-intent-'));
+    const file = join(dir, 'anchor-intents.jsonl');
+    const worker = releaseFifo(plantFifo(file));
+    try {
+      const log = openAnchorIntentLog(dir);
+      const started = Date.now();
+      assert.throws(() => log.read(), (err) => err.code === 'intent_log_refused');
+      assert.throws(() => log.append({ v: 1 }), (err) => err.code === 'ENXIO' || err.code === 'intent_log_refused');
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `intent fifo blocked ${Date.now() - started}ms`);
+      assert.equal(lstatSync(file).isFIFO(), true);
+    } finally {
+      await worker.terminate();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+const FIFO_RELEASE_MS = 2000;
+const FIFO_PROMPT_MS = 1000;
+
+const FIFO_PEER = `
+const fs = require('node:fs');
+const { workerData } = require('node:worker_threads');
+setTimeout(() => {
+  let fd;
+  try {
+    fd = fs.openSync(workerData.file, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+  } catch {
+    return;
+  }
+  try { fs.writeSync(fd, Buffer.from('x')); } catch { /* the pipe can already be closed */ }
+  const buf = Buffer.alloc(1024);
+  const gate = new Int32Array(new SharedArrayBuffer(4));
+  const until = Date.now() + 8000;
+  while (Date.now() < until) {
+    try { fs.readSync(fd, buf, 0, buf.length); } catch { /* EAGAIN */ }
+    Atomics.wait(gate, 0, 0, 20);
+  }
+  try { fs.closeSync(fd); } catch { /* closed */ }
+}, workerData.delayMs);
+`;
+
+function plantFifo(file) {
+  if (existsSync(file)) rmSync(file);
+  execFileSync('mkfifo', [file]);
+  return file;
+}
+
+function releaseFifo(file) {
+  return new Worker(FIFO_PEER, { eval: true, workerData: { file, delayMs: FIFO_RELEASE_MS } });
+}
 
 function readIntent(dir) {
   return `[${readFileSync(join(dir, 'anchor-intents.jsonl'), 'utf8').trim().split('\n').join(',')}]`;

@@ -187,9 +187,51 @@ function holdFile(dir) {
   return path.join(dir, HOLD_FILE);
 }
 
+// A FIFO open blocks the event loop unless O_NONBLOCK is set before the type check.
+const OPEN_READ = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+const OPEN_WRITE = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
+  | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+
+function readRegularText(file) {
+  const fd = fs.openSync(file, OPEN_READ);
+  try {
+    const st = fs.fstatSync(fd);
+    if (typeof st.isFile !== 'function' || st.isFile() !== true) {
+      const err = new Error('not a regular file');
+      err.code = 'ENOTREG';
+      throw err;
+    }
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writeRegularFile(file, text) {
+  const fd = fs.openSync(file, OPEN_WRITE, 0o600);
+  try {
+    const st = fs.fstatSync(fd);
+    if (typeof st.isFile !== 'function' || st.isFile() !== true) {
+      const err = new Error('not a regular file');
+      err.code = 'ENOTREG';
+      throw err;
+    }
+    const buf = Buffer.from(text);
+    let offset = 0;
+    while (offset < buf.length) {
+      const n = fs.writeSync(fd, buf, offset, buf.length - offset);
+      if (!Number.isInteger(n) || n <= 0) throw new Error('short write');
+      offset += n;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  try { fs.chmodSync(file, 0o600); } catch { /* mode was set on create */ }
+}
+
 function holdReason(dir) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(holdFile(dir), 'utf8'));
+    const parsed = JSON.parse(readRegularText(holdFile(dir)));
     if (parsed && parsed.v === 1 && HOLD_REASONS.has(parsed.reason)) return parsed.reason;
   } catch {
     return '';
@@ -224,7 +266,7 @@ function readNonceClear(dir) {
   const file = clearFile(dir);
   let fd;
   try {
-    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    fd = fs.openSync(file, OPEN_READ | fs.constants.O_NOFOLLOW);
   } catch {
     return null;
   }
@@ -289,9 +331,15 @@ async function acceptNonceClear(session) {
     return false;
   }
   if (BigInt(clear.nonce) !== committed) return false;
+  let ready;
+  try {
+    ready = await session.broadcaster.prepare();
+  } catch {
+    return false;
+  }
   let chainNonce;
   try {
-    chainNonce = await session.broadcaster.accountNonce();
+    chainNonce = await session.broadcaster.accountNonce(undefined, ready);
   } catch {
     return false;
   }
@@ -299,7 +347,7 @@ async function acceptNonceClear(session) {
   const hashes = txHashesFor(session, current);
   let absent = false;
   try {
-    absent = hashes.length > 0 && await session.broadcaster.hashesAbsent(hashes);
+    absent = hashes.length > 0 && await session.broadcaster.hashesAbsent(hashes, undefined, ready);
   } catch {
     return false;
   }
@@ -311,9 +359,7 @@ async function acceptNonceClear(session) {
 
 function writeHold(dir, reason) {
   const code = HOLD_REASONS.has(reason) ? reason : 'anchor_reverted';
-  const file = holdFile(dir);
-  fs.writeFileSync(file, `${JSON.stringify({ v: 1, reason: code })}\n`, { mode: 0o600 });
-  try { fs.chmodSync(file, 0o600); } catch { /* mode was set on create */ }
+  writeRegularFile(holdFile(dir), `${JSON.stringify({ v: 1, reason: code })}\n`);
 }
 
 function bumpFile(dir) {
@@ -322,7 +368,7 @@ function bumpFile(dir) {
 
 function readBumps(dir) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(bumpFile(dir), 'utf8'));
+    const parsed = JSON.parse(readRegularText(bumpFile(dir)));
     if (parsed && parsed.v === 2 && parsed.bumps && typeof parsed.bumps === 'object') return parsed.bumps;
     if (parsed && parsed.v === 1 && Array.isArray(parsed.epochs)) {
       const bumps = {};
@@ -350,9 +396,7 @@ function rememberBump(dir, epoch, hashes) {
     if (typeof list[i] === 'string' && /^0x[0-9a-fA-F]{64}$/.test(list[i])) next.add(list[i].toLowerCase());
   }
   bumps[String(epoch)] = { hashes: [...next] };
-  const file = bumpFile(dir);
-  fs.writeFileSync(file, `${JSON.stringify({ v: 2, bumps })}\n`, { mode: 0o600 });
-  try { fs.chmodSync(file, 0o600); } catch { /* mode was set on create */ }
+  writeRegularFile(bumpFile(dir), `${JSON.stringify({ v: 2, bumps })}\n`);
 }
 
 export function finalityDepth(env) {

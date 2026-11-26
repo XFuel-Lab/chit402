@@ -444,10 +444,27 @@ function readIntentLog(text) {
   return records;
 }
 
+function intentReadFlags() {
+  return fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+}
+
+function intentAppendFlags() {
+  return fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT
+    | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+}
+
+function assertIntentRegular(io, fd) {
+  const st = io.fstatSync(fd);
+  if (!st || typeof st.isFile !== 'function' || st.isFile() !== true) {
+    throw coded('intent log is not a regular file', 'intent_log_refused');
+  }
+}
+
 /**
  * Append-only intent log. Each record is one JSON line. The write is checked
  * to the last byte, the file is fsynced, and the directory is fsynced when
  * the file is created. A torn final line is a coded error, not a parse throw.
+ * The file is opened O_NONBLOCK and must be a regular file on that fd.
  * @param {string} dir
  * @param {object} [io]
  */
@@ -459,8 +476,9 @@ export function openAnchorIntentLog(dir, io = fs) {
     append(record) {
       const line = `${JSON.stringify(record)}\n`;
       const existed = io.existsSync(file);
-      const fd = io.openSync(file, 'a', 0o600);
+      const fd = io.openSync(file, intentAppendFlags(), 0o600);
       try {
+        assertIntentRegular(io, fd);
         writeAll(io, fd, line);
         io.fsyncSync(fd);
       } finally {
@@ -473,7 +491,13 @@ export function openAnchorIntentLog(dir, io = fs) {
     },
     read() {
       if (!io.existsSync(file)) return [];
-      return readIntentLog(io.readFileSync(file, 'utf8'));
+      const fd = io.openSync(file, intentReadFlags());
+      try {
+        assertIntentRegular(io, fd);
+        return readIntentLog(io.readFileSync(fd, 'utf8'));
+      } finally {
+        io.closeSync(fd);
+      }
     },
   };
 }

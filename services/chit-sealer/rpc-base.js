@@ -516,8 +516,8 @@ export function createBaseBroadcaster(opts) {
     async prepare(signal) {
       return prepare(signal);
     },
-    async accountNonce(signal) {
-      const ready = await prepare(signal);
+    async accountNonce(signal, readyUrls) {
+      const ready = Array.isArray(readyUrls) ? readyUrls : await prepare(signal);
       if (ready.length < 2) throw coded('anchor_quorum');
       const values = [];
       for (let i = 0; i < ready.length; i += 1) {
@@ -537,8 +537,8 @@ export function createBaseBroadcaster(opts) {
       if (values[0] !== values[1]) throw coded('anchor_quorum');
       return values[0];
     },
-    async hashesAbsent(hashes, signal) {
-      const ready = await prepare(signal);
+    async hashesAbsent(hashes, signal, readyUrls) {
+      const ready = Array.isArray(readyUrls) ? readyUrls : await prepare(signal);
       if (ready.length < 2) return false;
       const list = Array.isArray(hashes) ? hashes : [];
       for (let i = 0; i < list.length; i += 1) {
