@@ -27,7 +27,7 @@ import {
   readFeeCapWei,
 } from '../../chit-sealer/rpc-base.js';
 import { readPendingLines } from '../../chit-store/intake.js';
-import { committedReceiptForLine, noteAnchored } from '../../chit-store/store.js';
+import { committedReceiptForLine, isHouseShapedEpoch, noteAnchored } from '../../chit-store/store.js';
 import logger from './logger.js';
 import { testSwitchesOn } from './test-switch.js';
 import { mainnetSealerEnabled, readClosedFlag, storeEnabled } from './v13-flags.js';
@@ -745,6 +745,7 @@ async function maybeBump(session) {
   if (watched && watched.mined) return end(true, null);
   if (bumpedEpochs(session.dir).has(String(current.epoch))) {
     report(session.log, 'anchor_bump_spent');
+    if (unminedPastStuck(session, current)) return end(false, 'anchor_bump_spent');
     return end(true, 'anchor_bump_spent');
   }
   let rows;
@@ -784,30 +785,78 @@ async function maybeBump(session) {
   return end(bumped && bumped.ok === true, reason);
 }
 
-function intakeStall(session) {
-  let intake;
+function hourEnd(hourStart) {
+  if (!Number.isSafeInteger(hourStart) || hourStart < 0) return null;
+  const end = hourStart + HOUR;
+  if (!Number.isSafeInteger(end)) return null;
+  return end;
+}
+
+function earlier(origin, candidate) {
+  if (candidate == null) return origin;
+  if (origin == null || candidate < origin) return candidate;
+  return origin;
+}
+
+function commitWaitStart(commit, hourStart) {
+  if (commit && Number.isSafeInteger(commit.broadcastAt) && commit.broadcastAt >= 0) return commit.broadcastAt;
+  if (commit && Number.isSafeInteger(commit.committedAt) && commit.committedAt >= 0) return commit.committedAt;
+  return hourEnd(hourStart);
+}
+
+function unminedPastStuck(session, current) {
+  let rows = [];
   try {
-    intake = pendingIntakeCount(session.sealer.store);
+    rows = session.sealer.intentLog.read();
   } catch {
-    return '';
+    return true;
   }
-  if (!intake.ok || intake.count <= 0) {
-    session.pendingSince = null;
-    return '';
-  }
-  const epoch = Number(session.sealer.state.anchorEpoch || 0);
+  const broadcast = [...rows].reverse().find((row) => (
+    row && row.nonce === String(current.nonce) && row.status === 'broadcast' && typeof row.at === 'string'
+  ));
+  const at = broadcast ? Date.parse(broadcast.at) : Number.NaN;
+  if (!Number.isFinite(at)) return true;
+  return Date.now() - at >= session.stuckMs;
+}
+
+function intakeStall(session) {
   const now = session.sealer.clock();
-  if (!session.pendingSince || session.pendingSince.epoch !== epoch) {
-    session.pendingSince = { epoch, at: now };
+  if (!Number.isSafeInteger(now) || now < 0) return '';
+  let origin = null;
+  try {
+    const pending = readPendingLines(session.sealer.store.dir, session.sealer.store.io);
+    if (pending.ok && Array.isArray(pending.lines)) {
+      for (let i = 0; i < pending.lines.length; i += 1) {
+        const row = pending.lines[i];
+        const hex = Buffer.from(row.line).toString('hex');
+        if (committedReceiptForLine(session.sealer.store, hex)) continue;
+        origin = earlier(origin, hourEnd(row.hourStart));
+      }
+    }
+  } catch {
+    // A missing intake file is not a stall by itself.
   }
-  const elapsed = now - session.pendingSince.at;
+  const commits = session.sealer.state && Array.isArray(session.sealer.state.commits)
+    ? session.sealer.state.commits
+    : [];
+  const epochs = session.sealer.store && session.sealer.store.epochs;
+  if (epochs && typeof epochs.values === 'function') {
+    for (const row of epochs.values()) {
+      if (!row || row.released === true || isHouseShapedEpoch(session.sealer.store, row)) continue;
+      const commit = commits.find((item) => Number(item.epoch) === Number(row.epoch));
+      origin = earlier(origin, commitWaitStart(commit, row.hourStart));
+    }
+  }
+  if (origin == null) return '';
+  const elapsed = now - origin;
   if (elapsed > stallHours(session.env) * 3600) return 'anchor_stalled';
   return '';
 }
 
 function finish(session, body) {
   const held = holdReason(session.dir);
-  const code = held || intakeStall(session);
+  const spent = body && body.ok === false && body.reason === 'anchor_bump_spent' ? 'anchor_bump_spent' : '';
+  const code = held || spent || intakeStall(session);
   if (code) {
     report(session.log, code);
     setAnchorStall(code);

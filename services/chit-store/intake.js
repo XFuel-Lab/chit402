@@ -297,11 +297,13 @@ export function readPendingLines(dir, io = fs) {
     }
     if (typeof row.bookId !== 'string' || row.bookId === '') return { ok: false, reason: 'intake_unreadable' };
     if (!PAYMENT_REF.test(row.paymentRef || '')) return { ok: false, reason: 'intake_unreadable' };
-    lines.push({
+    const line = {
       line: Uint8Array.from(Buffer.from(row.line, 'hex')),
       bookId: row.bookId,
       paymentRef: row.paymentRef,
-    });
+    };
+    if (Number.isSafeInteger(row.hourStart) && row.hourStart >= 0) line.hourStart = row.hourStart;
+    lines.push(line);
   }
   return { ok: true, lines };
 }

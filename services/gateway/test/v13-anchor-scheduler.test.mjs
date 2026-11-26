@@ -1106,6 +1106,67 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
     }
   });
 
+  test('a spent bump with no new traffic is a health stall inside the stuck window', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      state.receipt = null;
+      const bumped = await handle.tick();
+      assert.equal(bumped.ok, true, bumped.reason);
+      assert.equal(state.sends.length, 2);
+      const spent = await handle.tick();
+      assert.equal(spent.ok, false);
+      assert.equal(spent.reason, 'anchor_bump_spent');
+      assert.equal(state.sends.length, 2);
+      assert.equal(anchorStallStatus(), 'anchor_bump_spent');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_bump_spent');
+      assert.equal(world.store.epochs.get('1').released, false);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('committed unreleased lines stall from the journal clock with no new traffic', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2', CHIT_SEALER_STUCK_MS: '600000' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      assert.equal(anchorStallStatus(), null);
+      world.clock.now += 7201;
+      state.receipt = null;
+      const waited = await handle.tick();
+      assert.notEqual(waited.reason, 'anchor_bump_spent');
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_stalled');
+      assert.equal(world.store.epochs.get('1').released, false);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
   test('a mined receipt is left in place', async () => {
     const world = freshWorld();
     bookPending(world, 1);
@@ -1841,6 +1902,41 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
       assert.equal(Object.hasOwn(leaked, 'anchor_stall'), false);
       assert.equal(JSON.stringify(leaked).includes('CANARY'), false);
       assert.equal(publicHealthBody({ anchorStall: 'anchor_nonce_conflict' }).anchor_stall, 'anchor_nonce_conflict');
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stall clock on disk is still reported after a restart', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.latest = encodeLatestHead(9, 0);
+    const env = schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' });
+    const pair = await rpcPair(state);
+    const start = () => startV13AnchorScheduler({
+      env,
+      clock: () => world.clock.now,
+      runtime: { store: world.store, client: signer.client },
+      deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+    });
+    try {
+      const first = await start();
+      await first.tick();
+      world.clock.now += 7201;
+      const stalled = await first.tick();
+      assert.equal(stalled.reason, 'anchor_head_mismatch');
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      await first.stop();
+      const restarted = await start();
+      const again = await restarted.tick();
+      assert.equal(again.reason, 'anchor_head_mismatch');
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_stalled');
+      await restarted.stop();
     } finally {
       await pair.close();
       rmSync(world.root, { recursive: true, force: true });

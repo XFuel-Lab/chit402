@@ -468,6 +468,9 @@ function summaryOf(record) {
 function saveCommit(sealer, record) {
   const nonceNext = addLogSize(sealer.state.nextNonce, 1);
   if (!nonceNext.ok) return nonceNext;
+  const summary = summaryOf(record);
+  const committedAt = readClock(sealer);
+  if (Number.isSafeInteger(committedAt) && committedAt >= 0) summary.committedAt = committedAt;
   const next = {
     ...sealer.state,
     anchorEpoch: record.epoch,
@@ -477,7 +480,7 @@ function saveCommit(sealer, record) {
     nextNonce: nonceNext.size,
     leaves: record.leaves,
     tree: record.tree,
-    commits: sealer.state.commits.concat([summaryOf(record)]),
+    commits: sealer.state.commits.concat([summary]),
   };
   try {
     sealer.journal.write(next);
@@ -568,9 +571,13 @@ function publicView(record) {
 }
 
 function markBroadcast(sealer, nonce) {
-  const commits = sealer.state.commits.map((row) => (
-    row.nonce === nonce ? { ...row, broadcast: true } : row
-  ));
+  const broadcastAt = readClock(sealer);
+  const commits = sealer.state.commits.map((row) => {
+    if (row.nonce !== nonce) return row;
+    const next = { ...row, broadcast: true };
+    if (Number.isSafeInteger(broadcastAt) && broadcastAt >= 0) next.broadcastAt = broadcastAt;
+    return next;
+  });
   const next = { ...sealer.state, commits };
   sealer.journal.write(next);
 }

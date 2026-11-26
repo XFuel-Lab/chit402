@@ -69,6 +69,7 @@ export function publicHealthBody({
   ) {
     body.anchor_stall = anchorStall;
   }
+  if (anchorStall === 'anchor_bump_spent') body.anchor_stall = anchorStall;
   // Absent when nothing is quarantined, so a clean boot keeps the extra list off.
   // An acknowledged head stays in the list. It does not flip status to degraded.
   if (quarantinedHeads && Number(quarantinedHeads.count) > 0) {
