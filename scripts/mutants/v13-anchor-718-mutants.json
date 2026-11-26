@@ -258,7 +258,7 @@
     {
       "id": "L3e",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "    if (seen == null) {\n      seen = now;\n      try { writeStallSeen(session.dir, now); } catch { /* this tick still uses now */ }\n    }\n    origin = earlier(origin, seen);",
+      "find": "    const stamp = readStallSeen(session.dir, now);\n    let seen = stamp.at;\n    if (stamp.unreadable === true) {\n      seen = seen == null ? now : seen;\n      stallSeenMem.set(session.dir, seen);\n      try { writeStallSeen(session.dir, seen); } catch { /* the in-memory stamp still starts the clock */ }\n    } else if (seen == null) {\n      seen = now;\n      stallSeenMem.delete(session.dir);\n      try { writeStallSeen(session.dir, seen); } catch { /* a missing file is rewritten */ }\n    }\n    origin = earlier(origin, seen);",
       "replace": "    origin = origin;",
       "note": "a null hourStart does not use the persisted stamp"
     },
@@ -317,6 +317,90 @@
       "find": "if (Number.isSafeInteger(row.hourStart) && row.hourStart >= 0) line.hourStart = row.hourStart;",
       "replace": "if (row.hourStart != null) line.hourStart = row.hourStart;",
       "note": "a negative hourStart is kept"
+    },
+    {
+      "id": "N4",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    if (!regular) {\n      const err = new Error('hold temp is not a regular file');\n      err.code = 'ENOTREG';\n      throw err;\n    }\n    fs.unlinkSync(tmp);",
+      "replace": "    if (!regular) {\n      const err = new Error('hold temp is not a regular file');\n      err.code = 'ENOTREG';\n      throw err;\n    }",
+      "note": "a stale regular temp file is left in place"
+    },
+    {
+      "id": "N8",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  let existing = null;\n  try {\n    existing = fs.lstatSync(tmp);\n  } catch (err) {\n    if (!err || err.code !== 'ENOENT') throw err;\n  }\n  if (existing) {\n    const regular = typeof existing.isFile === 'function' && existing.isFile() === true\n      && !(typeof existing.isSymbolicLink === 'function' && existing.isSymbolicLink());\n    if (!regular) {\n      const err = new Error('hold temp is not a regular file');\n      err.code = 'ENOTREG';\n      throw err;\n    }\n    fs.unlinkSync(tmp);\n  }",
+      "replace": "  void tmp;",
+      "note": "a stale temp file is not removed before the exclusive create"
+    },
+    {
+      "id": "N5",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL\n    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL\n    | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "the temp open follows a symlink"
+    },
+    {
+      "id": "N9",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL\n    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT\n    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "the temp open does not use O_EXCL"
+    },
+    {
+      "id": "N6",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "      offset += n;\n    }\n    fs.fsyncSync(fd);",
+      "replace": "      offset += n;\n    }",
+      "note": "the temp file is not fsynced"
+    },
+    {
+      "id": "N7",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  fs.renameSync(tmp, file);\n  fsyncDir(dir);",
+      "replace": "  fs.renameSync(tmp, file);",
+      "note": "the directory is not fsynced"
+    },
+    {
+      "id": "N10",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    try { fs.unlinkSync(tmp); } catch { /* tmp may already be gone */ }\n    throw err;",
+      "replace": "    try { fs.unlinkSync(tmp); } catch { /* tmp may already be gone */ }\n    try { fs.unlinkSync(file); } catch { /* a failed write must keep the previous hold */ }\n    throw err;",
+      "note": "a failed write deletes the previous hold"
+    },
+    {
+      "id": "N15",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at < 0 || parsed.at > now) {",
+      "replace": "  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at > now) {",
+      "note": "a seen file at -1 is accepted"
+    },
+    {
+      "id": "N16",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at < 0 || parsed.at > now) {",
+      "replace": "  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at < 0) {",
+      "note": "a seen file in the future is accepted"
+    },
+    {
+      "id": "N17",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  try { fs.chmodSync(tmp, 0o600); } catch { /* mode was set on create */ }",
+      "replace": "  void tmp;",
+      "note": "a rewritten hold keeps the previous mode"
+    },
+    {
+      "id": "N18",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  try { fs.chmodSync(file, 0o600); } catch { /* mode was set on create */ }",
+      "replace": "  void file;",
+      "note": "a rewritten bump file keeps the previous mode"
+    },
+    {
+      "id": "N19",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "      stallSeenMem.set(session.dir, seen);",
+      "replace": "      void seen;",
+      "note": "an unwritable seen file has no in-memory stamp"
     }
   ]
 }

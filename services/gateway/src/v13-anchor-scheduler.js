@@ -85,6 +85,7 @@ let anchorStall = null;
 let legacyUnreleased = 0;
 
 const STALL_SEEN_FILE = 'anchor-stall-seen.json';
+const stallSeenMem = new Map();
 
 /** Allow-listed stall code for /health. Null when the scheduler is moving. */
 export function anchorStallStatus() {
@@ -242,6 +243,8 @@ function writeRegularFile(file, text) {
   try { fs.chmodSync(file, 0o600); } catch { /* mode was set on create */ }
 }
 
+// anchor_hold_unreadable stays until a builder deletes anchor-hold.json.
+// The scheduler does not clear that file itself.
 function holdReason(dir) {
   let text;
   try {
@@ -269,14 +272,44 @@ function fsyncDir(dir) {
   }
 }
 
+function tempPath(file) {
+  return `${file}.${process.pid}.tmp`;
+}
+
+function hostileTemp(file) {
+  let existing = null;
+  try {
+    existing = fs.lstatSync(tempPath(file));
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') return true;
+    return false;
+  }
+  const regular = typeof existing.isFile === 'function' && existing.isFile() === true
+    && !(typeof existing.isSymbolicLink === 'function' && existing.isSymbolicLink());
+  return !regular;
+}
+
 function atomicReplace(dir, file, text) {
-  const tmp = `${file}.${process.pid}.tmp`;
-  try { fs.unlinkSync(tmp); } catch (err) {
+  const tmp = tempPath(file);
+  let existing = null;
+  try {
+    existing = fs.lstatSync(tmp);
+  } catch (err) {
     if (!err || err.code !== 'ENOENT') throw err;
+  }
+  if (existing) {
+    const regular = typeof existing.isFile === 'function' && existing.isFile() === true
+      && !(typeof existing.isSymbolicLink === 'function' && existing.isSymbolicLink());
+    if (!regular) {
+      const err = new Error('hold temp is not a regular file');
+      err.code = 'ENOTREG';
+      throw err;
+    }
+    fs.unlinkSync(tmp);
   }
   const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
     | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
-  const fd = fs.openSync(tmp, flags, 0o600);
+  const fd = fs.openSync(tmp, flags, 0o666);
   try {
     const st = fs.fstatSync(fd);
     if (typeof st.isFile !== 'function' || st.isFile() !== true) {
@@ -871,14 +904,26 @@ function stallSeenFile(dir) {
   return path.join(dir, STALL_SEEN_FILE);
 }
 
-function readStallSeen(dir) {
+function readStallSeen(dir, now) {
+  let text;
   try {
-    const parsed = JSON.parse(readRegularText(stallSeenFile(dir)));
-    if (parsed && parsed.v === 1 && Number.isSafeInteger(parsed.at) && parsed.at >= 0) return parsed.at;
+    text = readRegularText(stallSeenFile(dir));
+  } catch (err) {
+    if (!err || err.code === 'ENOENT') return { at: null };
+    const kept = stallSeenMem.has(dir) ? stallSeenMem.get(dir) : null;
+    return { at: kept, unreadable: true };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
   } catch {
     return null;
   }
-  return null;
+  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at < 0 || parsed.at > now) {
+    return { at: null };
+  }
+  stallSeenMem.set(dir, parsed.at);
+  return { at: parsed.at };
 }
 
 function writeStallSeen(dir, at) {
@@ -925,13 +970,20 @@ function intakeStall(session) {
     // A missing intake file is not a stall by itself.
   }
   if (nullHour) {
-    let seen = readStallSeen(session.dir);
-    if (seen == null) {
+    const stamp = readStallSeen(session.dir, now);
+    let seen = stamp.at;
+    if (stamp.unreadable === true) {
+      seen = seen == null ? now : seen;
+      stallSeenMem.set(session.dir, seen);
+      try { writeStallSeen(session.dir, seen); } catch { /* the in-memory stamp still starts the clock */ }
+    } else if (seen == null) {
       seen = now;
-      try { writeStallSeen(session.dir, now); } catch { /* this tick still uses now */ }
+      stallSeenMem.delete(session.dir);
+      try { writeStallSeen(session.dir, seen); } catch { /* a missing file is rewritten */ }
     }
     origin = earlier(origin, seen);
   } else {
+    stallSeenMem.delete(session.dir);
     try { fs.unlinkSync(stallSeenFile(session.dir)); } catch { /* no stamp to drop */ }
   }
   const commits = session.sealer.state && Array.isArray(session.sealer.state.commits)
@@ -979,6 +1031,9 @@ export async function runAnchorTick(session) {
     return finish(session, end(false, err && err.code));
   }
   try {
+    if (hostileTemp(holdFile(session.dir))) {
+      return finish(session, end(false, 'anchor_hold_unreadable'));
+    }
     const heldNow = holdReason(session.dir);
     if (heldNow === 'anchor_nonce_retired') return finish(session, end(false, 'anchor_nonce_retired'));
     if (await acceptNonceClear(session)) return finish(session, end(false, 'anchor_nonce_retired'));
