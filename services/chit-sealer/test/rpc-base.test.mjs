@@ -10,8 +10,10 @@ import {
   ANCHOR_GAS_FLOOR,
   ANCHOR_GAS_LIMIT,
   ANCHORED_TOPIC,
+  anchorLogFilter,
   assertAnchorWire,
   assertSealerRpcPair,
+  classifyNodeError,
   classifySealerRpcIndependence,
   createBaseBroadcaster,
   observedChainOk,
@@ -141,8 +143,27 @@ describe('v13 base rpc', { concurrency: false }, () => {
     assert.equal(observedChainOk('84532'), false);
   });
 
-  test('a wire that is not the pinned anchor is refused before send', () => {
-    assert.throws(() => assertAnchorWire('0x02'), (err) => err.code === 'anchor_target');
+  test('a wire that is not the pinned anchor is refused before send', async () => {
+    let called = false;
+    const broadcaster = createBaseBroadcaster({
+      urls: [PRIMARY, SECONDARY],
+      fetchImpl: async () => {
+        called = true;
+        throw new Error('fetch');
+      },
+      timeoutMs: 200,
+    });
+    await assert.rejects(() => broadcaster.sendRaw('0x02'), (err) => err.code === 'anchor_target');
+    assert.equal(called, false);
+    assert.equal(classifyNodeError('already known'), 'known');
+    assert.equal(classifyNodeError('nonce too low'), 'known');
+    assert.equal(classifyNodeError('replacement transaction underpriced'), 'underpriced');
+    assert.equal(classifyNodeError('https://primary.example.test/?apiKey=CANARY_RPC_SECRET'), 'rejected');
+    const filter = anchorLogFilter('0x10');
+    assert.equal(filter.fromBlock, '0x10');
+    assert.equal(filter.toBlock, '0x10');
+    assert.notEqual(filter.fromBlock, '0x0');
+    assert.notEqual(filter.toBlock, 'latest');
   });
 
   test('an unfinalized Anchored log is not admitted', () => {

@@ -6361,10 +6361,11 @@ export async function startServer() {
       if (shuttingDown) return;
       shuttingDown = true;
       logger.info({ signal }, 'Shutting down M2M API server…');
+      void (async () => {
       try {
-        stopV13AnchorScheduler();
+        await stopV13AnchorScheduler();
       } catch {
-        // Never blocks shutdown.
+        // The stop is already bounded. Shutdown continues.
       }
       // Flush any in-place task mutations to disk so the public verify_url receipt
       // reflects the latest state after a restart (best-effort; safe if unsupported).
@@ -6403,6 +6404,7 @@ export async function startServer() {
         logger.info('HTTP server closed cleanly');
         process.exit(0);
       });
+      })();
     };
     process.once('SIGTERM', () => shutdown('SIGTERM'));
     process.once('SIGINT', () => shutdown('SIGINT'));

@@ -527,9 +527,16 @@ async function broadcastRecord(sealer, record, send, signal) {
     markBroadcast(sealer, record.nonce);
     return { ok: true, raw: row.raw, tx: row.tx, calldata: record.calldata, record: publicView(record) };
   } catch (err) {
+    const named = err && err.code;
+    const reason = named === 'anchor_simulation_failed'
+      || named === 'anchor_head_mismatch'
+      || named === 'anchor_reverted'
+      || named === 'anchor_quorum'
+      ? named
+      : 'broadcast_failed';
     return {
       ok: false,
-      reason: 'broadcast_failed',
+      reason,
       committed: true,
       kind: err.kind || classifyAnchorSendError(err),
       backoffMs: err.backoffMs || anchorBackoffMs(1),

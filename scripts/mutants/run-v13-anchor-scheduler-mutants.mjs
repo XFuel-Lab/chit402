@@ -184,7 +184,10 @@ const hollow = tally.HOLLOW || 0;
 const equivalent = tally.EQUIVALENT || 0;
 const scored = killed + survived;
 const score = scored === 0 ? 0 : killed / scored;
-const must = new Set(['AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8', 'AS9', 'AS10']);
+const must = new Set([
+  'AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8', 'AS9', 'AS10',
+  'AS11', 'AS12', 'AS13', 'AS14', 'AS15', 'AS16', 'AS17', 'AS18', 'AS19', 'AS20',
+]);
 const missed = rows.filter((row) => must.has(row.id) && row.result !== 'KILLED');
 
 process.stdout.write(`TALLY\t${JSON.stringify({ ...tally, equivalent })}\tRESTORED\t${dirty.length ? `NO: ${dirty.join(',')}` : 'yes'}\n`);

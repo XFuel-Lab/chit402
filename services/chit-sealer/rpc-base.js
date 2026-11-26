@@ -13,7 +13,7 @@
 
 import net from 'node:net';
 import { bytesToHex } from '../../packages/cs2-core/ecdsa/bytes.js';
-import { eip1559Decode } from '../../packages/cs2-core/ecdsa/eip1559.js';
+import { eip1559Decode, eip1559TxHash } from '../../packages/cs2-core/ecdsa/eip1559.js';
 import { keccak256 } from '../../packages/cs2-core/ecdsa/keccak.js';
 import { ANCHOR_SELECTOR } from './calldata.js';
 import {
@@ -36,7 +36,11 @@ const RPC_TIMEOUT_MS = 8000;
 const RPC_BODY_MAX = 1_000_000;
 
 const DOMAIN_SELECTOR = bytesToHex(keccak256(new TextEncoder().encode('domain()')).subarray(0, 4));
+const LATEST_SELECTOR = bytesToHex(keccak256(new TextEncoder().encode('latest()')).subarray(0, 4));
 const ANCHORED_TOPIC = `0x${bytesToHex(keccak256(new TextEncoder().encode('Anchored(uint64,uint64,uint64,bytes32,bytes32,uint8)')))}`;
+
+export const DOMAIN_CALL = `0x${DOMAIN_SELECTOR}`;
+export const LATEST_CALL = `0x${LATEST_SELECTOR}`;
 
 const LOOPBACK_HOSTS = new net.BlockList();
 LOOPBACK_HOSTS.addSubnet('127.0.0.0', 8, 'ipv4');
@@ -173,6 +177,52 @@ export function assertSealerRpcPair(left, right, env) {
     if (!test && host && hostIsLoopback(host)) throw coded('v13_boot_refused');
   }
   return [String(left).trim(), String(right).trim()];
+}
+
+/**
+ * Allow-listed class of a node error string. The raw text is not returned.
+ * @param {unknown} message
+ */
+export function classifyNodeError(message) {
+  const text = String(message || '').toLowerCase();
+  if (text.includes('already known') || text.includes('nonce too low')) return 'known';
+  if (
+    text.includes('replacement transaction underpriced')
+    || text.includes('transaction underpriced')
+    || text.includes('underpriced')
+  ) return 'underpriced';
+  if (
+    text.includes('insufficient funds')
+    || text.includes('intrinsic gas')
+    || text.includes('exceeds block gas')
+    || text.includes('invalid sender')
+    || text.includes('execution reverted')
+    || text.includes('nonce has already been used')
+    || text.includes('dropped')
+  ) return 'permanent';
+  return 'rejected';
+}
+
+/** ABI words for ChitAnchor.latest(). Tests and the boot probe share this. */
+export function encodeLatestHead(epoch, hourStart) {
+  const word = (value) => BigInt(value).toString(16).padStart(64, '0');
+  return `0x${word(epoch)}${word(hourStart)}${word(0)}${'0'.repeat(64)}${'0'.repeat(64)}`;
+}
+
+/**
+ * One block, one contract, one topic. Never from genesis to latest.
+ * @param {unknown} blockNumber
+ */
+export function anchorLogFilter(blockNumber) {
+  const block = hexQuantity(blockNumber);
+  if (block == null) throw coded('anchor_rpc_unavailable');
+  const hex = `0x${block.toString(16)}`;
+  return {
+    address: MAINNET_ANCHOR,
+    fromBlock: hex,
+    toBlock: hex,
+    topics: [ANCHORED_TOPIC],
+  };
 }
 
 function hexQuantity(value) {
@@ -320,10 +370,9 @@ async function rpcCall(fetchImpl, url, method, params, signal, timeoutMs) {
       signal: withTimeout(signal, timeoutMs),
       cache: 'no-store',
     });
-  } catch (err) {
+  } catch {
     const wrapped = coded('anchor_rpc_unavailable');
     wrapped.transport = true;
-    wrapped.cause = err;
     throw wrapped;
   }
   if (!res || res.ok !== true) {
@@ -355,6 +404,8 @@ async function rpcCall(fetchImpl, url, method, params, signal, timeoutMs) {
   if (!body || typeof body !== 'object' || body.error) {
     const err = coded('broadcast_failed');
     err.transport = false;
+    const raw = body && body.error && typeof body.error.message === 'string' ? body.error.message : '';
+    err.kind = classifyNodeError(raw);
     throw err;
   }
   return body.result;
@@ -395,7 +446,7 @@ export function createBaseBroadcaster(opts) {
         fetchImpl,
         url,
         'eth_call',
-        [{ to: MAINNET_ANCHOR, data: `0x${DOMAIN_SELECTOR}` }, 'latest'],
+        [{ to: MAINNET_ANCHOR, data: DOMAIN_CALL }, 'latest'],
         signal,
         timeoutMs,
       );
@@ -451,11 +502,16 @@ export function createBaseBroadcaster(opts) {
     async sendRaw(wire, signal) {
       assertAnchorWire(wire);
       const hash = await firstReady(signal, async (url) => {
-        const sent = await rpcCall(fetchImpl, url, 'eth_sendRawTransaction', [wire], signal, timeoutMs);
-        if (typeof sent !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(sent)) {
-          throw coded('broadcast_failed');
+        try {
+          const sent = await rpcCall(fetchImpl, url, 'eth_sendRawTransaction', [wire], signal, timeoutMs);
+          if (typeof sent !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(sent)) {
+            throw coded('broadcast_failed');
+          }
+          return sent;
+        } catch (err) {
+          if (err && err.kind === 'known') return `0x${bytesToHex(eip1559TxHash(wire))}`;
+          throw err;
         }
-        return sent;
       });
       return hash;
     },
@@ -465,34 +521,140 @@ export function createBaseBroadcaster(opts) {
         rpcCall(fetchImpl, url, 'eth_getTransactionReceipt', [txHash], signal, timeoutMs)
       ));
     },
-    async finalizedAnchored(signal) {
-      return firstReady(signal, async (url) => {
-        const chainId = await rpcCall(fetchImpl, url, 'eth_chainId', [], signal, timeoutMs);
-        if (!observedChainOk(chainId)) throw coded('anchor_chain_mismatch');
-        const finalized = await rpcCall(fetchImpl, url, 'eth_getBlockByNumber', ['finalized', false], signal, timeoutMs);
-        const finalizedNumber = finalized && finalized.number != null ? finalized.number : null;
-        if (finalizedNumber == null) return [];
-        const logs = await rpcCall(fetchImpl, url, 'eth_getLogs', [{
-          address: MAINNET_ANCHOR,
-          fromBlock: '0x0',
-          toBlock: 'latest',
-          topics: [ANCHORED_TOPIC],
-        }], signal, timeoutMs);
-        const senders = new Map();
-        const list = Array.isArray(logs) ? logs : [];
-        for (let i = 0; i < list.length; i += 1) {
-          const hash = list[i] && list[i].transactionHash;
-          if (typeof hash !== 'string' || senders.has(hash)) continue;
-          const tx = await rpcCall(fetchImpl, url, 'eth_getTransactionByHash', [hash], signal, timeoutMs);
-          senders.set(hash, tx && typeof tx.from === 'string' ? tx.from : '');
+    async chainHead(signal) {
+      const ready = await prepare(signal);
+      const heads = [];
+      for (let i = 0; i < ready.length; i += 1) {
+        try {
+          const data = await rpcCall(
+            fetchImpl,
+            ready[i],
+            'eth_call',
+            [{ to: MAINNET_ANCHOR, data: LATEST_CALL }, 'latest'],
+            signal,
+            timeoutMs,
+          );
+          const head = decodeLatest(data);
+          if (!head) throw coded('anchor_head_mismatch');
+          heads.push(head);
+        } catch (err) {
+          if (err && err.code === 'anchor_head_mismatch') throw err;
+          if (!err || err.transport !== true) throw coded('anchor_head_mismatch');
         }
-        return selectFinalizedAnchored({
-          logs: list,
-          finalizedNumber,
-          txFromOf: (log) => senders.get(log.transactionHash) || '',
-        });
-      });
+      }
+      if (heads.length === 0) throw coded('anchor_rpc_unavailable');
+      if (heads.length >= 2 && (heads[0].epoch !== heads[1].epoch || heads[0].hourStart !== heads[1].hourStart)) {
+        throw coded('anchor_quorum');
+      }
+      return heads[0];
     },
+    async simulateAnchor(tx, signal) {
+      let data = '';
+      if (tx && tx.data instanceof Uint8Array) data = `0x${bytesToHex(tx.data)}`;
+      else if (typeof tx?.data === 'string') data = tx.data.startsWith('0x') ? tx.data : `0x${tx.data}`;
+      const gas = tx && tx.gasLimit != null ? `0x${BigInt(tx.gasLimit).toString(16)}` : '0x493e0';
+      const ready = await prepare(signal);
+      let saw = false;
+      for (let i = 0; i < ready.length; i += 1) {
+        try {
+          await rpcCall(fetchImpl, ready[i], 'eth_call', [{
+            from: MAINNET_CHECKPOINT,
+            to: MAINNET_ANCHOR,
+            data,
+            gas,
+          }, 'latest'], signal, timeoutMs);
+          saw = true;
+        } catch (err) {
+          if (err && err.transport === true) continue;
+          throw coded('anchor_simulation_failed');
+        }
+      }
+      if (!saw) throw coded('anchor_rpc_unavailable');
+    },
+    async observeTx(txHash, signal) {
+      if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) return { pending: true };
+      const ready = await prepare(signal);
+      const rows = [];
+      for (let i = 0; i < ready.length; i += 1) {
+        try {
+          rows.push(await readObservation(fetchImpl, ready[i], txHash, signal, timeoutMs));
+        } catch (err) {
+          if (!err || err.transport !== true) throw err;
+        }
+      }
+      if (rows.length === 0) throw coded('anchor_rpc_unavailable');
+      if (ready.length >= 2 && rows.length >= 2 && !sameObservation(rows[0], rows[1])) {
+        throw coded('anchor_quorum');
+      }
+      return rows[0];
+    },
+  };
+}
+
+function decodeLatest(word) {
+  const epoch = hexQuantity(`0x${wordHex(word, 0)}`);
+  const hourStart = hexQuantity(`0x${wordHex(word, 1)}`);
+  if (epoch == null || hourStart == null) return null;
+  if (!Number.isSafeInteger(Number(epoch)) || !Number.isSafeInteger(Number(hourStart))) return null;
+  return { epoch: Number(epoch), hourStart: Number(hourStart) };
+}
+
+function sameObservation(left, right) {
+  if (!left || !right) return false;
+  if (left.reverted === true || right.reverted === true) {
+    return left.reverted === true && right.reverted === true && left.blockNumber === right.blockNumber;
+  }
+  if (left.pending === true || right.pending === true) return left.pending === true && right.pending === true;
+  return left.blockNumber === right.blockNumber
+    && left.status === right.status
+    && left.from === right.from
+    && left.finalized === right.finalized
+    && left.epoch === right.epoch
+    && left.hourStart === right.hourStart
+    && left.root === right.root
+    && left.stateRoot === right.stateRoot;
+}
+
+async function readObservation(fetchImpl, url, txHash, signal, timeoutMs) {
+  const receipt = await rpcCall(fetchImpl, url, 'eth_getTransactionReceipt', [txHash], signal, timeoutMs);
+  if (!receipt) return { pending: true };
+  const status = hexQuantity(receipt.status);
+  const blockNumber = hexQuantity(receipt.blockNumber);
+  if (status == null || blockNumber == null) throw coded('anchor_rpc_unavailable');
+  if (status === 0n) return { reverted: true, status, blockNumber };
+  const tx = await rpcCall(fetchImpl, url, 'eth_getTransactionByHash', [txHash], signal, timeoutMs);
+  const from = tx && typeof tx.from === 'string' ? tx.from : '';
+  const finalized = await rpcCall(fetchImpl, url, 'eth_getBlockByNumber', ['finalized', false], signal, timeoutMs);
+  const finalizedNumber = finalized && finalized.number != null ? finalized.number : null;
+  let logs = Array.isArray(receipt.logs) ? receipt.logs : [];
+  try {
+    const queried = await rpcCall(fetchImpl, url, 'eth_getLogs', [anchorLogFilter(blockNumber)], signal, timeoutMs);
+    if (logs.length === 0 && Array.isArray(queried) && queried.length > 0) logs = queried;
+  } catch (err) {
+    if (!err || err.transport !== true) throw err;
+  }
+  const admitted = selectFinalizedAnchored({
+    logs,
+    finalizedNumber: blockNumber,
+    txFromOf: () => from,
+  });
+  const fin = hexQuantity(finalizedNumber);
+  const isFinal = fin != null && blockNumber <= fin && admitted.length > 0;
+  if (admitted.length === 0) {
+    return {
+      pending: false,
+      finalized: false,
+      status,
+      blockNumber,
+      from: addressHex(from),
+    };
+  }
+  return {
+    ...admitted[0],
+    status,
+    blockNumber,
+    from: addressHex(from),
+    finalized: isFinal,
   };
 }
 

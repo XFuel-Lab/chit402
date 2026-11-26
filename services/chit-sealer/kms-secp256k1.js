@@ -459,14 +459,17 @@ export function openAnchorIntentLog(dir, io = fs) {
     append(record) {
       const line = `${JSON.stringify(record)}\n`;
       const existed = io.existsSync(file);
-      const fd = io.openSync(file, 'a');
+      const fd = io.openSync(file, 'a', 0o600);
       try {
         writeAll(io, fd, line);
         io.fsyncSync(fd);
       } finally {
         io.closeSync(fd);
       }
-      if (!existed) fsyncDirectory(io, dir);
+      if (!existed) {
+        if (typeof io.chmodSync === 'function') io.chmodSync(file, 0o600);
+        fsyncDirectory(io, dir);
+      }
     },
     read() {
       if (!io.existsSync(file)) return [];

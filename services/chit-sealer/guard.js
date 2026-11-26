@@ -7,8 +7,9 @@
  * is sealer_unavailable. The log line is the code only.
  *
  * After a timeout the generation moves, so a late Sign cannot send, and
- * the slot stays held so another close does not start. This module does
- * not install a timer and is not called from startServer.
+ * the slot is released so the next tick can recover. A per-call abort
+ * fires with the timeout. This module does not install an interval and
+ * is not called from startServer.
  */
 
 import { closeHour } from './close.js';
@@ -56,13 +57,21 @@ export function resetSealerGuardForTest() {
   slot.busy = false;
 }
 
+const GUARD_REASONS = new Set([
+  'anchor_simulation_failed',
+  'anchor_head_mismatch',
+  'anchor_reverted',
+  'anchor_quorum',
+]);
+
 /**
- * The production close entry. closeHour is called from here only.
- * @param {object} sealer
- * @param {object} input
+ * One in-flight sealer attempt. close, recover, and fee replacement share
+ * this slot. A timeout aborts the call and moves the generation, then
+ * releases the slot.
+ * @param {(ctx: { signal: AbortSignal, stale: () => boolean }) => Promise<object>} fn
  * @param {{ env?: object, log?: Function }} [deps]
  */
-export async function guardCloseHour(sealer, input, deps = {}) {
+export async function withSealerGuard(fn, deps = {}) {
   if (slot.busy) return { ok: false, reason: 'sealer_busy' };
   slot.busy = true;
   const generation = slot.generation;
@@ -70,7 +79,6 @@ export async function guardCloseHour(sealer, input, deps = {}) {
   const log = deps && deps.log;
   const ms = sealerCloseTimeoutMs(env);
   const ac = new AbortController();
-  const body = input || {};
   let timedOut = false;
   let timer;
 
@@ -78,22 +86,13 @@ export async function guardCloseHour(sealer, input, deps = {}) {
     return timedOut || slot.generation !== generation || ac.signal.aborted;
   }
 
-  async function guardedSend(wire) {
-    if (stale()) throw sealerRefused();
-    const tx = await body.send(wire, { signal: ac.signal });
-    if (stale()) throw sealerRefused();
-    return tx;
-  }
-
-  const next = typeof body.send === 'function'
-    ? { ...body, send: guardedSend, signal: ac.signal }
-    : body;
-  const work = Promise.resolve().then(() => closeHour(sealer, next));
+  const work = Promise.resolve().then(() => fn({ signal: ac.signal, stale }));
   const guarded = work.then(
     (value) => (stale() ? { ok: false, reason: 'sealer_unavailable' } : value),
     (err) => {
       logCloseRefusal(log);
-      void err;
+      const code = err && err.code;
+      if (typeof code === 'string' && GUARD_REASONS.has(code)) return { ok: false, reason: code };
       return { ok: false, reason: 'sealer_unavailable' };
     },
   );
@@ -113,6 +112,28 @@ export async function guardCloseHour(sealer, input, deps = {}) {
     ]);
   } finally {
     clearTimeout(timer);
-    if (!timedOut) slot.busy = false;
+    slot.busy = false;
   }
+}
+
+/**
+ * The production close entry. closeHour is called from here only.
+ * @param {object} sealer
+ * @param {object} input
+ * @param {{ env?: object, log?: Function }} [deps]
+ */
+export async function guardCloseHour(sealer, input, deps = {}) {
+  return withSealerGuard(({ signal, stale }) => {
+    const body = input || {};
+    async function guardedSend(wire) {
+      if (stale()) throw sealerRefused();
+      const tx = await body.send(wire, { signal });
+      if (stale()) throw sealerRefused();
+      return tx;
+    }
+    const next = typeof body.send === 'function'
+      ? { ...body, send: guardedSend, signal }
+      : body;
+    return closeHour(sealer, next);
+  }, deps);
 }

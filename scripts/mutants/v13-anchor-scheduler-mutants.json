@@ -68,8 +68,8 @@
     {
       "id": "AS9",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "    if (pending.length > 0) {\n      const recovered = await recover(session.sealer, { send: session.send });",
-      "replace": "    if (pending.length > 0) {\n      const recovered = { ok: false, reason: 'nothing_pending' };",
+      "find": "      const recovered = await withSealerGuard(({ signal }) => recover(session.sealer, {\n        send: (wire) => session.send(wire, { signal }),\n      }), { env: session.env, log: (fields) => report(session.log, fields && fields.code) });",
+      "replace": "      const recovered = { ok: false, reason: 'nothing_pending' };",
       "note": "interrupted commit is not recovered"
     },
     {
@@ -78,6 +78,76 @@
       "find": "  } catch (err) {\n    report(session.log, err && err.code);\n    return end(false, err && err.code);\n  }",
       "replace": "  } catch (err) {\n    report(session.log, err && err.code);\n    try { session.log({ err, secret: err && err.cause && err.cause.message, key: session.env && session.env.CHIT_CHECKPOINT_KMS_KEY_ID }); } catch { /* leaked */ }\n    return end(false, err && err.code);\n  }",
       "note": "tick log includes the RPC error and the key id"
+    },
+    {
+      "id": "AS11",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    async sendRaw(wire, signal) {\n      assertAnchorWire(wire);",
+      "replace": "    async sendRaw(wire, signal) {\n      void wire;",
+      "note": "signed wire is not checked before send"
+    },
+    {
+      "id": "AS12",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "  const isFinal = fin != null && blockNumber <= fin && admitted.length > 0;",
+      "replace": "  const isFinal = fin != null && true && admitted.length > 0;",
+      "note": "unfinalized receipt is treated as final"
+    },
+    {
+      "id": "AS13",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "        if (!err || err.transport !== true) throw last;",
+      "replace": "        if (false) throw last;",
+      "note": "JSON-RPC error is retried on the second RPC"
+    },
+    {
+      "id": "AS14",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (deps && deps.testInjection === true && testSwitchesOn(env) && deps.signer) return deps.signer;",
+      "replace": "  if (deps && deps.testInjection === true && deps.signer) return deps.signer;",
+      "note": "injected signer accepted outside the test switch"
+    },
+    {
+      "id": "AS15",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (!observed || observed.pending !== true) return null;",
+      "replace": "  if (false) return null;",
+      "note": "a mined receipt is fee-bumped"
+    },
+    {
+      "id": "AS16",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "          if (err && err.kind === 'known') return `0x${bytesToHex(eip1559TxHash(wire))}`;",
+      "replace": "          if (false) return `0x${bytesToHex(eip1559TxHash(wire))}`;",
+      "note": "already-known is not treated as the committed send"
+    },
+    {
+      "id": "AS17",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (observed && observed.reverted === true) {\n    writeHold(session.dir);\n    report(session.log, 'anchor_reverted');\n    return { held: true };\n  }",
+      "replace": "  if (false) {\n    writeHold(session.dir);\n    report(session.log, 'anchor_reverted');\n    return { held: true };\n  }",
+      "note": "a reverted anchor does not halt the sealer"
+    },
+    {
+      "id": "AS18",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    fromBlock: hex,\n    toBlock: hex,",
+      "replace": "    fromBlock: '0x0',\n    toBlock: 'latest',",
+      "note": "log query scans from genesis to latest"
+    },
+    {
+      "id": "AS19",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  rememberBump(session.dir, current.epoch);",
+      "replace": "  void current;",
+      "note": "a fee bump is not remembered across ticks"
+    },
+    {
+      "id": "AS20",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (ceiling == null) throw bootRefused();",
+      "replace": "  if (false) throw bootRefused();",
+      "note": "a missing fee cap is accepted when the house is configured"
     }
   ]
 }
