@@ -4,6 +4,9 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { describe, test } from 'node:test';
+import { bytesToHex, concat, hexToBytes } from '../../../packages/cs2-core/ecdsa/bytes.js';
+import { eip1559Serialize } from '../../../packages/cs2-core/ecdsa/eip1559.js';
+import { rlpBytes, rlpInt, rlpList } from '../../../packages/cs2-core/ecdsa/rlp.js';
 import { ANCHOR_SELECTOR } from '../calldata.js';
 import { MAINNET_ANCHOR, MAINNET_CHECKPOINT, MAINNET_DOMAIN } from '../mainnet-pin.js';
 import {
@@ -156,7 +159,7 @@ describe('v13 base rpc', { concurrency: false }, () => {
     await assert.rejects(() => broadcaster.sendRaw('0x02'), (err) => err.code === 'anchor_target');
     assert.equal(called, false);
     assert.equal(classifyNodeError('already known'), 'known');
-    assert.equal(classifyNodeError('nonce too low'), 'known');
+    assert.equal(classifyNodeError('nonce too low'), 'nonce_low');
     assert.equal(classifyNodeError('replacement transaction underpriced'), 'underpriced');
     assert.equal(classifyNodeError('https://primary.example.test/?apiKey=CANARY_RPC_SECRET'), 'rejected');
     const filter = anchorLogFilter('0x10');
@@ -247,5 +250,47 @@ describe('v13 base rpc', { concurrency: false }, () => {
       await server.close();
       await other.close();
     }
+  });
+
+  test('each anchor wire field is refused on its own', () => {
+    const sig = { yParity: 0, r: new Uint8Array(32).fill(3), s: new Uint8Array(32).fill(4) };
+    const data = hexToBytes(ANCHOR_SELECTOR + '00'.repeat(32));
+    const good = {
+      chainId: 8453n,
+      nonce: 1n,
+      maxPriorityFeePerGas: 1n,
+      maxFeePerGas: 2n,
+      gasLimit: ANCHOR_GAS_LIMIT,
+      to: MAINNET_ANCHOR,
+      value: 0n,
+      data,
+    };
+    const ok = `0x${bytesToHex(eip1559Serialize(good, sig))}`;
+    assert.equal(assertAnchorWire(ok).chainId, 8453n);
+    const cases = [
+      { ...good, chainId: 84532n },
+      { ...good, to: MAINNET_CHECKPOINT },
+      { ...good, data: hexToBytes('deadbeef') },
+      { ...good, gasLimit: ANCHOR_GAS_FLOOR - 1n },
+    ];
+    for (let i = 0; i < cases.length; i += 1) {
+      const raw = `0x${bytesToHex(eip1559Serialize(cases[i], sig))}`;
+      assert.throws(() => assertAnchorWire(raw), (err) => err.code === 'anchor_chain_mismatch' || err.code === 'anchor_target');
+    }
+    const valued = concat([Uint8Array.of(0x02), rlpList([
+      rlpInt(8453n),
+      rlpInt(1n),
+      rlpInt(1n),
+      rlpInt(2n),
+      rlpInt(ANCHOR_GAS_LIMIT),
+      rlpBytes(hexToBytes(MAINNET_ANCHOR)),
+      rlpInt(1n),
+      rlpBytes(data),
+      rlpList([]),
+      rlpInt(0n),
+      rlpInt(1n),
+      rlpInt(2n),
+    ])]);
+    assert.throws(() => assertAnchorWire(valued), (err) => err.code === 'anchor_target');
   });
 });

@@ -506,6 +506,15 @@ async function broadcastRecord(sealer, record, send, signal) {
     try {
       return await send(wire);
     } catch (err) {
+      const named = err && err.code;
+      if (
+        named === 'anchor_simulation_failed'
+        || named === 'anchor_head_mismatch'
+        || named === 'anchor_reverted'
+        || named === 'anchor_nonce_conflict'
+        || named === 'anchor_quorum'
+        || named === 'sealer_unavailable'
+      ) throw err;
       const kind = classifyAnchorSendError(err);
       if (kind === 'known') return `0x${bytesToHex(eip1559TxHash(wire))}`;
       const wrapped = new Error('broadcast_failed');
@@ -531,6 +540,7 @@ async function broadcastRecord(sealer, record, send, signal) {
     const reason = named === 'anchor_simulation_failed'
       || named === 'anchor_head_mismatch'
       || named === 'anchor_reverted'
+      || named === 'anchor_nonce_conflict'
       || named === 'anchor_quorum'
       ? named
       : 'broadcast_failed';
@@ -758,7 +768,7 @@ export async function recover(sealer, input) {
       }
     }
     healCommittedIntake(sealer);
-    const result = await broadcastRecord(sealer, record, input.send);
+    const result = await broadcastRecord(sealer, record, input.send, input.signal);
     sent.push(result);
     if (!result.ok) return { ok: false, reason: result.reason, committed: true, sent };
   }

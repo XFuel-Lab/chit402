@@ -68,14 +68,14 @@
     {
       "id": "AS9",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "      const recovered = await withSealerGuard(({ signal }) => recover(session.sealer, {\n        send: (wire) => session.send(wire, { signal }),\n      }), { env: session.env, log: (fields) => report(session.log, fields && fields.code) });",
+      "find": "      const recovered = await withSealerGuard(({ signal }) => recover(session.sealer, {\n        send: (wire) => session.send(wire, { signal }),\n        signal,\n      }), { env: session.env, log: (fields) => report(session.log, fields && fields.code) });",
       "replace": "      const recovered = { ok: false, reason: 'nothing_pending' };",
       "note": "interrupted commit is not recovered"
     },
     {
       "id": "AS10",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "  } catch (err) {\n    report(session.log, err && err.code);\n    return end(false, err && err.code);\n  }",
+      "find": "  } catch (err) {\n    report(session.log, err && err.code);\n    return finish(session, end(false, err && err.code));\n  }",
       "replace": "  } catch (err) {\n    report(session.log, err && err.code);\n    try { session.log({ err, secret: err && err.cause && err.cause.message, key: session.env && session.env.CHIT_CHECKPOINT_KMS_KEY_ID }); } catch { /* leaked */ }\n    return end(false, err && err.code);\n  }",
       "note": "tick log includes the RPC error and the key id"
     },
@@ -110,8 +110,8 @@
     {
       "id": "AS15",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "  if (!observed || observed.pending !== true) return null;",
-      "replace": "  if (false) return null;",
+      "find": "  if (watched && watched.mined) return end(true, null);",
+      "replace": "  if (false) return end(true, null);",
       "note": "a mined receipt is fee-bumped"
     },
     {
@@ -124,8 +124,8 @@
     {
       "id": "AS17",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "  if (observed && observed.reverted === true) {\n    writeHold(session.dir);\n    report(session.log, 'anchor_reverted');\n    return { held: true };\n  }",
-      "replace": "  if (false) {\n    writeHold(session.dir);\n    report(session.log, 'anchor_reverted');\n    return { held: true };\n  }",
+      "find": "function receiptReverted(watched) {\n  return !!(watched && watched.reverted === true);\n}",
+      "replace": "function receiptReverted(watched) {\n  void watched;\n  return false;\n}",
       "note": "a reverted anchor does not halt the sealer"
     },
     {
@@ -138,8 +138,8 @@
     {
       "id": "AS19",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "  rememberBump(session.dir, current.epoch);",
-      "replace": "  void current;",
+      "find": "function rememberBump(dir, epoch, hashes) {\n  const bumps = readBumps(dir);",
+      "replace": "function rememberBump(dir, epoch, hashes) {\n  void dir; void epoch; void hashes; return;\n  const bumps = readBumps(dir);",
       "note": "a fee bump is not remembered across ticks"
     },
     {
@@ -148,6 +148,118 @@
       "find": "  if (ceiling == null) throw bootRefused();",
       "replace": "  if (false) throw bootRefused();",
       "note": "a missing fee cap is accepted when the house is configured"
+    },
+    {
+      "id": "AS21",
+      "file": "services/chit-sealer/guard.js",
+      "find": "  } finally {\n    clearTimeout(timer);\n    slot.busy = false;\n  }",
+      "replace": "  } finally {\n    clearTimeout(timer);\n    if (!timedOut) slot.busy = false;\n  }",
+      "note": "a timed-out close keeps the single-writer slot"
+    },
+    {
+      "id": "AS22",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "      const recovered = await withSealerGuard(({ signal }) => recover(session.sealer, {\n        send: (wire) => session.send(wire, { signal }),\n        signal,\n      }), { env: session.env, log: (fields) => report(session.log, fields && fields.code) });",
+      "replace": "      const recovered = await recover(session.sealer, {\n        send: (wire) => session.send(wire),\n      });",
+      "note": "recover runs outside the single-writer slot"
+    },
+    {
+      "id": "AS23",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "      const signed = await signer.signEip1559(tx, opts);\n      if (signal && signal.aborted) throw coded('sealer_unavailable');\n      return signed;",
+      "replace": "      const signed = await signer.signEip1559(tx, opts);\n      return signed;",
+      "note": "a stale generation still stores the KMS signature"
+    },
+    {
+      "id": "AS24",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  const inflight = current.inflight && current.inflight();\n  if (!inflight) return;\n  await Promise.race([",
+      "replace": "  const inflight = current.inflight && current.inflight();\n  if (!inflight) return;\n  void inflight; return;\n  await Promise.race([",
+      "note": "shutdown does not wait for the in-flight tick"
+    },
+    {
+      "id": "AS25",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "      if (heads.length >= 2 && (heads[0].epoch !== heads[1].epoch || heads[0].hourStart !== heads[1].hourStart)) {\n        throw coded('anchor_quorum');\n      }",
+      "replace": "      if (false) {\n        throw coded('anchor_quorum');\n      }",
+      "note": "disagreeing latest heads are accepted"
+    },
+    {
+      "id": "AS26",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "  if (decoded.chainId !== BASE_CHAIN_ID) throw coded('anchor_chain_mismatch');",
+      "replace": "  if (false) throw coded('anchor_chain_mismatch');",
+      "note": "wire chain id is not checked"
+    },
+    {
+      "id": "AS27",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "  if (decoded.value !== 0n) throw coded('anchor_target');",
+      "replace": "  if (false) throw coded('anchor_target');",
+      "note": "wire value is not checked"
+    },
+    {
+      "id": "AS28",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "  if (addressHex(decoded.to) !== addressHex(MAINNET_ANCHOR)) throw coded('anchor_target');",
+      "replace": "  if (false) throw coded('anchor_target');",
+      "note": "wire recipient is not checked"
+    },
+    {
+      "id": "AS29",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "  if (!data.startsWith(ANCHOR_SELECTOR)) throw coded('anchor_target');",
+      "replace": "  if (false) throw coded('anchor_target');",
+      "note": "wire selector is not checked"
+    },
+    {
+      "id": "AS30",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "  if (decoded.gasLimit < ANCHOR_GAS_FLOOR) throw coded('anchor_target');",
+      "replace": "  if (false) throw coded('anchor_target');",
+      "note": "wire gas floor is not checked"
+    },
+    {
+      "id": "AS31",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (watched && watched.finalized) return null;\n  if (watched && watched.mined) return end(true, null);\n  if (bumpedEpochs(session.dir).has(String(current.epoch))) {",
+      "replace": "  if (bumpedEpochs(session.dir).has(String(current.epoch))) {\n    report(session.log, 'anchor_bump_spent');\n    return end(true, 'anchor_bump_spent');\n  }\n  if (watched && watched.finalized) return null;\n  if (watched && watched.mined) return end(true, null);\n  if (false && bumpedEpochs(session.dir).has(String(current.epoch))) {",
+      "note": "a spent bump blocks the epoch after a hash has mined"
+    },
+    {
+      "id": "AS32",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  return fromLog;\n}\n\nasync function lookupCommitted",
+      "replace": "  return fromLog.slice(-1);\n}\n\nasync function lookupCommitted",
+      "note": "only the newest hash is observed"
+    },
+    {
+      "id": "AS33",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "          if (err && err.kind === 'nonce_low') {\n            const ours = `0x${bytesToHex(eip1559TxHash(wire))}`;\n            const seen = await findTx(fetchImpl, url, ours, signal, timeoutMs);\n            if (seen) return ours;\n            throw coded('anchor_nonce_conflict');\n          }",
+      "replace": "          if (err && err.kind === 'nonce_low') {\n            return `0x${bytesToHex(eip1559TxHash(wire))}`;\n          }",
+      "note": "nonce too low is marked sent without looking up our hash"
+    },
+    {
+      "id": "AS34",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (code) {\n    report(session.log, code);\n    setAnchorStall(code);\n  } else {",
+      "replace": "  if (false) {\n    report(session.log, code);\n    setAnchorStall(code);\n  } else {",
+      "note": "a stall is not logged or shown on health"
+    },
+    {
+      "id": "AS35",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    if (code === 'anchor_chain_mismatch' || code === 'v13_pin_refused') throw bootRefused();",
+      "replace": "    if (false) throw bootRefused();",
+      "note": "a reachable wrong chain or pin mismatch does not refuse boot"
+    },
+    {
+      "id": "AS36",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "  if (gap >= need) return row;\n  return { ...row, finalized: false };",
+      "replace": "  void need;\n  if (gap >= 0n) return row;\n  return { ...row, finalized: false };",
+      "note": "one live RPC releases a receipt without the depth gap"
     }
   ]
 }

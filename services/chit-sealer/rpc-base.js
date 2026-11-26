@@ -185,7 +185,8 @@ export function assertSealerRpcPair(left, right, env) {
  */
 export function classifyNodeError(message) {
   const text = String(message || '').toLowerCase();
-  if (text.includes('already known') || text.includes('nonce too low')) return 'known';
+  if (text.includes('nonce too low')) return 'nonce_low';
+  if (text.includes('already known')) return 'known';
   if (
     text.includes('replacement transaction underpriced')
     || text.includes('transaction underpriced')
@@ -510,6 +511,12 @@ export function createBaseBroadcaster(opts) {
           return sent;
         } catch (err) {
           if (err && err.kind === 'known') return `0x${bytesToHex(eip1559TxHash(wire))}`;
+          if (err && err.kind === 'nonce_low') {
+            const ours = `0x${bytesToHex(eip1559TxHash(wire))}`;
+            const seen = await findTx(fetchImpl, url, ours, signal, timeoutMs);
+            if (seen) return ours;
+            throw coded('anchor_nonce_conflict');
+          }
           throw err;
         }
       });
@@ -571,7 +578,20 @@ export function createBaseBroadcaster(opts) {
       }
       if (!saw) throw coded('anchor_rpc_unavailable');
     },
-    async observeTx(txHash, signal) {
+    async findTx(txHash, signal) {
+      if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) return '';
+      const ready = await prepare(signal);
+      for (let i = 0; i < ready.length; i += 1) {
+        try {
+          const seen = await findTx(fetchImpl, ready[i], txHash, signal, timeoutMs);
+          if (seen) return txHash;
+        } catch (err) {
+          if (!err || err.transport !== true) throw err;
+        }
+      }
+      return '';
+    },
+    async observeTx(txHash, signal, depth = 64) {
       if (typeof txHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) return { pending: true };
       const ready = await prepare(signal);
       const rows = [];
@@ -583,10 +603,11 @@ export function createBaseBroadcaster(opts) {
         }
       }
       if (rows.length === 0) throw coded('anchor_rpc_unavailable');
-      if (ready.length >= 2 && rows.length >= 2 && !sameObservation(rows[0], rows[1])) {
-        throw coded('anchor_quorum');
+      if (ready.length >= 2 && rows.length >= 2) {
+        if (!sameObservation(rows[0], rows[1])) throw coded('anchor_quorum');
+        return rows[0];
       }
-      return rows[0];
+      return deepen(rows[0], depth);
     },
   };
 }
@@ -653,9 +674,28 @@ async function readObservation(fetchImpl, url, txHash, signal, timeoutMs) {
     ...admitted[0],
     status,
     blockNumber,
+    finalizedBlock: fin,
     from: addressHex(from),
     finalized: isFinal,
   };
+}
+
+function deepen(row, depth) {
+  if (!row || row.pending === true || row.reverted === true || row.finalized !== true) return row;
+  const gap = row.finalizedBlock != null && row.blockNumber != null
+    ? row.finalizedBlock - row.blockNumber
+    : -1n;
+  const need = BigInt(Number.isSafeInteger(depth) && depth >= 0 ? depth : 64);
+  if (gap >= need) return row;
+  return { ...row, finalized: false };
+}
+
+async function findTx(fetchImpl, url, txHash, signal, timeoutMs) {
+  const tx = await rpcCall(fetchImpl, url, 'eth_getTransactionByHash', [txHash], signal, timeoutMs);
+  if (tx && typeof tx === 'object') return txHash;
+  const receipt = await rpcCall(fetchImpl, url, 'eth_getTransactionReceipt', [txHash], signal, timeoutMs);
+  if (receipt && typeof receipt === 'object') return txHash;
+  return '';
 }
 
 export { ANCHORED_TOPIC, BASE_CHAIN_HEX };

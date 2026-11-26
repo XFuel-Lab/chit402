@@ -187,6 +187,8 @@ const score = scored === 0 ? 0 : killed / scored;
 const must = new Set([
   'AS1', 'AS2', 'AS3', 'AS4', 'AS5', 'AS6', 'AS7', 'AS8', 'AS9', 'AS10',
   'AS11', 'AS12', 'AS13', 'AS14', 'AS15', 'AS16', 'AS17', 'AS18', 'AS19', 'AS20',
+  'AS21', 'AS22', 'AS23', 'AS24', 'AS25', 'AS26', 'AS27', 'AS28', 'AS29', 'AS30',
+  'AS31', 'AS32', 'AS33', 'AS34', 'AS35', 'AS36',
 ]);
 const missed = rows.filter((row) => must.has(row.id) && row.result !== 'KILLED');
 

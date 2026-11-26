@@ -39,6 +39,8 @@ export const STOP_WAIT_MS = 5_000;
 const HOUR = 3600;
 const STUCK_DEFAULT_MS = 120_000;
 const CLOSE_MARGIN_DEFAULT_SEC = 120;
+const FINALITY_DEPTH_DEFAULT = 64;
+const STALL_HOURS_DEFAULT = 3;
 const SEALER_FILES = ['sealer-state.json', 'anchor-intents.jsonl'];
 const HOLD_FILE = 'anchor-hold.json';
 const BUMP_FILE = 'anchor-bumps.json';
@@ -70,9 +72,23 @@ const REASONS = new Set([
   'anchor_head_mismatch',
   'anchor_simulation_failed',
   'anchor_quorum',
+  'anchor_nonce_conflict',
+  'anchor_stalled',
 ]);
 
+const HOLD_REASONS = new Set(['anchor_reverted', 'anchor_nonce_conflict']);
+
 let active = null;
+let anchorStall = null;
+
+/** Allow-listed stall code for /health. Null when the scheduler is moving. */
+export function anchorStallStatus() {
+  return anchorStall;
+}
+
+function setAnchorStall(code) {
+  anchorStall = typeof code === 'string' && allowed(code) ? code : null;
+}
 
 function bootRefused() {
   const err = new Error('v13 boot refused');
@@ -170,18 +186,20 @@ function holdFile(dir) {
   return path.join(dir, HOLD_FILE);
 }
 
-function holdActive(dir) {
+function holdReason(dir) {
   try {
     const parsed = JSON.parse(fs.readFileSync(holdFile(dir), 'utf8'));
-    return !!(parsed && parsed.v === 1 && parsed.reason === 'anchor_reverted');
+    if (parsed && parsed.v === 1 && HOLD_REASONS.has(parsed.reason)) return parsed.reason;
   } catch {
-    return false;
+    return '';
   }
+  return '';
 }
 
-function writeHold(dir) {
+function writeHold(dir, reason) {
+  const code = HOLD_REASONS.has(reason) ? reason : 'anchor_reverted';
   const file = holdFile(dir);
-  fs.writeFileSync(file, '{"v":1,"reason":"anchor_reverted"}\n', { mode: 0o600 });
+  fs.writeFileSync(file, `${JSON.stringify({ v: 1, reason: code })}\n`, { mode: 0o600 });
   try { fs.chmodSync(file, 0o600); } catch { /* mode was set on create */ }
 }
 
@@ -189,22 +207,59 @@ function bumpFile(dir) {
   return path.join(dir, BUMP_FILE);
 }
 
-function bumpedEpochs(dir) {
+function readBumps(dir) {
   try {
     const parsed = JSON.parse(fs.readFileSync(bumpFile(dir), 'utf8'));
-    if (!parsed || parsed.v !== 1 || !Array.isArray(parsed.epochs)) return new Set();
-    return new Set(parsed.epochs.map((item) => String(item)));
+    if (parsed && parsed.v === 2 && parsed.bumps && typeof parsed.bumps === 'object') return parsed.bumps;
+    if (parsed && parsed.v === 1 && Array.isArray(parsed.epochs)) {
+      const bumps = {};
+      for (let i = 0; i < parsed.epochs.length; i += 1) bumps[String(parsed.epochs[i])] = { hashes: [] };
+      return bumps;
+    }
   } catch {
-    return new Set();
+    return {};
   }
+  return {};
 }
 
-function rememberBump(dir, epoch) {
-  const epochs = bumpedEpochs(dir);
-  epochs.add(String(epoch));
+function bumpedEpochs(dir) {
+  return new Set(Object.keys(readBumps(dir)));
+}
+
+function rememberBump(dir, epoch, hashes) {
+  const bumps = readBumps(dir);
+  const prior = bumps[String(epoch)] && Array.isArray(bumps[String(epoch)].hashes)
+    ? bumps[String(epoch)].hashes
+    : [];
+  const next = new Set(prior);
+  const list = Array.isArray(hashes) ? hashes : [];
+  for (let i = 0; i < list.length; i += 1) {
+    if (typeof list[i] === 'string' && /^0x[0-9a-fA-F]{64}$/.test(list[i])) next.add(list[i].toLowerCase());
+  }
+  bumps[String(epoch)] = { hashes: [...next] };
   const file = bumpFile(dir);
-  fs.writeFileSync(file, `${JSON.stringify({ v: 1, epochs: [...epochs] })}\n`, { mode: 0o600 });
+  fs.writeFileSync(file, `${JSON.stringify({ v: 2, bumps })}\n`, { mode: 0o600 });
   try { fs.chmodSync(file, 0o600); } catch { /* mode was set on create */ }
+}
+
+export function finalityDepth(env) {
+  const raw = env == null ? undefined : env.CHIT_SEALER_FINALITY_DEPTH;
+  if (raw == null || String(raw).trim() === '') return FINALITY_DEPTH_DEFAULT;
+  const text = String(raw).trim();
+  if (!/^\d+$/.test(text)) return FINALITY_DEPTH_DEFAULT;
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 100000) return FINALITY_DEPTH_DEFAULT;
+  return value;
+}
+
+export function stallHours(env) {
+  const raw = env == null ? undefined : env.CHIT_SEALER_STALL_HOURS;
+  if (raw == null || String(raw).trim() === '') return STALL_HOURS_DEFAULT;
+  const text = String(raw).trim();
+  if (!/^\d+$/.test(text)) return STALL_HOURS_DEFAULT;
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 168) return STALL_HOURS_DEFAULT;
+  return value;
 }
 
 function finishedHour(now) {
@@ -307,7 +362,18 @@ async function openSession(opts) {
   } catch {
     throw bootRefused();
   }
-  const send = async (wire, sendOpts = {}) => broadcaster.sendRaw(wire, sendOpts && sendOpts.signal);
+  const send = async (wire, sendOpts = {}) => {
+    try {
+      return await broadcaster.sendRaw(wire, sendOpts && sendOpts.signal);
+    } catch (err) {
+      if (err && err.code === 'anchor_nonce_conflict') {
+        const found = await lookupCommitted(broadcaster, sealer, sendOpts && sendOpts.signal);
+        if (found) return found;
+        throw err;
+      }
+      throw err;
+    }
+  };
   const guarded = guardSigner(signer, sealer, broadcaster, boot.dir);
   sealer.signer = guarded;
   return {
@@ -347,36 +413,79 @@ function guardSigner(signer, sealer, broadcaster, dir) {
       return signer.signDigest(digest, opts);
     },
     async signEip1559(tx, opts) {
-      if (holdActive(dir)) throw coded('anchor_reverted');
       const signal = opts && opts.signal;
+      if (signal && signal.aborted) throw coded('sealer_unavailable');
+      const held = holdReason(dir);
+      if (held) throw coded(held);
       const head = await broadcaster.chainHead(signal);
       const expected = expectedHead(sealer.state);
       if (head.epoch !== expected.epoch || head.hourStart !== expected.hourStart) {
         throw coded('anchor_head_mismatch');
       }
       await broadcaster.simulateAnchor(tx, signal);
-      return signer.signEip1559(tx, opts);
+      const signed = await signer.signEip1559(tx, opts);
+      if (signal && signal.aborted) throw coded('sealer_unavailable');
+      return signed;
     },
   };
 }
 
-function txHashFor(session, commit) {
-  let rows;
+function hashList(rows, nonce) {
+  const out = [];
+  const seen = new Set();
+  for (let i = 0; i < rows.length; i += 1) {
+    const item = rows[i];
+    if (!item || String(item.nonce) !== String(nonce)) continue;
+    const candidates = [];
+    if (typeof item.tx === 'string') candidates.push(item.tx);
+    if (typeof item.hash === 'string') {
+      candidates.push(item.hash.startsWith('0x') ? item.hash : `0x${item.hash}`);
+    }
+    for (let j = 0; j < candidates.length; j += 1) {
+      const hash = candidates[j];
+      if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) continue;
+      const key = hash.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+function txHashesFor(session, commit) {
+  let rows = [];
   try {
     rows = session.sealer.intentLog.read();
   } catch {
-    return '';
+    rows = [];
   }
-  const row = [...rows].reverse().find((item) => (
-    item
-    && String(item.nonce) === String(commit.nonce)
-    && (item.status === 'broadcast' || item.status === 'signed')
-    && (typeof item.tx === 'string' || typeof item.hash === 'string')
-  ));
-  if (!row) return '';
-  if (typeof row.tx === 'string' && /^0x[0-9a-fA-F]{64}$/.test(row.tx)) return row.tx;
-  if (typeof row.hash === 'string' && row.hash.length === 64) return `0x${row.hash}`;
-  if (typeof row.hash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(row.hash)) return row.hash;
+  const fromLog = hashList(rows, commit.nonce);
+  const saved = readBumps(session.dir);
+  const extra = saved[String(commit.epoch)] && Array.isArray(saved[String(commit.epoch)].hashes)
+    ? saved[String(commit.epoch)].hashes
+    : [];
+  const seen = new Set(fromLog);
+  for (let i = 0; i < extra.length; i += 1) {
+    if (typeof extra[i] === 'string' && /^0x[0-9a-fA-F]{64}$/.test(extra[i]) && !seen.has(extra[i].toLowerCase())) {
+      seen.add(extra[i].toLowerCase());
+      fromLog.push(extra[i].toLowerCase());
+    }
+  }
+  return fromLog;
+}
+
+async function lookupCommitted(broadcaster, sealer, signal) {
+  const commits = sealer.state.commits || [];
+  const current = commits.length > 0 ? commits[commits.length - 1] : null;
+  if (!current) return '';
+  let rows = [];
+  try { rows = sealer.intentLog.read(); } catch { rows = []; }
+  const hashes = hashList(rows, current.nonce);
+  for (let i = 0; i < hashes.length; i += 1) {
+    const found = await broadcaster.findTx(hashes[i], signal);
+    if (found) return found;
+  }
   return '';
 }
 
@@ -385,18 +494,34 @@ function currentCommit(session) {
   return commits.length > 0 ? commits[commits.length - 1] : null;
 }
 
+function receiptReverted(watched) {
+  return !!(watched && watched.reverted === true);
+}
+
+async function observeHashes(session, hashes) {
+  let mined = false;
+  for (let i = 0; i < hashes.length; i += 1) {
+    const observed = await session.broadcaster.observeTx(hashes[i], undefined, finalityDepth(session.env));
+    if (observed && observed.reverted === true) return { reverted: true };
+    if (observed && observed.pending !== true && observed.reverted !== true && observed.status === 1n) mined = true;
+    if (observed && observed.finalized === true) return { finalized: observed, mined: true };
+  }
+  return { mined };
+}
+
 async function releaseFinalized(session) {
-  if (holdActive(session.dir)) {
-    report(session.log, 'anchor_reverted');
-    return { held: true };
+  const held = holdReason(session.dir);
+  if (held) {
+    report(session.log, held);
+    return { held: true, reason: held };
   }
   const current = currentCommit(session);
   if (!current || current.broadcast !== true) return { held: false };
-  const txHash = txHashFor(session, current);
-  if (!txHash) return { held: false };
-  let observed;
+  const hashes = txHashesFor(session, current);
+  if (hashes.length === 0) return { held: false };
+  let watched;
   try {
-    observed = await session.broadcaster.observeTx(txHash);
+    watched = await observeHashes(session, hashes);
   } catch (err) {
     report(session.log, err && err.code);
     if (err && (err.code === 'anchor_quorum' || err.code === 'anchor_head_mismatch')) {
@@ -404,12 +529,15 @@ async function releaseFinalized(session) {
     }
     return { held: false };
   }
-  if (observed && observed.reverted === true) {
-    writeHold(session.dir);
+  if (receiptReverted(watched)) {
+    writeHold(session.dir, 'anchor_reverted');
     report(session.log, 'anchor_reverted');
-    return { held: true };
+    return { held: true, reason: 'anchor_reverted' };
   }
-  if (!observed || observed.finalized !== true) return { held: false };
+  const observed = watched && watched.finalized;
+  if (!observed || observed.finalized !== true) {
+    return { held: false, waiting: !!(watched && watched.mined) };
+  }
   try {
     noteAnchored(session.sealer.store, {
       epoch: observed.epoch,
@@ -425,12 +553,28 @@ async function releaseFinalized(session) {
   } catch {
     report(session.log, 'sealer_unavailable');
   }
-  return { held: false };
+  return { held: false, released: true, mined: true };
 }
 
 async function maybeBump(session) {
   const current = currentCommit(session);
   if (!current || current.broadcast !== true) return null;
+  const hashes = txHashesFor(session, current);
+  let watched;
+  try {
+    watched = hashes.length > 0 ? await observeHashes(session, hashes) : { mined: false };
+  } catch (err) {
+    report(session.log, err && err.code);
+    if (err && err.code === 'anchor_quorum') return end(false, 'anchor_quorum');
+    return end(false, 'anchor_rpc_unavailable');
+  }
+  if (receiptReverted(watched)) {
+    writeHold(session.dir, 'anchor_reverted');
+    report(session.log, 'anchor_reverted');
+    return end(false, 'anchor_reverted');
+  }
+  if (watched && watched.finalized) return null;
+  if (watched && watched.mined) return end(true, null);
   if (bumpedEpochs(session.dir).has(String(current.epoch))) {
     report(session.log, 'anchor_bump_spent');
     return end(true, 'anchor_bump_spent');
@@ -448,19 +592,6 @@ async function maybeBump(session) {
   if (!broadcast) return null;
   const at = Date.parse(broadcast.at);
   if (!Number.isFinite(at) || Date.now() - at < session.stuckMs) return null;
-  let observed;
-  try {
-    observed = await session.broadcaster.observeTx(broadcast.tx);
-  } catch (err) {
-    report(session.log, err && err.code);
-    return end(false, 'anchor_rpc_unavailable');
-  }
-  if (observed && observed.reverted === true) {
-    writeHold(session.dir);
-    report(session.log, 'anchor_reverted');
-    return end(false, 'anchor_reverted');
-  }
-  if (!observed || observed.pending !== true) return null;
   try {
     const quote = bumpFeeQuote(current.fees, session.signer.feeCeiling);
     assertFeeCeiling({
@@ -472,14 +603,49 @@ async function maybeBump(session) {
     report(session.log, 'fee_ceiling');
     return end(false, 'fee_ceiling');
   }
-  rememberBump(session.dir, current.epoch);
+  rememberBump(session.dir, current.epoch, hashes);
   const bumped = await withSealerGuard(({ signal }) => feeBump(session.sealer, {
     nonce: current.nonce,
     send: (wire) => session.send(wire, { signal }),
   }), { env: session.env, log: (fields) => report(session.log, fields && fields.code) });
-  const reason = bumped && bumped.ok === true ? null : (bumped && bumped.reason) || 'broadcast_failed';
-  if (reason) report(session.log, reason);
-  return end(bumped && bumped.ok === true, reason);
+  rememberBump(session.dir, current.epoch, txHashesFor(session, current));
+    const reason = bumped && bumped.ok === true ? null : (bumped && bumped.reason) || 'broadcast_failed';
+    if (reason === 'anchor_nonce_conflict') writeHold(session.dir, 'anchor_nonce_conflict');
+    if (reason) report(session.log, reason);
+    return end(bumped && bumped.ok === true, reason);
+}
+
+function intakeStall(session) {
+  let intake;
+  try {
+    intake = pendingIntakeCount(session.sealer.store);
+  } catch {
+    return '';
+  }
+  if (!intake.ok || intake.count <= 0) {
+    session.pendingSince = null;
+    return '';
+  }
+  const epoch = Number(session.sealer.state.anchorEpoch || 0);
+  const now = session.sealer.clock();
+  if (!session.pendingSince || session.pendingSince.epoch !== epoch) {
+    session.pendingSince = { epoch, at: now };
+  }
+  const elapsed = now - session.pendingSince.at;
+  if (elapsed > stallHours(session.env) * 3600) return 'anchor_stalled';
+  return '';
+}
+
+function finish(session, body) {
+  const held = holdReason(session.dir);
+  const code = held || intakeStall(session);
+  if (code) {
+    report(session.log, code);
+    setAnchorStall(code);
+  } else {
+    setAnchorStall(null);
+  }
+  return body;
 }
 
 /**
@@ -491,31 +657,38 @@ export async function runAnchorTick(session) {
     await session.broadcaster.prepare();
   } catch (err) {
     report(session.log, err && err.code);
-    return end(false, err && err.code);
+    return finish(session, end(false, err && err.code));
   }
   try {
     const released = await releaseFinalized(session);
-    if (released && released.held === true) return end(false, 'anchor_reverted');
-    if (released && released.reason) return end(false, released.reason);
+    if (released && released.held === true) return finish(session, end(false, released.reason || 'anchor_reverted'));
+    if (released && released.reason) return finish(session, end(false, released.reason));
     const pending = pendingCommits(session.sealer);
     if (pending.length > 0) {
       const recovered = await withSealerGuard(({ signal }) => recover(session.sealer, {
         send: (wire) => session.send(wire, { signal }),
+        signal,
       }), { env: session.env, log: (fields) => report(session.log, fields && fields.code) });
       const reason = recovered && recovered.ok === true ? null : (recovered && recovered.reason) || 'broadcast_failed';
+      if (reason === 'anchor_nonce_conflict') {
+        writeHold(session.dir, 'anchor_nonce_conflict');
+        report(session.log, 'anchor_nonce_conflict');
+        return finish(session, end(false, 'anchor_nonce_conflict'));
+      }
       if (reason) report(session.log, reason);
       if (recovered && recovered.ok === true) {
         const again = await releaseFinalized(session);
-        if (again && again.held === true) return end(false, 'anchor_reverted');
+        if (again && again.held === true) return finish(session, end(false, again.reason || 'anchor_reverted'));
+        if (again && again.waiting === true) return finish(session, end(true, null));
       }
-      return end(recovered && recovered.ok === true, reason);
+      return finish(session, end(recovered && recovered.ok === true, reason));
     }
     const bumped = await maybeBump(session);
-    if (bumped) return bumped;
+    if (bumped) return finish(session, bumped);
     const intake = pendingIntakeCount(session.sealer.store);
     if (!intake.ok) {
       report(session.log, 'intake_unreadable');
-      return end(false, 'intake_unreadable');
+      return finish(session, end(false, 'intake_unreadable'));
     }
     const plan = selectAnchorHour(
       session.sealer.state,
@@ -523,13 +696,13 @@ export async function runAnchorTick(session) {
       intake.count,
       closeMarginSec(session.env),
     );
-    if (plan.action !== 'close') return end(true, plan.reason);
+    if (plan.action !== 'close') return finish(session, end(true, plan.reason));
     const head = await session.broadcaster.chainHead();
     const wantEpoch = Number(session.sealer.state.anchorEpoch || 0);
     const wantHour = session.sealer.state.lastHourStart == null ? 0 : Number(session.sealer.state.lastHourStart);
     if (head.epoch !== wantEpoch || head.hourStart !== wantHour) {
       report(session.log, 'anchor_head_mismatch');
-      return end(false, 'anchor_head_mismatch');
+      return finish(session, end(false, 'anchor_head_mismatch'));
     }
     const quote = await session.broadcaster.quote();
     assertFeeCeiling(quote, session.signer.feeCeiling);
@@ -543,11 +716,12 @@ export async function runAnchorTick(session) {
       log: (fields) => report(session.log, fields && fields.code),
     });
     const reason = closed && closed.ok === true ? (plan.reason || null) : (closed && closed.reason) || 'broadcast_failed';
+    if (reason === 'anchor_nonce_conflict') writeHold(session.dir, 'anchor_nonce_conflict');
     if (closed && closed.ok !== true) report(session.log, reason);
-    return end(closed && closed.ok === true, reason);
+    return finish(session, end(closed && closed.ok === true, reason));
   } catch (err) {
     report(session.log, err && err.code, err && err.reason);
-    return end(false, allowed(err && err.code) ? err.code : 'sealer_unavailable');
+    return finish(session, end(false, allowed(err && err.code) ? err.code : 'sealer_unavailable'));
   }
 }
 
@@ -573,7 +747,9 @@ export async function startV13AnchorScheduler(opts = {}) {
   try {
     await session.broadcaster.prepare();
   } catch (err) {
-    report(session.log, err && err.code);
+    const code = err && err.code;
+    if (code === 'anchor_chain_mismatch' || code === 'v13_pin_refused') throw bootRefused();
+    report(session.log, code);
   }
   stopV13AnchorScheduler();
   const timer = setInterval(() => {
@@ -591,6 +767,7 @@ export async function startV13AnchorScheduler(opts = {}) {
 export async function stopV13AnchorScheduler() {
   const current = active;
   active = null;
+  setAnchorStall(null);
   if (!current) return;
   if (current.timer) clearInterval(current.timer);
   const inflight = current.inflight && current.inflight();

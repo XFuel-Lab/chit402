@@ -3,7 +3,7 @@
  */
 import assert from 'node:assert/strict';
 import { createPublicKey } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -27,11 +27,13 @@ import { wireV13Runtime } from '../src/v13-boot.js';
 import { handleHouse, issueHouseReceipt, readV13Runtime, setV13Runtime } from '../src/v13-issue.js';
 import {
   anchorSchedulerTimerForTest,
+  anchorStallStatus,
   assertAnchorSchedulerBoot,
   selectAnchorHour,
   startV13AnchorScheduler,
   stopV13AnchorScheduler,
 } from '../src/v13-anchor-scheduler.js';
+import { withSealerGuard } from '../../chit-sealer/guard.js';
 
 const PRIMARY = 'http://primary.example.test/rpc?apiKey=CANARY_RPC_SECRET';
 const SECONDARY = 'http://secondary.example.org/rpc?apiKey=CANARY_RPC_SECRET';
@@ -151,14 +153,14 @@ function listen(handler) {
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (chunk) => chunks.push(chunk));
-    req.on('end', () => {
+    req.on('end', async () => {
       let body = {};
       try {
         body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
       } catch {
         body = {};
       }
-      const out = handler(body.method, body.params || []);
+      const out = await Promise.resolve(handler(body.method, body.params || []));
       if (out && out.drop) {
         res.destroy();
         return;
@@ -217,17 +219,29 @@ function handlerFor(state, role) {
         role.failSend -= 1;
         return { httpStatus: 500, body: '' };
       }
+      if (state.nonceLow) return { rpcError: 'nonce too low' };
       state.sends.push(params[0]);
       if (state.loseResponse) return { drop: true };
       if (state.knownSend) return { rpcError: 'already known' };
-      return `0x${'ab'.repeat(32)}`;
+      state.txSeq = (state.txSeq || 0) + 1;
+      return `0x${String(state.txSeq).padStart(64, '0')}`;
     }
     if (method === 'eth_getLogs') {
       state.logQueries.push(params[0] || null);
       return state.logs;
     }
-    if (method === 'eth_getTransactionByHash') return { from: state.txFrom };
-    if (method === 'eth_getTransactionReceipt') return state.receipt;
+    if (method === 'eth_getTransactionByHash') {
+      if (state.rejectLookups) return null;
+      const hash = String(params[0] || '').toLowerCase();
+      if (state.txs && Object.prototype.hasOwnProperty.call(state.txs, hash)) return state.txs[hash];
+      return { from: state.txFrom, hash };
+    }
+    if (method === 'eth_getTransactionReceipt') {
+      if (role.receiptFail) return { httpStatus: 500, body: '' };
+      const hash = String(params[0] || '').toLowerCase();
+      if (state.receipts && Object.prototype.hasOwnProperty.call(state.receipts, hash)) return state.receipts[hash];
+      return state.receipt;
+    }
     return null;
   };
 }
@@ -548,18 +562,18 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
           });
           const result = await handle.tick();
           assert.equal(result.reason, item.code);
+          await handle.stop();
           continue;
         }
         const pair = await rpcPair(state, { primary: item.primary, secondary: item.secondary });
         try {
-          const handle = await startV13AnchorScheduler({
+          await assert.rejects(() => startV13AnchorScheduler({
             env: schedulerEnv(world.sealerDir),
             clock: () => world.clock.now,
             runtime: { store: world.store, client: signer.client },
             deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
-          });
-          const result = await handle.tick();
-          assert.equal(result.reason, item.code, item.code);
+          }), (err) => err.code === 'v13_boot_refused');
+          assert.equal(anchorSchedulerTimerForTest(), null);
           assert.equal(state.sends.length, 0);
         } finally {
           stopV13AnchorScheduler();
@@ -979,6 +993,23 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
       const held = await restarted.tick();
       assert.equal(held.reason, 'anchor_reverted');
       assert.equal(signCount(signer), signed);
+      await restarted.stop();
+      rmSync(join(world.sealerDir, 'anchor-hold.json'));
+      const epoch = world.store.epochs.get('1');
+      state.logs = [anchoredLog(epoch, 4)];
+      state.receipt = { status: '0x1', blockNumber: '0x4', logs: state.logs };
+      state.finalized = '0x5';
+      state.latest = encodeLatestHead(1, epoch.hourStart);
+      const cleared = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const next = await cleared.tick();
+      assert.notEqual(next.reason, 'anchor_reverted');
+      assert.equal(existsSync(join(world.sealerDir, 'anchor-hold.json')), false);
+      assert.equal(epoch.released, true);
     } finally {
       await pair.close();
       rmSync(world.root, { recursive: true, force: true });
@@ -1309,4 +1340,288 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
       rmSync(box.root, { recursive: true, force: true });
     }
   });
+
+  test('a finalized bump or the original hash lets the next hour close', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      state.receipt = null;
+      state.loseResponse = true;
+      const bumped = await handle.tick();
+      assert.equal(bumped.ok, false);
+      state.loseResponse = false;
+      const epoch = world.store.epochs.get('1');
+      const rows = JSON.parse(readIntent(world.sealerDir));
+      const original = rows.find((row) => row.status === 'broadcast');
+      const replacement = rows.find((row) => row.status === 'signed' && row.hash && `0x${row.hash}` !== original.tx && row.hash !== original.tx);
+      assert.equal(typeof original.tx, 'string');
+      assert.equal(replacement != null, true);
+      state.receipt = null;
+      state.receipts = {
+        [original.tx.toLowerCase()]: {
+          status: '0x1',
+          blockNumber: '0x4',
+          logs: [anchoredLog(epoch, 4)],
+        },
+      };
+      state.logs = [anchoredLog(epoch, 4)];
+      state.finalized = '0x5';
+      state.latest = encodeLatestHead(1, epoch.hourStart);
+      bookPending(world, 2);
+      world.clock.now = 7200;
+      const moved = await handle.tick();
+      assert.notEqual(moved.reason, 'anchor_bump_spent');
+      assert.equal(epoch.released, true);
+      assert.equal(world.store.epochs.size, 2);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('nonce too low without our transaction holds the sealer', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.nonceLow = true;
+    state.rejectLookups = true;
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const first = await handle.tick();
+      assert.equal(first.reason, 'anchor_nonce_conflict');
+      assert.equal(existsSync(join(world.sealerDir, 'anchor-hold.json')), true);
+      const journal = JSON.parse(readFileSync(join(world.sealerDir, 'sealer-state.json'), 'utf8'));
+      assert.equal(journal.commits[0].broadcast, false);
+      const again = await handle.tick();
+      assert.equal(again.reason, 'anchor_nonce_conflict');
+      assert.equal(anchorStallStatus(), 'anchor_nonce_conflict');
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('nonce too low for a hash this sealer signed is marked broadcast', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.nonceLow = true;
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const first = await handle.tick();
+      assert.equal(first.ok, true, first.reason);
+      const journal = JSON.parse(readFileSync(join(world.sealerDir, 'sealer-state.json'), 'utf8'));
+      assert.equal(journal.commits[0].broadcast, true);
+      assert.equal(existsSync(join(world.sealerDir, 'anchor-hold.json')), false);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stall while intake waits is logged and shown on the health body', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.latest = encodeLatestHead(9, 0);
+    const logs = [];
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: {
+          testInjection: true,
+          signer: signer.signer,
+          fetch: pair.fetchImpl,
+          log: (fields) => logs.push(fields && fields.code),
+          timeoutMs: 1000,
+        },
+      });
+      await handle.tick();
+      world.clock.now += 1;
+      const stalled = await handle.tick();
+      assert.equal(stalled.reason, 'anchor_head_mismatch');
+      assert.equal(logs.includes('anchor_stalled'), true);
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      const health = publicHealthBody({ anchorStall: anchorStallStatus() });
+      assert.equal(health.anchor_stall, 'anchor_stalled');
+      assert.equal(JSON.stringify(health).includes('CANARY'), false);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('the close slot releases after timeout and a late sign is not stored', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const real = signer.signer.signEip1559.bind(signer.signer);
+    let releaseSign = null;
+    signer.signer.signEip1559 = (tx, opts) => new Promise((resolve) => {
+      releaseSign = () => resolve(real(tx, opts));
+    });
+    const state = chainState();
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_CLOSE_TIMEOUT_MS: '2000' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const tick = handle.tick();
+      const deadline = Date.now() + 1500;
+      while (!releaseSign && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(typeof releaseSign, 'function');
+      const busy = await withSealerGuard(async () => ({ ok: true, reason: 'entered' }));
+      assert.equal(busy.reason, 'sealer_busy');
+      const timed = await tick;
+      assert.equal(timed.reason, 'sealer_unavailable');
+      releaseSign();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const text = readFileSync(join(world.sealerDir, 'anchor-intents.jsonl'), 'utf8');
+      assert.equal(text.includes('"status":"signed"'), false);
+      const second = await withSealerGuard(async () => ({ ok: true, reason: 'entered' }));
+      assert.equal(second.reason, 'entered');
+    } finally {
+      if (releaseSign) releaseSign();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('recover holds the sealer slot and shutdown waits for the tick', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.loseResponse = true;
+    let releaseSend = null;
+    const pair = await rpcPair(state);
+    const orig = pair.fetchImpl;
+    pair.fetchImpl = async (url, opts) => {
+      const body = JSON.parse(opts.body);
+      if (!state.loseResponse && body.method === 'eth_sendRawTransaction') {
+        await new Promise((resolve) => { releaseSend = resolve; });
+      }
+      return orig(url, opts);
+    };
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).reason, 'broadcast_failed');
+      state.loseResponse = false;
+      const tick = handle.tick();
+      const deadline = Date.now() + 1500;
+      while (!releaseSend && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+      const busy = await withSealerGuard(async () => ({ ok: true, reason: 'entered' }));
+      assert.equal(busy.reason, 'sealer_busy');
+      let stopped = false;
+      const stopping = handle.stop().then(() => { stopped = true; });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.equal(stopped, false);
+      releaseSend();
+      await tick;
+      await stopping;
+      assert.equal(stopped, true);
+    } finally {
+      if (releaseSend) releaseSend();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('one live RPC does not release until the finalized head is deep enough', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const secondary = {};
+    const pair = await rpcPair(state, { secondary });
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_FINALITY_DEPTH: '64' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const epoch = world.store.epochs.get('1');
+      secondary.receiptFail = true;
+      state.receipt = { status: '0x1', blockNumber: '0x4', logs: [anchoredLog(epoch, 4)] };
+      state.logs = [anchoredLog(epoch, 4)];
+      state.finalized = '0x5';
+      const shallow = await handle.tick();
+      assert.equal(epoch.released, false);
+      assert.notEqual(shallow.reason, 'anchor_bump_spent');
+      state.finalized = '0x44';
+      const deep = await handle.tick();
+      assert.equal(epoch.released, true);
+      assert.notEqual(deep.reason, 'anchor_reverted');
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('disagreeing chain heads are refused before Sign', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const before = signCount(signer);
+    const state = chainState();
+    const pair = await rpcPair(state, { secondary: { latest: encodeLatestHead(9, 9) } });
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const result = await handle.tick();
+      assert.equal(result.reason, 'anchor_quorum');
+      assert.equal(signCount(signer), before);
+      assert.equal(world.store.epochs.size, 0);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
 });
+
+function readIntent(dir) {
+  return `[${readFileSync(join(dir, 'anchor-intents.jsonl'), 'utf8').trim().split('\n').join(',')}]`;
+}
