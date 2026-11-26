@@ -46,7 +46,9 @@ const BOOK = {
 const WINDOW = [
   ['closeSync', 'store dir close after commit fsync'],
   ['existsSync', 'intake exists'],
+  ['openSync', 'intake open'],
   ['readFileSync', 'intake read'],
+  ['closeSync', 'intake close'],
   ['mkdirSync', 'intake mkdir'],
   ['existsSync', 'intake tmp exists'],
   ['openSync', 'intake tmp open'],

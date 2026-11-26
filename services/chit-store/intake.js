@@ -50,11 +50,30 @@ function emptyState() {
   return { v: 1, leaves: [] };
 }
 
+function readIntakeText(io, file) {
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+  if (typeof io.openSync !== 'function' || typeof io.fstatSync !== 'function' || typeof io.closeSync !== 'function') {
+    return io.readFileSync(file, 'utf8');
+  }
+  const fd = io.openSync(file, flags);
+  try {
+    const st = io.fstatSync(fd);
+    if (!st || typeof st.isFile !== 'function' || st.isFile() !== true) {
+      const err = new Error('intake is not a regular file');
+      err.code = 'ENOTREG';
+      throw err;
+    }
+    return io.readFileSync(fd, 'utf8');
+  } finally {
+    io.closeSync(fd);
+  }
+}
+
 function loadState(io, file) {
   if (!io.existsSync(file)) return emptyState();
   let parsed;
   try {
-    parsed = JSON.parse(io.readFileSync(file, 'utf8'));
+    parsed = JSON.parse(readIntakeText(io, file));
   } catch {
     return null;
   }

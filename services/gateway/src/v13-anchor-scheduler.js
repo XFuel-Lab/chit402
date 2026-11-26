@@ -75,16 +75,29 @@ const REASONS = new Set([
   'anchor_nonce_conflict',
   'anchor_nonce_retired',
   'anchor_stalled',
+  'anchor_hold_unreadable',
 ]);
 
 const HOLD_REASONS = new Set(['anchor_reverted', 'anchor_nonce_conflict', 'anchor_nonce_retired']);
 
 let active = null;
 let anchorStall = null;
+let legacyUnreleased = 0;
+
+const STALL_SEEN_FILE = 'anchor-stall-seen.json';
 
 /** Allow-listed stall code for /health. Null when the scheduler is moving. */
 export function anchorStallStatus() {
   return anchorStall;
+}
+
+/**
+ * Unreleased non-house epochs that have no journal commit. They still
+ * use the hour-end stall clock, and /health reports the count so an old
+ * book is visible on the first enable.
+ */
+export function legacyUnreleasedEpochs() {
+  return legacyUnreleased;
 }
 
 function setAnchorStall(code) {
@@ -190,10 +203,10 @@ function holdFile(dir) {
 // A FIFO open blocks the event loop unless O_NONBLOCK is set before the type check.
 const OPEN_READ = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
 const OPEN_WRITE = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC
-  | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+  | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);
 
 function readRegularText(file) {
-  const fd = fs.openSync(file, OPEN_READ);
+  const fd = fs.openSync(file, OPEN_READ | fs.constants.O_NOFOLLOW);
   try {
     const st = fs.fstatSync(fd);
     if (typeof st.isFile !== 'function' || st.isFile() !== true) {
@@ -230,13 +243,64 @@ function writeRegularFile(file, text) {
 }
 
 function holdReason(dir) {
+  let text;
   try {
-    const parsed = JSON.parse(readRegularText(holdFile(dir)));
+    text = readRegularText(holdFile(dir));
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return '';
+    return 'anchor_hold_unreadable';
+  }
+  try {
+    const parsed = JSON.parse(text);
     if (parsed && parsed.v === 1 && HOLD_REASONS.has(parsed.reason)) return parsed.reason;
   } catch {
-    return '';
+    return 'anchor_hold_unreadable';
   }
-  return '';
+  return 'anchor_hold_unreadable';
+}
+
+function fsyncDir(dir) {
+  const flags = fs.constants.O_RDONLY | (fs.constants.O_DIRECTORY || 0);
+  const dfd = fs.openSync(dir, flags);
+  try {
+    fs.fsyncSync(dfd);
+  } finally {
+    fs.closeSync(dfd);
+  }
+}
+
+function atomicReplace(dir, file, text) {
+  const tmp = `${file}.${process.pid}.tmp`;
+  try { fs.unlinkSync(tmp); } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
+    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+  const fd = fs.openSync(tmp, flags, 0o600);
+  try {
+    const st = fs.fstatSync(fd);
+    if (typeof st.isFile !== 'function' || st.isFile() !== true) {
+      const err = new Error('not a regular file');
+      err.code = 'ENOTREG';
+      throw err;
+    }
+    const buf = Buffer.from(text);
+    let offset = 0;
+    while (offset < buf.length) {
+      const n = fs.writeSync(fd, buf, offset, buf.length - offset);
+      if (!Number.isInteger(n) || n <= 0) throw new Error('short write');
+      offset += n;
+    }
+    fs.fsyncSync(fd);
+  } catch (err) {
+    try { fs.closeSync(fd); } catch { /* closing a failed tmp */ }
+    try { fs.unlinkSync(tmp); } catch { /* tmp may already be gone */ }
+    throw err;
+  }
+  fs.closeSync(fd);
+  try { fs.chmodSync(tmp, 0o600); } catch { /* mode was set on create */ }
+  fs.renameSync(tmp, file);
+  fsyncDir(dir);
 }
 
 const NONCE_CLEAR_FILE = 'anchor-nonce-clear.json';
@@ -359,7 +423,7 @@ async function acceptNonceClear(session) {
 
 function writeHold(dir, reason) {
   const code = HOLD_REASONS.has(reason) ? reason : 'anchor_reverted';
-  writeRegularFile(holdFile(dir), `${JSON.stringify({ v: 1, reason: code })}\n`);
+  atomicReplace(dir, holdFile(dir), `${JSON.stringify({ v: 1, reason: code })}\n`);
 }
 
 function bumpFile(dir) {
@@ -799,9 +863,26 @@ function earlier(origin, candidate) {
 }
 
 function commitWaitStart(commit, hourStart) {
-  if (commit && Number.isSafeInteger(commit.broadcastAt) && commit.broadcastAt >= 0) return commit.broadcastAt;
   if (commit && Number.isSafeInteger(commit.committedAt) && commit.committedAt >= 0) return commit.committedAt;
   return hourEnd(hourStart);
+}
+
+function stallSeenFile(dir) {
+  return path.join(dir, STALL_SEEN_FILE);
+}
+
+function readStallSeen(dir) {
+  try {
+    const parsed = JSON.parse(readRegularText(stallSeenFile(dir)));
+    if (parsed && parsed.v === 1 && Number.isSafeInteger(parsed.at) && parsed.at >= 0) return parsed.at;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function writeStallSeen(dir, at) {
+  atomicReplace(dir, stallSeenFile(dir), `${JSON.stringify({ v: 1, at })}\n`);
 }
 
 function unminedPastStuck(session, current) {
@@ -823,6 +904,8 @@ function intakeStall(session) {
   const now = session.sealer.clock();
   if (!Number.isSafeInteger(now) || now < 0) return '';
   let origin = null;
+  let nullHour = false;
+  let legacy = 0;
   try {
     const pending = readPendingLines(session.sealer.store.dir, session.sealer.store.io);
     if (pending.ok && Array.isArray(pending.lines)) {
@@ -830,11 +913,26 @@ function intakeStall(session) {
         const row = pending.lines[i];
         const hex = Buffer.from(row.line).toString('hex');
         if (committedReceiptForLine(session.sealer.store, hex)) continue;
-        origin = earlier(origin, hourEnd(row.hourStart));
+        const fromHour = hourEnd(row.hourStart);
+        if (fromHour == null) {
+          nullHour = true;
+          continue;
+        }
+        origin = earlier(origin, fromHour);
       }
     }
   } catch {
     // A missing intake file is not a stall by itself.
+  }
+  if (nullHour) {
+    let seen = readStallSeen(session.dir);
+    if (seen == null) {
+      seen = now;
+      try { writeStallSeen(session.dir, now); } catch { /* this tick still uses now */ }
+    }
+    origin = earlier(origin, seen);
+  } else {
+    try { fs.unlinkSync(stallSeenFile(session.dir)); } catch { /* no stamp to drop */ }
   }
   const commits = session.sealer.state && Array.isArray(session.sealer.state.commits)
     ? session.sealer.state.commits
@@ -844,9 +942,11 @@ function intakeStall(session) {
     for (const row of epochs.values()) {
       if (!row || row.released === true || isHouseShapedEpoch(session.sealer.store, row)) continue;
       const commit = commits.find((item) => Number(item.epoch) === Number(row.epoch));
+      if (!commit) legacy += 1;
       origin = earlier(origin, commitWaitStart(commit, row.hourStart));
     }
   }
+  legacyUnreleased = legacy;
   if (origin == null) return '';
   const elapsed = now - origin;
   if (elapsed > stallHours(session.env) * 3600) return 'anchor_stalled';
@@ -856,7 +956,8 @@ function intakeStall(session) {
 function finish(session, body) {
   const held = holdReason(session.dir);
   const spent = body && body.ok === false && body.reason === 'anchor_bump_spent' ? 'anchor_bump_spent' : '';
-  const code = held || spent || intakeStall(session);
+  const stalled = intakeStall(session);
+  const code = held || spent || stalled;
   if (code) {
     report(session.log, code);
     setAnchorStall(code);

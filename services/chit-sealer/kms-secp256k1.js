@@ -445,12 +445,12 @@ function readIntentLog(text) {
 }
 
 function intentReadFlags() {
-  return fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+  return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
 }
 
 function intentAppendFlags() {
   return fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT
-    | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
 }
 
 function assertIntentRegular(io, fd) {

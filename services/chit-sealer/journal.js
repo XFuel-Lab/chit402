@@ -93,7 +93,7 @@ function importTree(raw) {
 }
 
 function readStateText(io, file) {
-  const flags = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
   const fd = io.openSync(file, flags);
   try {
     const st = io.fstatSync(fd);
