@@ -1,0 +1,9 @@
+{
+  "task_id": "pin-pv10",
+  "issuer_signature": {
+    "alg": "ES256",
+    "payload_version": 10,
+    "kid": "test-pin",
+    "jws": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItcmVjZWlwdCtqd3QifQ.eyJwYXlsb2FkX3ZlcnNpb24iOjEwLCJ0YXNrX2lkIjoicGluLXB2MTAiLCJpc3MiOiJjaGl0NDAyIn0.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  }
+}

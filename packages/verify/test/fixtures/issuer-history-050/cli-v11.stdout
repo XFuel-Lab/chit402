@@ -1,0 +1,29 @@
+{
+  "result": "could_not_check",
+  "exit_code": 2,
+  "reason": "unsupported_version",
+  "message": "This receipt version is not supported by this verifier.",
+  "next_step": "Upgrade @xfuel/verify.",
+  "receipt_id": null,
+  "display_id": null,
+  "payload_version": null,
+  "checks": {
+    "signature": "could_not_check",
+    "key_window": "could_not_check",
+    "payment_binding": "could_not_check",
+    "log_inclusion": "could_not_check",
+    "anchor": "could_not_check",
+    "shape": "could_not_check"
+  },
+  "history": {
+    "source": "file",
+    "head_hash": "349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e",
+    "entry_count": 1,
+    "as_of": null
+  },
+  "log": null,
+  "verifier": {
+    "name": "chit402-verify",
+    "version": "0.5.0-pre.0"
+  }
+}

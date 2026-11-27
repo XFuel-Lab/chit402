@@ -1,0 +1,26 @@
+{
+  "schema": "chit402.issuer_history.v1",
+  "payload_version": 1,
+  "version": 3,
+  "seq": 3,
+  "head_hash": "349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e",
+  "entries": [
+    {
+      "alg": "ES256",
+      "entry_hash": "349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e",
+      "kid": "test-issuer-history-050",
+      "status": "active"
+    }
+  ],
+  "contracts": [
+    {
+      "address": "0x1111111111111111111111111111111111111111",
+      "chainId": 8453,
+      "checkpoint": "0x2222222222222222222222222222222222222222",
+      "codeHash": "0x6006ad8cd474ca5093ce41d2cc0f99e4c6a036563712ecf301ab6d37f02091ed",
+      "genesisHourStart": 1699999200,
+      "predecessor": "0x0000000000000000000000000000000000000000",
+      "retireHourStart": null
+    }
+  ]
+}

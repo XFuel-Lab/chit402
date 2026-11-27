@@ -7,6 +7,10 @@ All notable changes to the Chit402 offline verifier are documented here. This pr
 
 Not published. The bundled `version-windows.json` is test-signed in this build; `prepublishOnly` and `scripts/check-verify-publish.mjs` refuse to publish until the signing ceremony replaces it with the production signature. The version moved off 0.4.11 so no build of this code can be published under that number.
 
+**Issuer-history ceremony (still not published).** `scripts/issuer-history.mjs` builds the signing input and the assembled snapshot for a contracts-bearing document, and `prepublishOnly` runs `issuer-history.mjs check`. That check exits 1 until the bundled snapshot is production-signed, carries `contracts[]`, uses an integer `genesisHourStart` and a post-hardening code hash, and has a version and seq past the current v2 snapshot. A live extension that adds contracts is refused. The current v2 snapshot is now a sealed row, so a receipt that pins v1 or v2 still resolves. v10–v12 receipts are unchanged. The snapshot and `version-windows.json` bytes are not replaced here; those come from the signing ceremony. No publish. `BUILD_DIGEST.txt` moved because `src/issuer-history.ts` gained the sealed v2 row.
+
+
+
 **Enforcement follows the signature.** The windows (signed-time check, v11 lower bound, L5 log time) are enforced only when the bundled document carries a valid production-kid signature under the bundled issuer history. With the test-signed document in this build they are not enforced, so no receipt changes outcome because of them. A test-signed document is accepted only through the library-only test option. The L1 legacy list is separate and is enforced in this build.
 
 **Known limit of this pre-release (L5).** The earliest-head probe does not check an inclusion proof for the receipt's leaf at the probed tree_size, and does not require the probed head to be in the same epoch as the verified head. A trusted signed head of an unrelated log that was anchored early can therefore set the log time. Before 0.5.0 final the probe is tied to the leaf: inclusion proof at tree_size=k, same epoch. A test records the current behaviour and is marked to change.
