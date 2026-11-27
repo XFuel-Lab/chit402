@@ -2,6 +2,8 @@
 
 `anchor-hold.json` in `CHIT_V13_SEALER_DIR` stops the hourly scheduler. The file is written when an anchor receipt reverts (`anchor_reverted`) or when `nonce too low` does not match a transaction this sealer signed (`anchor_nonce_conflict`). While the file is present, every tick logs that code and `/health` reports it as `anchor_stall`. No later hour is signed.
 
+A hold file that is not a regular file, or that is empty, torn, or not the one-line `{ "v": 1, "reason" }` record, is `anchor_hold_unreadable`. That is also a hold: the tick does not sign. Recovering from it is manual. Stop the gateway, delete `anchor-hold.json`, and start again. Do not edit the file in place. The scheduler does not clear that code by itself.
+
 `anchor-bumps.json` is not part of this hold. It records that an epoch already used its one replacement, and the original and replacement transaction hashes. Do not delete it to force a second bump.
 
 ## Clear a reverted anchor

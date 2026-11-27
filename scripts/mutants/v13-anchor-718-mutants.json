@@ -1,0 +1,420 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": [
+      "node",
+      "--test",
+      "--test-force-exit",
+      "--test-concurrency=1",
+      "services/gateway/test/v13-anchor-scheduler.test.mjs"
+    ]
+  },
+  "mutants": [
+    {
+      "id": "J1",
+      "file": "services/chit-sealer/journal.js",
+      "find": "O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK",
+      "replace": "O_RDONLY | fs.constants.O_NOFOLLOW",
+      "note": "journal open blocks on a fifo"
+    },
+    {
+      "id": "J2",
+      "file": "services/chit-sealer/journal.js",
+      "find": "if (!st || typeof st.isFile !== 'function' || st.isFile() !== true) {\n      const err = new Error('sealer journal is unreadable');",
+      "replace": "if (false) {\n      const err = new Error('sealer journal is unreadable');",
+      "note": "journal skips the regular-file check"
+    },
+    {
+      "id": "K1",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);",
+      "note": "intent read blocks on a fifo"
+    },
+    {
+      "id": "K2",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "    read() {\n      if (!io.existsSync(file)) return [];\n      const fd = io.openSync(file, intentReadFlags());\n      try {\n        assertIntentRegular(io, fd);",
+      "replace": "    read() {\n      if (!io.existsSync(file)) return [];\n      const fd = io.openSync(file, intentReadFlags());\n      try {\n        void io;",
+      "note": "intent read skips the regular-file check"
+    },
+    {
+      "id": "K3",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "      const fd = io.openSync(file, intentAppendFlags(), 0o600);\n      try {\n        assertIntentRegular(io, fd);",
+      "replace": "      const fd = io.openSync(file, intentAppendFlags(), 0o600);\n      try {\n        void io;",
+      "note": "intent append skips the regular-file check"
+    },
+    {
+      "id": "K4",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT\n    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT\n    | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);",
+      "note": "intent append blocks on a fifo"
+    },
+    {
+      "id": "K5",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT\n    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT\n    | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "intent append follows a symlink"
+    },
+    {
+      "id": "K6",
+      "file": "services/chit-sealer/journal.js",
+      "find": "O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK",
+      "replace": "O_RDONLY | fs.constants.O_NONBLOCK",
+      "note": "journal read follows a symlink"
+    },
+    {
+      "id": "S1",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const fd = fs.openSync(file, OPEN_READ | fs.constants.O_NOFOLLOW);",
+      "replace": "const fd = fs.openSync(file, OPEN_READ);",
+      "note": "hold and bump reads follow a symlink"
+    },
+    {
+      "id": "S2",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const OPEN_WRITE = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC\n  | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "const OPEN_WRITE = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC\n  | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);",
+      "note": "bump write blocks on a fifo"
+    },
+    {
+      "id": "S3",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const OPEN_WRITE = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC\n  | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "const OPEN_WRITE = fs.constants.O_WRONLY | fs.constants.O_CREAT\n  | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);",
+      "note": "bump rewrite keeps the previous tail"
+    },
+    {
+      "id": "S4",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  } catch (err) {\n    if (err && err.code === 'ENOENT') return '';\n    return 'anchor_hold_unreadable';\n  }",
+      "replace": "  } catch {\n    return '';\n  }",
+      "note": "any hold read error is treated as no hold"
+    },
+    {
+      "id": "S5",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "function writeRegularFile(file, text) {\n  const fd = fs.openSync(file, OPEN_WRITE, 0o600);\n  try {\n    const st = fs.fstatSync(fd);\n    if (typeof st.isFile !== 'function' || st.isFile() !== true) {",
+      "replace": "function writeRegularFile(file, text) {\n  const fd = fs.openSync(file, OPEN_WRITE, 0o600);\n  try {\n    const st = fs.fstatSync(fd);\n    if (false) {",
+      "note": "bump write does not require a regular file"
+    },
+    {
+      "id": "S6",
+      "file": "services/chit-store/intake.js",
+      "find": "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "intake read follows a symlink"
+    },
+    {
+      "id": "S7",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const OPEN_READ = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "const OPEN_READ = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK;",
+      "note": "O_CLOEXEC dropped from OPEN_READ"
+    },
+    {
+      "id": "S8",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const OPEN_WRITE = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC\n  | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "const OPEN_WRITE = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC\n  | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "bump write follows a symlink"
+    },
+    {
+      "id": "S9",
+      "file": "services/chit-store/intake.js",
+      "find": "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | (fs.constants.O_CLOEXEC || 0);",
+      "note": "intake read blocks on a fifo"
+    },
+    {
+      "id": "S10",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    ready = await session.broadcaster.prepare();\n  } catch {\n    return false;\n  }",
+      "replace": "    ready = await session.broadcaster.prepare();\n  } catch {\n    ready = undefined;\n  }",
+      "note": "a failed clear prepare is ignored"
+    },
+    {
+      "id": "S11",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    fd = fs.openSync(file, OPEN_READ | fs.constants.O_NOFOLLOW);",
+      "replace": "    fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);",
+      "note": "clear file open drops O_NONBLOCK"
+    },
+    {
+      "id": "S12",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    async accountNonce(signal, readyUrls) {\n      const ready = Array.isArray(readyUrls) ? readyUrls : await prepare(signal);",
+      "replace": "    async accountNonce(signal, readyUrls) {\n      const ready = await prepare(signal);",
+      "note": "account nonce prepares again"
+    },
+    {
+      "id": "R1",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (nullHour) {",
+      "replace": "if (false && nullHour) {",
+      "note": "a null hourStart never starts the stall clock"
+    },
+    {
+      "id": "R2",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "    async hashesAbsent(hashes, signal, readyUrls) {\n      const ready = Array.isArray(readyUrls) ? readyUrls : await prepare(signal);",
+      "replace": "    async hashesAbsent(hashes, signal, readyUrls) {\n      const ready = await prepare(signal);",
+      "note": "hash check prepares again"
+    },
+    {
+      "id": "L2a",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (unminedPastStuck(session, current)) return end(false, 'anchor_bump_spent');\n    return end(true, 'anchor_bump_spent');",
+      "replace": "return end(true, 'anchor_bump_spent');",
+      "note": "a spent bump is always ok"
+    },
+    {
+      "id": "L2b",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "return Date.now() - at >= session.stuckMs;",
+      "replace": "return true;",
+      "note": "a spent bump is always past the stuck window"
+    },
+    {
+      "id": "L2c",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const spent = body && body.ok === false && body.reason === 'anchor_bump_spent' ? 'anchor_bump_spent' : '';",
+      "replace": "const spent = '';",
+      "note": "a spent bump is not a health stall"
+    },
+    {
+      "id": "L2d",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  } catch {\n    return true;\n  }\n  const broadcast = [...rows].reverse().find((row) => (",
+      "replace": "  } catch {\n    return false;\n  }\n  const broadcast = [...rows].reverse().find((row) => (",
+      "note": "an unreadable intent log is not treated as spent"
+    },
+    {
+      "id": "L2e",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (!Number.isFinite(at)) return true;",
+      "replace": "if (!Number.isFinite(at)) return false;",
+      "note": "a missing broadcast row is not treated as spent"
+    },
+    {
+      "id": "L2f",
+      "file": "services/gateway/src/public-metrics.js",
+      "find": "if (anchorStall === 'anchor_bump_spent') body.anchor_stall = anchorStall;",
+      "replace": "if (false) body.anchor_stall = anchorStall;",
+      "note": "health hides anchor_bump_spent"
+    },
+    {
+      "id": "L2g",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  'anchor_bump_spent',\n",
+      "replace": "",
+      "note": "anchor_bump_spent is not an allow-listed tick reason"
+    },
+    {
+      "id": "L3a",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (!row || row.released === true || isHouseShapedEpoch(session.sealer.store, row)) continue;",
+      "replace": "if (!row || isHouseShapedEpoch(session.sealer.store, row)) continue;",
+      "note": "released epochs start the stall clock"
+    },
+    {
+      "id": "L3b",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (!row || row.released === true || isHouseShapedEpoch(session.sealer.store, row)) continue;",
+      "replace": "if (!row || row.released === true) continue;",
+      "note": "house epochs start the stall clock"
+    },
+    {
+      "id": "L3c",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "function commitWaitStart(commit, hourStart) {\n  if (commit && Number.isSafeInteger(commit.committedAt) && commit.committedAt >= 0) return commit.committedAt;\n  return hourEnd(hourStart);\n}",
+      "replace": "function commitWaitStart(commit, hourStart) {\n  if (commit && Number.isSafeInteger(commit.broadcastAt) && commit.broadcastAt >= 0) return commit.broadcastAt;\n  if (commit && Number.isSafeInteger(commit.committedAt) && commit.committedAt >= 0) return commit.committedAt;\n  return hourEnd(hourStart);\n}",
+      "note": "a bump broadcast resets the stall clock"
+    },
+    {
+      "id": "L3d",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (commit && Number.isSafeInteger(commit.committedAt) && commit.committedAt >= 0) return commit.committedAt;\n  return hourEnd(hourStart);",
+      "replace": "  return hourEnd(hourStart);",
+      "note": "committedAt is ignored"
+    },
+    {
+      "id": "C1",
+      "file": "services/chit-sealer/close.js",
+      "find": "if (Number.isSafeInteger(committedAt) && committedAt >= 0) summary.committedAt = committedAt;",
+      "replace": "void committedAt;",
+      "note": "committedAt is not saved"
+    },
+    {
+      "id": "C2",
+      "file": "services/chit-sealer/close.js",
+      "find": "if (Number.isSafeInteger(broadcastAt) && broadcastAt >= 0) next.broadcastAt = broadcastAt;",
+      "replace": "void broadcastAt;",
+      "note": "broadcastAt is not saved"
+    },
+    {
+      "id": "L3e",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    const stamp = readStallSeen(session.dir, now) || { at: null };\n    let seen = stamp.at;\n    if (stamp.unreadable === true) {\n      seen = seen == null ? now : seen;\n      stallSeenMem.set(session.dir, seen);\n      try { writeStallSeen(session.dir, seen); } catch { /* the in-memory stamp still starts the clock */ }\n    } else if (seen == null) {\n      seen = now;\n      stallSeenMem.delete(session.dir);\n      try { writeStallSeen(session.dir, seen); } catch { /* a missing file is rewritten */ }\n    }\n    origin = earlier(origin, seen);",
+      "replace": "    origin = origin;",
+      "note": "a null hourStart does not use the persisted stamp"
+    },
+    {
+      "id": "L3f",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (committedReceiptForLine(session.sealer.store, hex)) continue;",
+      "replace": "if (false) continue;",
+      "note": "a committed pending line starts the stall clock"
+    },
+    {
+      "id": "L3g",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (elapsed > stallHours(session.env) * 3600) return 'anchor_stalled';",
+      "replace": "if (elapsed >= stallHours(session.env) * 3600) return 'anchor_stalled';",
+      "note": "the stall window is inclusive"
+    },
+    {
+      "id": "L3h",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (origin == null || candidate < origin) return candidate;",
+      "replace": "if (origin == null || candidate > origin) return candidate;",
+      "note": "the later wait wins"
+    },
+    {
+      "id": "L3i",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (nullHour) {",
+      "replace": "  try { fs.unlinkSync(stallSeenFile(session.dir)); } catch { /* reset */ }\n  if (nullHour) {",
+      "note": "the persisted stamp is deleted on every tick"
+    },
+    {
+      "id": "L3j",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const fromHour = hourEnd(row.hourStart);",
+      "replace": "const fromHour = Number.isSafeInteger(row.hourStart) ? row.hourStart : null;",
+      "note": "pending rows use hourStart instead of the hour end"
+    },
+    {
+      "id": "L3k",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (!commit) legacy += 1;",
+      "replace": "if (false) legacy += 1;",
+      "note": "legacy unreleased epochs are not counted"
+    },
+    {
+      "id": "I1",
+      "file": "services/chit-store/intake.js",
+      "find": "    if (!st || typeof st.isFile !== 'function' || st.isFile() !== true) {\n      const err = new Error('intake is not a regular file');\n      err.code = 'ENOTREG';\n      throw err;\n    }",
+      "replace": "    if (false) { const err = new Error('intake is not a regular file'); err.code = 'ENOTREG'; throw err; }",
+      "note": "intake read skips the regular-file check"
+    },
+    {
+      "id": "I2",
+      "file": "services/chit-store/intake.js",
+      "find": "if (Number.isSafeInteger(row.hourStart) && row.hourStart >= 0) line.hourStart = row.hourStart;",
+      "replace": "if (row.hourStart != null) line.hourStart = row.hourStart;",
+      "note": "a negative hourStart is kept"
+    },
+    {
+      "id": "N4",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    if (!regular) {\n      const err = new Error('hold temp is not a regular file');\n      err.code = 'ENOTREG';\n      throw err;\n    }\n    fs.unlinkSync(tmp);",
+      "replace": "    if (!regular) {\n      const err = new Error('hold temp is not a regular file');\n      err.code = 'ENOTREG';\n      throw err;\n    }",
+      "note": "a stale regular temp file is left in place"
+    },
+    {
+      "id": "N8",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  let existing = null;\n  try {\n    existing = fs.lstatSync(tmp);\n  } catch (err) {\n    if (!err || err.code !== 'ENOENT') throw err;\n  }\n  if (existing) {\n    const regular = typeof existing.isFile === 'function' && existing.isFile() === true\n      && !(typeof existing.isSymbolicLink === 'function' && existing.isSymbolicLink());\n    if (!regular) {\n      const err = new Error('hold temp is not a regular file');\n      err.code = 'ENOTREG';\n      throw err;\n    }\n    fs.unlinkSync(tmp);\n  }",
+      "replace": "  void tmp;",
+      "note": "a stale temp file is not removed before the exclusive create"
+    },
+    {
+      "id": "N5",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL\n    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL\n    | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "the temp open follows a symlink"
+    },
+    {
+      "id": "N9",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL\n    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "  const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT\n    | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "the temp open does not use O_EXCL"
+    },
+    {
+      "id": "N6",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "      offset += n;\n    }\n    fs.fsyncSync(fd);",
+      "replace": "      offset += n;\n    }",
+      "note": "the temp file is not fsynced"
+    },
+    {
+      "id": "N7",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  fs.renameSync(tmp, file);\n  fsyncDir(dir);",
+      "replace": "  fs.renameSync(tmp, file);",
+      "note": "the directory is not fsynced"
+    },
+    {
+      "id": "N10",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    try { fs.unlinkSync(tmp); } catch { /* tmp may already be gone */ }\n    throw err;",
+      "replace": "    try { fs.unlinkSync(tmp); } catch { /* tmp may already be gone */ }\n    try { fs.unlinkSync(file); } catch { /* a failed write must keep the previous hold */ }\n    throw err;",
+      "note": "a failed write deletes the previous hold"
+    },
+    {
+      "id": "N15",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at < 0 || parsed.at > now) {",
+      "replace": "  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at > now) {",
+      "note": "a seen file at -1 is accepted"
+    },
+    {
+      "id": "N16",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at < 0 || parsed.at > now) {",
+      "replace": "  if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at < 0) {",
+      "note": "a seen file in the future is accepted"
+    },
+    {
+      "id": "N14",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    stallSeenMem.delete(session.dir);\n    try { fs.unlinkSync(stallSeenFile(session.dir)); } catch { /* no stamp to drop */ }",
+      "replace": "    stallSeenMem.delete(session.dir);",
+      "note": "a seen file is kept when nothing is pending"
+    },
+    {
+      "id": "N17",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (!row || row.released === true || isHouseShapedEpoch(session.sealer.store, row)) continue;",
+      "replace": "if (!row) continue;",
+      "note": "every epoch is counted as legacy unreleased"
+    },
+    {
+      "id": "N26",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "return fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "intent read follows a symlink"
+    },
+    {
+      "id": "N18",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "  try { fs.chmodSync(file, 0o600); } catch { /* mode was set on create */ }",
+      "replace": "  void file;",
+      "note": "a rewritten bump file keeps the previous mode"
+    },
+    {
+      "id": "N19",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "      stallSeenMem.set(session.dir, seen);",
+      "replace": "      void seen;",
+      "note": "an unwritable seen file has no in-memory stamp"
+    }
+  ]
+}

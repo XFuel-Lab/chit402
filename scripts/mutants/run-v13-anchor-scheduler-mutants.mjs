@@ -36,14 +36,19 @@ function findRoot(start) {
   return null;
 }
 
-const rootArg = args.find((arg) => !arg.startsWith('--') && arg !== opt('--only', '') && arg !== opt('--timeout-sec', ''));
+const rootArg = args.find((arg) => !arg.startsWith('--') && arg !== opt('--only', '') && arg !== opt('--timeout-sec', '') && arg !== opt('--spec', '') && arg !== opt('--min-score', ''));
 const root = rootArg ? resolve(rootArg) : findRoot(HERE);
 if (!root || !existsSync(join(root, '.git'))) {
   process.stderr.write('usage: node run-v13-anchor-scheduler-mutants.mjs [repo-root] [--only ID] [--no-unshare] [--timeout-sec 180]\n');
   process.exit(2);
 }
 
-const spec = JSON.parse(readFileSync(join(HERE, 'v13-anchor-scheduler-mutants.json'), 'utf8'));
+const specName = opt('--spec', '');
+const specPath = specName
+  ? (specName.startsWith('/') ? specName : join(HERE, specName))
+  : join(HERE, 'v13-anchor-scheduler-mutants.json');
+const minScore = Number(opt('--min-score', '0.9'));
+const spec = JSON.parse(readFileSync(specPath, 'utf8'));
 const mutants = spec.mutants.filter((mutant) => only.size === 0 || only.has(mutant.id));
 const originals = new Map();
 let child = null;
@@ -199,5 +204,7 @@ process.stdout.write(`killed ${killed} survived ${survived} hollow ${hollow} equ
 for (const row of rows) process.stdout.write(`ID\t${row.id}\t${row.result}\n`);
 
 if (dirty.length) process.exit(4);
-if (missed.length || tally.NOT_APPLIED || tally.ERROR || tally.TIMEOUT || hollow || score < 0.9) process.exit(1);
+if (!specName && (missed.length || score < minScore)) process.exit(1);
+if (specName && score < minScore) process.exit(1);
+if (tally.NOT_APPLIED || tally.ERROR || tally.TIMEOUT || hollow) process.exit(1);
 process.exit(0);

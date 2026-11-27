@@ -92,6 +92,22 @@ function importTree(raw) {
   return built.tree;
 }
 
+function readStateText(io, file) {
+  const flags = fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
+  const fd = io.openSync(file, flags);
+  try {
+    const st = io.fstatSync(fd);
+    if (!st || typeof st.isFile !== 'function' || st.isFile() !== true) {
+      const err = new Error('sealer journal is unreadable');
+      err.code = 'journal_unreadable';
+      throw err;
+    }
+    return io.readFileSync(fd, 'utf8');
+  } finally {
+    io.closeSync(fd);
+  }
+}
+
 function initial(config) {
   return {
     v: 1,
@@ -152,7 +168,7 @@ export function openJournal(dir, config, io = fs) {
   const file = path.join(dir, 'sealer-state.json');
   let state;
   if (io.existsSync(file)) {
-    const raw = JSON.parse(io.readFileSync(file, 'utf8'));
+    const raw = JSON.parse(readStateText(io, file));
     state = fromDisk(raw);
     if (!state) {
       const err = new Error('sealer journal is unreadable');

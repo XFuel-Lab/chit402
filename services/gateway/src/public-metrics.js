@@ -48,6 +48,7 @@ export function publicHealthBody({
   receiptFailures = 0,
   issuanceCap = null,
   anchorStall = null,
+  legacyUnreleased = 0,
 } = {}) {
   const body = {
     status: degraded ? 'degraded' : 'ok',
@@ -68,6 +69,11 @@ export function publicHealthBody({
     || anchorStall === 'anchor_stalled'
   ) {
     body.anchor_stall = anchorStall;
+  }
+  if (anchorStall === 'anchor_bump_spent') body.anchor_stall = anchorStall;
+  if (anchorStall === 'anchor_hold_unreadable') body.anchor_stall = anchorStall;
+  if (Number.isSafeInteger(legacyUnreleased) && legacyUnreleased > 0) {
+    body.legacy_unreleased_epochs = legacyUnreleased;
   }
   // Absent when nothing is quarantined, so a clean boot keeps the extra list off.
   // An acknowledged head stays in the list. It does not flip status to degraded.

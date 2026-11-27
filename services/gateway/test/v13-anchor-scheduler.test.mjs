@@ -3,10 +3,12 @@
  */
 import assert from 'node:assert/strict';
 import { createPublicKey } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import fs, { chmodSync, closeSync, constants as fsConstants, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { describe, test, afterEach } from 'node:test';
 import { inspect } from 'node:util';
 import { SECP256K1, bytesToBig, ethereumAddress } from '../../../packages/cs2-core/ecdsa/index.js';
@@ -18,10 +20,11 @@ import { deriveKeyPair } from '../../../packages/cs2-core/seal/hpke.js';
 import { ANCHOR_SELECTOR } from '../../chit-sealer/calldata.js';
 import { guardKmsClient } from '../../chit-sealer/anchor-mainnet.js';
 import { resetSealerGuardForTest } from '../../chit-sealer/guard.js';
-import { createCheckpointSigner } from '../../chit-sealer/kms-secp256k1.js';
+import { openJournal } from '../../chit-sealer/journal.js';
+import { createCheckpointSigner, openAnchorIntentLog } from '../../chit-sealer/kms-secp256k1.js';
 import { MAINNET_ANCHOR, MAINNET_CHECKPOINT, MAINNET_DOMAIN } from '../../chit-sealer/mainnet-pin.js';
 import { ANCHORED_TOPIC, DOMAIN_CALL, LATEST_CALL, encodeLatestHead } from '../../chit-sealer/rpc-base.js';
-import { bookLeaf, openIntake } from '../../chit-store/intake.js';
+import { bookLeaf, openIntake, readPendingLines } from '../../chit-store/intake.js';
 import { fetchReceipt, openStore } from '../../chit-store/store.js';
 import { wireV13Runtime } from '../src/v13-boot.js';
 import { handleHouse, issueHouseReceipt, readV13Runtime, setV13Runtime } from '../src/v13-issue.js';
@@ -29,6 +32,7 @@ import {
   anchorSchedulerTimerForTest,
   anchorStallStatus,
   assertAnchorSchedulerBoot,
+  legacyUnreleasedEpochs,
   finalityDepth,
   selectAnchorHour,
   startV13AnchorScheduler,
@@ -1103,6 +1107,67 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
     }
   });
 
+  test('a spent bump with no new traffic is a health stall inside the stuck window', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      state.receipt = null;
+      const bumped = await handle.tick();
+      assert.equal(bumped.ok, true, bumped.reason);
+      assert.equal(state.sends.length, 2);
+      const spent = await handle.tick();
+      assert.equal(spent.ok, false);
+      assert.equal(spent.reason, 'anchor_bump_spent');
+      assert.equal(state.sends.length, 2);
+      assert.equal(anchorStallStatus(), 'anchor_bump_spent');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_bump_spent');
+      assert.equal(world.store.epochs.get('1').released, false);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('committed unreleased lines stall from the journal clock with no new traffic', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    try {
+      const handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2', CHIT_SEALER_STUCK_MS: '600000' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      assert.equal(anchorStallStatus(), null);
+      world.clock.now += 7201;
+      state.receipt = null;
+      const waited = await handle.tick();
+      assert.notEqual(waited.reason, 'anchor_bump_spent');
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_stalled');
+      assert.equal(world.store.epochs.get('1').released, false);
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
   test('a mined receipt is left in place', async () => {
     const world = freshWorld();
     bookPending(world, 1);
@@ -1838,6 +1903,41 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
       assert.equal(Object.hasOwn(leaked, 'anchor_stall'), false);
       assert.equal(JSON.stringify(leaked).includes('CANARY'), false);
       assert.equal(publicHealthBody({ anchorStall: 'anchor_nonce_conflict' }).anchor_stall, 'anchor_nonce_conflict');
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stall clock on disk is still reported after a restart', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.latest = encodeLatestHead(9, 0);
+    const env = schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' });
+    const pair = await rpcPair(state);
+    const start = () => startV13AnchorScheduler({
+      env,
+      clock: () => world.clock.now,
+      runtime: { store: world.store, client: signer.client },
+      deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+    });
+    try {
+      const first = await start();
+      await first.tick();
+      world.clock.now += 7201;
+      const stalled = await first.tick();
+      assert.equal(stalled.reason, 'anchor_head_mismatch');
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      await first.stop();
+      const restarted = await start();
+      const again = await restarted.tick();
+      assert.equal(again.reason, 'anchor_head_mismatch');
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_stalled');
+      await restarted.stop();
     } finally {
       await pair.close();
       rmSync(world.root, { recursive: true, force: true });
@@ -2721,7 +2821,1515 @@ describe('v13 anchor scheduler', { concurrency: false }, () => {
       rmSync(recoverWorld.root, { recursive: true, force: true });
     }
   });
+
+  test('a fifo clear file is refused without stalling the tick', async () => {
+    const opened = await conflictHandle();
+    const file = join(opened.world.sealerDir, 'anchor-nonce-clear.json');
+    const worker = releaseFifo(plantFifo(file));
+    try {
+      opened.state.accountNonce = '0x2';
+      const started = Date.now();
+      const tick = await opened.handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `clear fifo blocked ${Date.now() - started}ms`);
+      assert.equal(tick.ok, false);
+      assert.equal(tick.reason, 'anchor_nonce_conflict');
+      assert.equal(lstatSync(file).isFIFO(), true);
+      assert.equal(JSON.parse(readFileSync(join(opened.world.sealerDir, 'anchor-hold.json'), 'utf8')).reason, 'anchor_nonce_conflict');
+    } finally {
+      await worker.terminate();
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlinked clear file is refused', async () => {
+    const opened = await conflictHandle();
+    const dir = opened.world.sealerDir;
+    const target = join(dir, 'clear-body.json');
+    const link = join(dir, 'anchor-nonce-clear.json');
+    try {
+      const nonce = String(JSON.parse(readFileSync(join(dir, 'sealer-state.json'), 'utf8')).commits[0].nonce);
+      writeFileSync(target, `${JSON.stringify({ v: 1, nonce })}\n`, { mode: 0o600 });
+      chmodSync(target, 0o600);
+      const stamp = new Date(Date.now() + 5000);
+      utimesSync(target, stamp, stamp);
+      symlinkSync(target, link);
+      assert.equal(statSync(target).mode & 0o777, 0o600);
+      opened.state.accountNonce = '0x2';
+      const tick = await opened.handle.tick();
+      assert.equal(tick.reason, 'anchor_nonce_conflict');
+      assert.equal(lstatSync(link).isSymbolicLink(), true);
+      assert.equal(JSON.parse(readFileSync(join(dir, 'anchor-hold.json'), 'utf8')).reason, 'anchor_nonce_conflict');
+    } finally {
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('the clear checks share one prepared RPC set', async () => {
+    const opened = await conflictHandle();
+    try {
+      opened.state.accountNonce = '0x2';
+      opened.state.methods.length = 0;
+      writeClear(opened.world.sealerDir, { v: 1, nonce: '0' });
+      const tick = await opened.handle.tick();
+      assert.equal(tick.reason, 'anchor_nonce_retired');
+      const chainIds = opened.state.methods.filter((method) => method === 'eth_chainId').length;
+      assert.equal(chainIds, 4, `eth_chainId calls ${chainIds}`);
+      assert.ok(opened.state.methods.filter((method) => method === 'eth_getTransactionCount').length >= 2);
+      assert.equal(opened.state.methods.includes('eth_getTransactionByHash'), true);
+    } finally {
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo anchor-hold.json does not sign', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const file = join(world.sealerDir, 'anchor-hold.json');
+    plantFifo(file);
+    let handle = null;
+    let worker = null;
+    try {
+      const before = signCount(signer);
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      worker = releaseFifo(file);
+      const started = Date.now();
+      const tick = await handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `hold fifo blocked ${Date.now() - started}ms`);
+      assert.equal(tick.ok, false);
+      assert.equal(tick.reason, 'anchor_hold_unreadable');
+      assert.equal(signCount(signer), before);
+      assert.equal(state.sends.length, 0);
+      assert.equal(lstatSync(file).isFIFO(), true);
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_hold_unreadable');
+    } finally {
+      if (worker) await worker.terminate();
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo anchor-bumps.json does not stall the tick', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    let handle = null;
+    let worker = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const file = join(world.sealerDir, 'anchor-bumps.json');
+      worker = releaseFifo(plantFifo(file));
+      const started = Date.now();
+      const tick = await handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `bumps fifo blocked ${Date.now() - started}ms`);
+      assert.equal(lstatSync(file).isFIFO(), true);
+      assert.notEqual(tick.reason, 'anchor_bump_spent');
+    } finally {
+      if (worker) await worker.terminate();
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo sealer journal is refused without blocking', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'v13-journal-'));
+    const file = join(dir, 'sealer-state.json');
+    const worker = releaseFifo(plantFifo(file));
+    try {
+      const started = Date.now();
+      assert.throws(
+        () => openJournal(dir, { chainId: 8453n, contract: MAINNET_ANCHOR }),
+        (err) => err.code === 'journal_unreadable',
+      );
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `journal fifo blocked ${Date.now() - started}ms`);
+      assert.equal(lstatSync(file).isFIFO(), true);
+    } finally {
+      await worker.terminate();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo intent log is refused without blocking', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'v13-intent-'));
+    const file = join(dir, 'anchor-intents.jsonl');
+    const worker = releaseFifo(plantFifo(file));
+    try {
+      const log = openAnchorIntentLog(dir);
+      const started = Date.now();
+      assert.throws(() => log.read(), (err) => err.code === 'intent_log_refused');
+      assert.throws(() => log.append({ v: 1 }), (err) => err.code === 'ENXIO' || err.code === 'intent_log_refused');
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `intent fifo blocked ${Date.now() - started}ms`);
+      assert.equal(lstatSync(file).isFIFO(), true);
+    } finally {
+      await worker.terminate();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo intent log with a reader is refused before append', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'v13-intent-'));
+    const file = join(dir, 'anchor-intents.jsonl');
+    execFileSync('mkfifo', [file]);
+    const peer = openSync(file, fsConstants.O_RDWR | fsConstants.O_NONBLOCK);
+    try {
+      const log = openAnchorIntentLog(dir);
+      assert.throws(() => log.append({ v: 1, op: 'anchor_intent' }), (err) => err.code === 'intent_log_refused');
+    } finally {
+      closeSync(peer);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a pending row with no hourStart stalls after the persisted window', async () => {
+    const world = freshWorld();
+    const intake = openIntake(world.store.dir);
+    const booked = bookLeaf(intake, {
+      paymentRef: tagged(1, 0x91).padEnd(160, 'a').slice(0, 160),
+      line: coreLine(1),
+      caller: { bookId: world.book.id, token: world.book.token },
+    });
+    assert.equal(booked.ok, true, booked.reason);
+    const signer = await injectedSigner(CAP);
+    const pair = await rpcPair(chainState(), { primary: { rateLimit: true }, secondary: { rateLimit: true } });
+    const env = schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' });
+    const start = () => startV13AnchorScheduler({
+      env,
+      clock: () => world.clock.now,
+      runtime: { store: world.store, client: signer.client },
+      deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+    });
+    try {
+      const first = await start();
+      await first.tick();
+      assert.equal(anchorStallStatus(), null);
+      world.clock.now += 10 * 3600;
+      const stalled = await first.tick();
+      assert.equal(stalled.reason, 'anchor_rpc_unavailable');
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      await first.stop();
+      const restarted = await start();
+      await restarted.tick();
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_stalled');
+      await restarted.stop();
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('an empty or torn hold file does not sign', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const file = join(world.sealerDir, 'anchor-hold.json');
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      for (const body of ['', '{', '{"v":1}\n']) {
+        writeFileSync(file, body, { mode: 0o600 });
+        const before = signCount(signer);
+        const tick = await handle.tick();
+        assert.equal(tick.reason, 'anchor_hold_unreadable', JSON.stringify(body));
+        assert.equal(signCount(signer), before, JSON.stringify(body));
+        assert.equal(state.sends.length, 0, JSON.stringify(body));
+      }
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_hold_unreadable');
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a shorter hold rewrite replaces the previous bytes', async () => {
+    const opened = await conflictHandle();
+    try {
+      const hold = join(opened.world.sealerDir, 'anchor-hold.json');
+      const conflict = readFileSync(hold, 'utf8');
+      assert.equal(conflict.includes('anchor_nonce_conflict'), true);
+      opened.state.accountNonce = '0x2';
+      writeClear(opened.world.sealerDir, { v: 1, nonce: '0' });
+      const retired = await opened.handle.tick();
+      assert.equal(retired.reason, 'anchor_nonce_retired');
+      const text = readFileSync(hold, 'utf8');
+      assert.equal(text, `${JSON.stringify({ v: 1, reason: 'anchor_nonce_retired' })}\n`);
+      assert.equal(text.includes('anchor_nonce_conflict'), false);
+    } finally {
+      await opened.pair.close();
+      rmSync(opened.world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a bump rewrite drops bytes that belonged to the previous file', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const marker = `TAILMARKER${'Z'.repeat(400)}`;
+      const seed = `${JSON.stringify({ v: 2, bumps: { 9: { hashes: [] } }, marker })}\n`;
+      writeFileSync(join(world.sealerDir, 'anchor-bumps.json'), seed, { mode: 0o600 });
+      state.receipt = null;
+      await handle.tick();
+      const saved = readFileSync(join(world.sealerDir, 'anchor-bumps.json'), 'utf8');
+      assert.equal(saved.includes(marker), false);
+      let parsed;
+      assert.doesNotThrow(() => { parsed = JSON.parse(saved); });
+      assert.equal(parsed.v, 2);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a released epoch and a house epoch do not stall', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const epoch = world.store.epochs.get('1');
+      state.logs = [anchoredLog(epoch, 4)];
+      state.receipt = { status: '0x1', blockNumber: '0x4', logs: state.logs };
+      state.finalized = '0x44';
+      state.latest = encodeLatestHead(1, epoch.hourStart);
+      await handle.tick();
+      assert.equal(epoch.released, true);
+      world.store.epochs.set('50', {
+        epoch: 50,
+        hourStart: 0,
+        size: 1024,
+        root: 'ab'.repeat(32),
+        stateRoot: 'cd'.repeat(32),
+        released: false,
+      });
+      world.store.receipts.set('house-1', { id: 'house-1', epoch: 50, bookId: 'book', line: null });
+      world.clock.now += 10 * 3600;
+      await handle.tick();
+      assert.equal(anchorStallStatus(), null);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('the stall origin is committedAt and the earlier of two waits', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const env = schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2', CHIT_SEALER_STUCK_MS: '600000' });
+    const start = () => startV13AnchorScheduler({
+      env,
+      clock: () => world.clock.now,
+      runtime: { store: world.store, client: signer.client },
+      deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+    });
+    try {
+      world.clock.now = 4000;
+      const first = await start();
+      assert.equal((await first.tick()).ok, true);
+      await first.stop();
+      const journalPath = join(world.sealerDir, 'sealer-state.json');
+      const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
+      assert.equal(journal.commits[0].committedAt, 4000);
+      assert.equal(journal.commits[0].broadcastAt, 4000);
+      journal.commits[0].broadcastAt = 20000;
+      writeFileSync(journalPath, JSON.stringify(journal), { mode: 0o600 });
+      world.clock.now = 10801;
+      const restarted = await start();
+      await restarted.tick();
+      assert.equal(anchorStallStatus(), null);
+      world.clock.now = 11201;
+      await restarted.tick();
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      await restarted.stop();
+      const second = openIntake(world.store.dir);
+      bookLeaf(second, {
+        paymentRef: tagged(2, 0x92).padEnd(160, 'b').slice(0, 160),
+        line: coreLine(2),
+        caller: { bookId: world.book.id, token: world.book.token },
+        hourStart: 0,
+      });
+      bookLeaf(second, {
+        paymentRef: tagged(3, 0x93).padEnd(160, 'c').slice(0, 160),
+        line: coreLine(3),
+        caller: { bookId: world.book.id, token: world.book.token },
+        hourStart: 10 * 3600,
+      });
+      world.clock.now = 10801;
+      state.latest = encodeLatestHead(9, 0);
+      const both = await start();
+      await both.tick();
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      await both.stop();
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('the stall boundary is strictly after the window', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.latest = encodeLatestHead(9, 0);
+    const pair = await rpcPair(state);
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      world.clock.now = 10800;
+      await handle.tick();
+      assert.equal(anchorStallStatus(), null);
+      world.clock.now = 10801;
+      await handle.tick();
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a pending line that is already committed does not start the stall clock', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const epoch = world.store.epochs.get('1');
+      state.logs = [anchoredLog(epoch, 4)];
+      state.receipt = { status: '0x1', blockNumber: '0x4', logs: state.logs };
+      state.finalized = '0x44';
+      state.latest = encodeLatestHead(1, epoch.hourStart);
+      await handle.tick();
+      assert.equal(epoch.released, true);
+      const intakePath = join(world.store.dir, 'pending-intake.json');
+      const intake = JSON.parse(readFileSync(intakePath, 'utf8'));
+      intake.leaves[0].receiptId = null;
+      intake.leaves[0].state = 'pending_anchor';
+      writeFileSync(intakePath, JSON.stringify(intake), { mode: 0o600 });
+      world.clock.now += 10 * 3600;
+      await handle.tick();
+      assert.equal(anchorStallStatus(), null);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a spent bump stays quiet until STUCK_MS and is loud when the log cannot be read', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const env = schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' });
+    const start = (extra) => startV13AnchorScheduler({
+      env: extra ? schedulerEnv(world.sealerDir, extra) : env,
+      clock: () => world.clock.now,
+      runtime: { store: world.store, client: signer.client },
+      deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+    });
+    try {
+      const handle = await start();
+      assert.equal((await handle.tick()).ok, true);
+      state.receipt = null;
+      assert.equal((await handle.tick()).ok, true);
+      await handle.stop();
+      const intentPath = join(world.sealerDir, 'anchor-intents.jsonl');
+      const rows = readFileSync(intentPath, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+      const latest = [...rows].reverse().find((row) => row.status === 'broadcast');
+      latest.at = new Date().toISOString();
+      writeFileSync(intentPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, { mode: 0o600 });
+      const quiet = await start({ CHIT_SEALER_STUCK_MS: '600000' });
+      const inside = await quiet.tick();
+      assert.equal(inside.reason, 'anchor_bump_spent');
+      assert.equal(inside.ok, true);
+      await quiet.stop();
+      latest.at = new Date(Date.now() - 600000).toISOString();
+      writeFileSync(intentPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, { mode: 0o600 });
+      const loud = await start({ CHIT_SEALER_STUCK_MS: '600000' });
+      const outside = await loud.tick();
+      assert.equal(outside.ok, false);
+      assert.equal(outside.reason, 'anchor_bump_spent');
+      await loud.stop();
+      writeFileSync(intentPath, `${rows.filter((row) => row.status !== 'broadcast').map((row) => JSON.stringify(row)).join('\n')}\n`, { mode: 0o600 });
+      const missing = await start({ CHIT_SEALER_STUCK_MS: '600000' });
+      const noRow = await missing.tick();
+      assert.equal(noRow.ok, false);
+      assert.equal(noRow.reason, 'anchor_bump_spent');
+      await missing.stop();
+      const unreadable = await start({ CHIT_SEALER_STUCK_MS: '600000' });
+      rmSync(intentPath);
+      mkdirSync(intentPath);
+      const failed = await unreadable.tick();
+      assert.equal(failed.ok, false);
+      assert.equal(failed.reason, 'anchor_bump_spent');
+      await unreadable.stop();
+    } finally {
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a clear whose prepare fails is not accepted', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.nonceLow = true;
+    state.rejectLookups = true;
+    const pair = await rpcPair(state);
+    let arm = false;
+    let chain = 0;
+    const orig = pair.fetchImpl.bind(pair);
+    pair.fetchImpl = async (url, opts) => {
+      let method = '';
+      try { method = JSON.parse(opts.body).method; } catch { method = ''; }
+      if (arm && method === 'eth_chainId') {
+        chain += 1;
+        if (chain > 2 && chain <= 4) {
+          return new Response(JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            error: { code: -32000, message: 'request limit reached' },
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+        }
+      }
+      return orig(url, opts);
+    };
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).reason, 'anchor_nonce_conflict');
+      state.accountNonce = '0x2';
+      writeClear(world.sealerDir, { v: 1, nonce: '0' });
+      arm = true;
+      const tick = await handle.tick();
+      assert.equal(tick.reason, 'anchor_nonce_conflict');
+      assert.equal(existsSync(join(world.sealerDir, 'anchor-nonce-clear.json')), true);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlinked intent log is not followed', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const outside = join(world.root, 'outside-intents.jsonl');
+    writeFileSync(outside, '', { mode: 0o600 });
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const intent = join(world.sealerDir, 'anchor-intents.jsonl');
+      if (existsSync(intent)) rmSync(intent);
+      symlinkSync(outside, intent);
+      const before = signCount(signer);
+      await handle.tick();
+      assert.equal(readFileSync(outside, 'utf8'), '');
+      assert.equal(signCount(signer), before);
+      assert.equal(state.sends.length, 0);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo pending-intake.json does not block the tick', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const file = join(world.store.dir, 'pending-intake.json');
+    rmSync(file);
+    const worker = releaseFifo(plantFifo(file));
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const started = Date.now();
+      const tick = await handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `intake fifo blocked ${Date.now() - started}ms`);
+      assert.equal(tick.reason, 'intake_unreadable');
+    } finally {
+      await worker.terminate();
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a negative or fractional hourStart is not a stall origin', () => {
+    const world = freshWorld();
+    const intake = openIntake(world.store.dir);
+    bookLeaf(intake, {
+      paymentRef: tagged(1, 0x91).padEnd(160, 'a').slice(0, 160),
+      line: coreLine(1),
+      caller: { bookId: world.book.id, token: world.book.token },
+      hourStart: -100000,
+    });
+    bookLeaf(intake, {
+      paymentRef: tagged(2, 0x92).padEnd(160, 'b').slice(0, 160),
+      line: coreLine(2),
+      caller: { bookId: world.book.id, token: world.book.token },
+      hourStart: 0,
+    });
+    const file = join(world.store.dir, 'pending-intake.json');
+    const saved = JSON.parse(readFileSync(file, 'utf8'));
+    saved.leaves[1].hourStart = 1.5;
+    writeFileSync(file, JSON.stringify(saved), { mode: 0o600 });
+    const pending = readPendingLines(world.store.dir);
+    assert.equal(pending.ok, true);
+    assert.equal(pending.lines[0].hourStart, undefined);
+    assert.equal(pending.lines[1].hourStart, undefined);
+    rmSync(world.root, { recursive: true, force: true });
+  });
+
+  test('a legacy unreleased epoch is counted on health', async () => {
+    const world = freshWorld();
+    const signer = await injectedSigner(CAP);
+    const pair = await rpcPair(chainState());
+    let handle = null;
+    try {
+      world.store.epochs.set('7', {
+        epoch: 7,
+        hourStart: 0,
+        size: 1,
+        root: 'ab'.repeat(32),
+        stateRoot: 'cd'.repeat(32),
+        released: false,
+      });
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      await handle.tick();
+      assert.equal(anchorStallStatus(), null);
+      assert.equal(legacyUnreleasedEpochs(), 1);
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      const health = publicHealthBody({ legacyUnreleased: legacyUnreleasedEpochs() });
+      assert.equal(health.legacy_unreleased_epochs, 1);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlinked sealer journal is refused', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'v13-journal-link-'));
+    const file = join(dir, 'sealer-state.json');
+    const side = join(dir, 'real-state.json');
+    try {
+      const journal = openJournal(dir, { chainId: 8453n, contract: MAINNET_ANCHOR });
+      journal.write(journal.state);
+      renameSync(file, side);
+      symlinkSync(side, file);
+      assert.throws(() => openJournal(dir, { chainId: 8453n, contract: MAINNET_ANCHOR }));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlinked hold file is not followed', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const outside = join(world.root, 'outside-hold.json');
+    writeFileSync(outside, `${JSON.stringify({ v: 1, reason: 'anchor_nonce_conflict' })}\n`, { mode: 0o600 });
+    chmodSync(outside, 0o600);
+    symlinkSync(outside, join(world.sealerDir, 'anchor-hold.json'));
+    let handle = null;
+    try {
+      const before = signCount(signer);
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const tick = await handle.tick();
+      assert.equal(tick.reason, 'anchor_hold_unreadable');
+      assert.equal(signCount(signer), before);
+      assert.equal(state.sends.length, 0);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlinked bump file is not written through', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const outside = join(world.root, 'outside-bumps.json');
+    writeFileSync(outside, '', { mode: 0o600 });
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const bump = join(world.sealerDir, 'anchor-bumps.json');
+      if (existsSync(bump)) rmSync(bump);
+      symlinkSync(outside, bump);
+      state.receipt = null;
+      await handle.tick();
+      assert.equal(readFileSync(outside, 'utf8'), '');
+      assert.equal(state.sends.length, 1);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo bump file is not written and does not send', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    let handle = null;
+    let worker = null;
+    let peer = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const bump = join(world.sealerDir, 'anchor-bumps.json');
+      if (existsSync(bump)) rmSync(bump);
+      execFileSync('mkfifo', [bump]);
+      peer = openSync(bump, fsConstants.O_RDWR | fsConstants.O_NONBLOCK);
+      worker = releaseFifo(bump);
+      state.receipt = null;
+      const started = Date.now();
+      await handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `bump fifo blocked ${Date.now() - started}ms`);
+      assert.equal(state.sends.length, 1);
+      assert.equal(lstatSync(bump).isFIFO(), true);
+    } finally {
+      if (peer != null) closeSync(peer);
+      if (worker) await worker.terminate();
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('intent append does not follow a symlink', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'v13-intent-link-'));
+    const outside = join(dir, 'outside.jsonl');
+    const file = join(dir, 'anchor-intents.jsonl');
+    writeFileSync(outside, '', { mode: 0o600 });
+    symlinkSync(outside, file);
+    try {
+      const log = openAnchorIntentLog(dir);
+      assert.throws(() => log.append({ v: 1 }), (err) => err.code === 'ELOOP' || err.code === 'intent_log_refused');
+      assert.equal(readFileSync(outside, 'utf8'), '');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('a fifo bump write with no reader returns promptly', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    let handle = null;
+    let worker = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const bump = join(world.sealerDir, 'anchor-bumps.json');
+      if (existsSync(bump)) rmSync(bump);
+      worker = releaseFifo(plantFifo(bump));
+      state.receipt = null;
+      const started = Date.now();
+      await handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `bump write blocked ${Date.now() - started}ms`);
+      assert.equal(state.sends.length, 1);
+    } finally {
+      if (worker) await worker.terminate();
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlinked pending intake is not followed', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const outside = join(world.root, 'outside-intake.json');
+    renameSync(join(world.store.dir, 'pending-intake.json'), outside);
+    symlinkSync(outside, join(world.store.dir, 'pending-intake.json'));
+    let handle = null;
+    try {
+      const before = signCount(signer);
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const tick = await handle.tick();
+      assert.equal(tick.reason, 'intake_unreadable');
+      assert.equal(signCount(signer), before);
+      assert.equal(state.sends.length, 0);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a stale hold temp file is replaced and the hold is still written', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.nonceLow = true;
+    state.rejectLookups = true;
+    const pair = await rpcPair(state);
+    const tmp = join(world.sealerDir, `anchor-hold.json.${process.pid}.tmp`);
+    writeFileSync(tmp, 'stale-temp\n', { mode: 0o600 });
+    const opened = [];
+    const realOpen = fs.openSync;
+    fs.openSync = (path, flags, mode) => {
+      opened.push({ path: String(path), flags });
+      return realOpen(path, flags, mode);
+    };
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const tick = await handle.tick();
+      assert.equal(tick.reason, 'anchor_nonce_conflict');
+      const hold = readFileSync(join(world.sealerDir, 'anchor-hold.json'), 'utf8');
+      assert.equal(JSON.parse(hold).reason, 'anchor_nonce_conflict');
+      assert.equal(existsSync(tmp), false);
+      const created = opened.find((row) => row.path === tmp);
+      assert.ok(created);
+      assert.equal((created.flags & fsConstants.O_EXCL) !== 0, true);
+      assert.equal((created.flags & fsConstants.O_NOFOLLOW) !== 0, true);
+    } finally {
+      fs.openSync = realOpen;
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlink or fifo at the hold temp path is refused and nothing is signed', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const outside = join(world.root, 'outside-hold.json');
+    writeFileSync(outside, 'KEEP\n', { mode: 0o600 });
+    const tmp = join(world.sealerDir, `anchor-hold.json.${process.pid}.tmp`);
+    symlinkSync(outside, tmp);
+    let handle = null;
+    try {
+      const before = signCount(signer);
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const tick = await handle.tick();
+      assert.equal(tick.reason, 'anchor_hold_unreadable');
+      assert.equal(anchorStallStatus(), 'anchor_hold_unreadable');
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_hold_unreadable');
+      assert.equal(signCount(signer), before);
+      assert.equal(state.sends.length, 0);
+      assert.equal(readFileSync(outside, 'utf8'), 'KEEP\n');
+      assert.equal(lstatSync(tmp).isSymbolicLink(), true);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+
+    const fifoWorld = freshWorld();
+    bookPending(fifoWorld, 1);
+    const fifoSigner = await injectedSigner(CAP);
+    const fifoState = chainState();
+    const fifoPair = await rpcPair(fifoState);
+    const fifoTmp = join(fifoWorld.sealerDir, `anchor-hold.json.${process.pid}.tmp`);
+    const worker = releaseFifo(plantFifo(fifoTmp));
+    let fifoHandle = null;
+    try {
+      const before = signCount(fifoSigner);
+      fifoHandle = await startV13AnchorScheduler({
+        env: schedulerEnv(fifoWorld.sealerDir),
+        clock: () => fifoWorld.clock.now,
+        runtime: { store: fifoWorld.store, client: fifoSigner.client },
+        deps: { testInjection: true, signer: fifoSigner.signer, fetch: fifoPair.fetchImpl, timeoutMs: 1000 },
+      });
+      const started = Date.now();
+      const tick = await fifoHandle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS);
+      assert.equal(tick.reason, 'anchor_hold_unreadable');
+      assert.equal(anchorStallStatus(), 'anchor_hold_unreadable');
+      assert.equal(signCount(fifoSigner), before);
+      assert.equal(fifoState.sends.length, 0);
+      assert.equal(lstatSync(fifoTmp).isFIFO(), true);
+    } finally {
+      await worker.terminate();
+      if (fifoHandle) await fifoHandle.stop();
+      await fifoPair.close();
+      rmSync(fifoWorld.root, { recursive: true, force: true });
+    }
+
+    const dirWorld = freshWorld();
+    bookPending(dirWorld, 1);
+    const dirSigner = await injectedSigner(CAP);
+    const dirState = chainState();
+    const dirPair = await rpcPair(dirState);
+    mkdirSync(join(dirWorld.sealerDir, `anchor-hold.json.${process.pid}.tmp`));
+    let dirHandle = null;
+    try {
+      const before = signCount(dirSigner);
+      dirHandle = await startV13AnchorScheduler({
+        env: schedulerEnv(dirWorld.sealerDir),
+        clock: () => dirWorld.clock.now,
+        runtime: { store: dirWorld.store, client: dirSigner.client },
+        deps: { testInjection: true, signer: dirSigner.signer, fetch: dirPair.fetchImpl, timeoutMs: 1000 },
+      });
+      const tick = await dirHandle.tick();
+      assert.equal(tick.reason, 'anchor_hold_unreadable');
+      assert.equal(anchorStallStatus(), 'anchor_hold_unreadable');
+      assert.equal(signCount(dirSigner), before);
+      assert.equal(dirState.sends.length, 0);
+    } finally {
+      if (dirHandle) await dirHandle.stop();
+      await dirPair.close();
+      rmSync(dirWorld.root, { recursive: true, force: true });
+    }
+  });
+
+  test('writing a hold fsyncs the temp file and the directory', async () => {
+    const world = freshWorld();
+    const intake = openIntake(world.store.dir);
+    bookLeaf(intake, {
+      paymentRef: tagged(4, 0x94).padEnd(160, 'd').slice(0, 160),
+      line: coreLine(4),
+      caller: { bookId: world.book.id, token: world.book.token },
+    });
+    const signer = await injectedSigner(CAP);
+    const pair = await rpcPair(chainState(), { primary: { rateLimit: true }, secondary: { rateLimit: true } });
+    const fsynced = [];
+    const realFsync = fs.fsyncSync;
+    fs.fsyncSync = (fd) => {
+      try { fsynced.push(fs.readlinkSync(`/proc/self/fd/${fd}`)); } catch { fsynced.push(''); }
+      return realFsync(fd);
+    };
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      fsynced.length = 0;
+      await handle.tick();
+      assert.equal(fsynced.some((path) => path.includes(`anchor-stall-seen.json.${process.pid}.tmp`)), true);
+      assert.equal(fsynced.some((path) => path === world.sealerDir), true);
+    } finally {
+      fs.fsyncSync = realFsync;
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a failed hold write leaves the previous hold in place and does not sign', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.nonceLow = true;
+    state.rejectLookups = true;
+    const pair = await rpcPair(state);
+    let handle = null;
+    const realOpen = fs.openSync;
+    const realWrite = fs.writeSync;
+    const tmpFds = new Set();
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).reason, 'anchor_nonce_conflict');
+      const prior = readFileSync(join(world.sealerDir, 'anchor-hold.json'), 'utf8');
+      fs.openSync = (path, flags, mode) => {
+        const fd = realOpen(path, flags, mode);
+        if (String(path).includes(`anchor-hold.json.${process.pid}.tmp`)) tmpFds.add(fd);
+        return fd;
+      };
+      fs.writeSync = (fd, ...rest) => {
+        if (tmpFds.has(fd)) {
+          const err = new Error('ENOSPC');
+          err.code = 'ENOSPC';
+          throw err;
+        }
+        return realWrite(fd, ...rest);
+      };
+      const before = signCount(signer);
+      state.accountNonce = '0x2';
+      writeClear(world.sealerDir, { v: 1, nonce: '0' });
+      const tick = await handle.tick();
+      assert.notEqual(tick.reason, 'anchor_nonce_retired');
+      const holdPath = join(world.sealerDir, 'anchor-hold.json');
+      assert.equal(existsSync(holdPath), true);
+      assert.equal(readFileSync(holdPath, 'utf8'), prior);
+      assert.equal(signCount(signer), before);
+      assert.equal(state.sends.length, 0);
+    } finally {
+      fs.openSync = realOpen;
+      fs.writeSync = realWrite;
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a seen file at -1 or in the future is rewritten and does not stall yet', async () => {
+    const world = freshWorld();
+    const intake = openIntake(world.store.dir);
+    bookLeaf(intake, {
+      paymentRef: tagged(5, 0x95).padEnd(160, 'e').slice(0, 160),
+      line: coreLine(5),
+      caller: { bookId: world.book.id, token: world.book.token },
+    });
+    const signer = await injectedSigner(CAP);
+    const pair = await rpcPair(chainState(), { primary: { rateLimit: true }, secondary: { rateLimit: true } });
+    const seen = join(world.sealerDir, 'anchor-stall-seen.json');
+    writeFileSync(seen, `${JSON.stringify({ v: 1, at: -1 })}\n`, { mode: 0o600 });
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      await handle.tick();
+      assert.equal(anchorStallStatus(), null);
+      assert.equal(JSON.parse(readFileSync(seen, 'utf8')).at, world.clock.now);
+      await handle.stop();
+      writeFileSync(seen, `${JSON.stringify({ v: 1, at: 999999999 })}\n`, { mode: 0o600 });
+      const future = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      await future.tick();
+      assert.equal(anchorStallStatus(), null);
+      assert.equal(JSON.parse(readFileSync(seen, 'utf8')).at, world.clock.now);
+      world.clock.now += 7201;
+      await future.tick();
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      await future.stop();
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a seen file that cannot be written still starts the stall clock', async () => {
+    const world = freshWorld();
+    const intake = openIntake(world.store.dir);
+    bookLeaf(intake, {
+      paymentRef: tagged(6, 0x96).padEnd(160, 'f').slice(0, 160),
+      line: coreLine(6),
+      caller: { bookId: world.book.id, token: world.book.token },
+    });
+    const signer = await injectedSigner(CAP);
+    const pair = await rpcPair(chainState(), { primary: { rateLimit: true }, secondary: { rateLimit: true } });
+    mkdirSync(join(world.sealerDir, 'anchor-stall-seen.json'));
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      await handle.tick();
+      assert.equal(anchorStallStatus(), null);
+      world.clock.now += 7201;
+      await handle.tick();
+      assert.equal(anchorStallStatus(), 'anchor_stalled');
+      assert.equal(lstatSync(join(world.sealerDir, 'anchor-stall-seen.json')).isDirectory(), true);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a live writer on the intake fifo and the bump fifo is refused promptly', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const intakeFile = join(world.store.dir, 'pending-intake.json');
+    const intakeBody = readFileSync(intakeFile);
+    plantFifo(intakeFile);
+    const intakePeer = openSync(intakeFile, fsConstants.O_RDWR | fsConstants.O_NONBLOCK);
+    fs.writeSync(intakePeer, intakeBody);
+    let handle = null;
+    try {
+      const before = signCount(signer);
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const started = Date.now();
+      const tick = await handle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `intake writer blocked ${Date.now() - started}ms`);
+      assert.equal(tick.reason, 'intake_unreadable');
+      assert.equal(signCount(signer), before);
+      assert.equal(state.sends.length, 0);
+    } finally {
+      closeSync(intakePeer);
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+
+    const bumpWorld = freshWorld();
+    bookPending(bumpWorld, 1);
+    const bumpSigner = await injectedSigner(CAP);
+    const bumpState = chainState();
+    const bumpPair = await rpcPair(bumpState);
+    let bumpHandle = null;
+    let bumpPeer = null;
+    try {
+      bumpHandle = await startV13AnchorScheduler({
+        env: schedulerEnv(bumpWorld.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => bumpWorld.clock.now,
+        runtime: { store: bumpWorld.store, client: bumpSigner.client },
+        deps: { testInjection: true, signer: bumpSigner.signer, fetch: bumpPair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await bumpHandle.tick()).ok, true);
+      const bump = join(bumpWorld.sealerDir, 'anchor-bumps.json');
+      if (existsSync(bump)) rmSync(bump);
+      execFileSync('mkfifo', [bump]);
+      bumpPeer = openSync(bump, fsConstants.O_RDWR | fsConstants.O_NONBLOCK);
+      bumpState.receipt = null;
+      const started = Date.now();
+      await bumpHandle.tick();
+      assert.ok(Date.now() - started < FIFO_PROMPT_MS, `bump writer blocked ${Date.now() - started}ms`);
+      assert.equal(bumpState.sends.length, 1);
+      assert.equal(lstatSync(bump).isFIFO(), true);
+    } finally {
+      if (bumpPeer != null) closeSync(bumpPeer);
+      if (bumpHandle) await bumpHandle.stop();
+      await bumpPair.close();
+      rmSync(bumpWorld.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a mode 0644 hold or bump file is rewritten as 0600', async () => {
+    const previous = process.umask(0o022);
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    state.nonceLow = true;
+    state.rejectLookups = true;
+    const pair = await rpcPair(state);
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const tick = await handle.tick();
+      assert.equal(tick.reason, 'anchor_nonce_conflict');
+      const hold = join(world.sealerDir, 'anchor-hold.json');
+      chmodSync(hold, 0o644);
+      state.nonceLow = false;
+      state.rejectLookups = true;
+      state.accountNonce = '0x2';
+      writeClear(world.sealerDir, { v: 1, nonce: '0' });
+      assert.equal((await handle.tick()).reason, 'anchor_nonce_retired');
+      assert.equal(statSync(hold).mode & 0o777, 0o600);
+    } finally {
+      process.umask(previous);
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a mode 0644 bump file is rewritten as 0600', async () => {
+    const previous = process.umask(0o022);
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      const bumps = join(world.sealerDir, 'anchor-bumps.json');
+      writeFileSync(bumps, `${JSON.stringify({ v: 2, bumps: {} })}\n`, { mode: 0o644 });
+      chmodSync(bumps, 0o644);
+      state.receipt = null;
+      await handle.tick();
+      assert.equal(statSync(bumps).mode & 0o777, 0o600);
+    } finally {
+      process.umask(previous);
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a garbage, empty, or torn seen file still stalls, and a reverted hold stays on health', async () => {
+    const { publicHealthBody } = await import('../src/public-metrics.js');
+    for (const body of ['garbage', '', '{']) {
+      const world = freshWorld();
+      const intake = openIntake(world.store.dir);
+      bookLeaf(intake, {
+        paymentRef: tagged(7, 0x97).padEnd(160, 'a').slice(0, 160),
+        line: coreLine(7),
+        caller: { bookId: world.book.id, token: world.book.token },
+      });
+      const signer = await injectedSigner(CAP);
+      const pair = await rpcPair(chainState(), { primary: { rateLimit: true }, secondary: { rateLimit: true } });
+      writeFileSync(join(world.sealerDir, 'anchor-stall-seen.json'), body, { mode: 0o600 });
+      let handle = null;
+      try {
+        handle = await startV13AnchorScheduler({
+          env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+          clock: () => world.clock.now,
+          runtime: { store: world.store, client: signer.client },
+          deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+        });
+        const first = await handle.tick();
+        assert.equal(first.ok, false);
+        assert.equal(anchorStallStatus(), null);
+        world.clock.now += 7201;
+        await handle.tick();
+        assert.equal(anchorStallStatus(), 'anchor_stalled');
+      } finally {
+        if (handle) await handle.stop();
+        await pair.close();
+        rmSync(world.root, { recursive: true, force: true });
+      }
+    }
+
+    const world = freshWorld();
+    const intake = openIntake(world.store.dir);
+    bookLeaf(intake, {
+      paymentRef: tagged(8, 0x98).padEnd(160, 'b').slice(0, 160),
+      line: coreLine(8),
+      caller: { bookId: world.book.id, token: world.book.token },
+    });
+    const signer = await injectedSigner(CAP);
+    const pair = await rpcPair(chainState(), { primary: { rateLimit: true }, secondary: { rateLimit: true } });
+    writeFileSync(join(world.sealerDir, 'anchor-hold.json'), `${JSON.stringify({ v: 1, reason: 'anchor_reverted' })}\n`, { mode: 0o600 });
+    writeFileSync(join(world.sealerDir, 'anchor-stall-seen.json'), 'garbage', { mode: 0o600 });
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      const tick = await handle.tick();
+      assert.equal(tick.reason, 'anchor_rpc_unavailable');
+      assert.equal(anchorStallStatus(), 'anchor_reverted');
+      assert.equal(publicHealthBody({ anchorStall: anchorStallStatus() }).anchor_stall, 'anchor_reverted');
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a seen file is removed when nothing is pending', async () => {
+    const world = freshWorld();
+    const signer = await injectedSigner(CAP);
+    const pair = await rpcPair(chainState(), { primary: { rateLimit: true }, secondary: { rateLimit: true } });
+    const seen = join(world.sealerDir, 'anchor-stall-seen.json');
+    writeFileSync(seen, `${JSON.stringify({ v: 1, at: 1 })}\n`, { mode: 0o600 });
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      await handle.tick();
+      assert.equal(existsSync(seen), false);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy unreleased count skips released and house epochs', async () => {
+    const world = freshWorld();
+    const signer = await injectedSigner(CAP);
+    const pair = await rpcPair(chainState(), { primary: { rateLimit: true }, secondary: { rateLimit: true } });
+    world.store.epochs.set('7', {
+      epoch: 7,
+      hourStart: 0,
+      size: 1,
+      root: 'ab'.repeat(32),
+      stateRoot: 'cd'.repeat(32),
+      released: false,
+    });
+    world.store.epochs.set('8', {
+      epoch: 8,
+      hourStart: 0,
+      size: 1,
+      root: '11'.repeat(32),
+      stateRoot: '22'.repeat(32),
+      released: true,
+    });
+    world.store.epochs.set('50', {
+      epoch: 50,
+      hourStart: 0,
+      size: 1024,
+      root: 'ee'.repeat(32),
+      stateRoot: 'ff'.repeat(32),
+      released: false,
+    });
+    world.store.receipts.set('house-1', { id: 'house-1', epoch: 50, bookId: 'book', line: null });
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STALL_HOURS: '2' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      await handle.tick();
+      assert.equal(legacyUnreleasedEpochs(), 1);
+      const { publicHealthBody } = await import('../src/public-metrics.js');
+      assert.equal(publicHealthBody({ legacyUnreleased: legacyUnreleasedEpochs() }).legacy_unreleased_epochs, 1);
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a symlinked intent log is not read', async () => {
+    const world = freshWorld();
+    bookPending(world, 1);
+    const signer = await injectedSigner(CAP);
+    const state = chainState();
+    const pair = await rpcPair(state);
+    const outside = join(world.root, 'outside-intents.jsonl');
+    writeFileSync(outside, '', { mode: 0o600 });
+    let handle = null;
+    try {
+      handle = await startV13AnchorScheduler({
+        env: schedulerEnv(world.sealerDir, { CHIT_SEALER_STUCK_MS: '0' }),
+        clock: () => world.clock.now,
+        runtime: { store: world.store, client: signer.client },
+        deps: { testInjection: true, signer: signer.signer, fetch: pair.fetchImpl, timeoutMs: 1000 },
+      });
+      assert.equal((await handle.tick()).ok, true);
+      assert.equal(state.sends.length, 1);
+      const intent = join(world.sealerDir, 'anchor-intents.jsonl');
+      rmSync(intent);
+      symlinkSync(outside, intent);
+      state.receipt = null;
+      const tick = await handle.tick();
+      assert.equal(tick.reason, 'sealer_unavailable');
+      assert.equal(state.sends.length, 1);
+      assert.equal(readFileSync(outside, 'utf8'), '');
+    } finally {
+      if (handle) await handle.stop();
+      await pair.close();
+      rmSync(world.root, { recursive: true, force: true });
+    }
+  });
 });
+
+const FIFO_RELEASE_MS = 2000;
+const FIFO_PROMPT_MS = 1000;
+
+const FIFO_PEER = `
+const fs = require('node:fs');
+const { workerData } = require('node:worker_threads');
+setTimeout(() => {
+  let fd;
+  try {
+    fd = fs.openSync(workerData.file, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+  } catch {
+    return;
+  }
+  try { fs.writeSync(fd, Buffer.from('x')); } catch { /* the pipe can already be closed */ }
+  const buf = Buffer.alloc(1024);
+  const gate = new Int32Array(new SharedArrayBuffer(4));
+  const until = Date.now() + 8000;
+  while (Date.now() < until) {
+    try { fs.readSync(fd, buf, 0, buf.length); } catch { /* EAGAIN */ }
+    Atomics.wait(gate, 0, 0, 20);
+  }
+  try { fs.closeSync(fd); } catch { /* closed */ }
+}, workerData.delayMs);
+`;
+
+function plantFifo(file) {
+  if (existsSync(file)) rmSync(file);
+  execFileSync('mkfifo', [file]);
+  return file;
+}
+
+function releaseFifo(file) {
+  return new Worker(FIFO_PEER, { eval: true, workerData: { file, delayMs: FIFO_RELEASE_MS } });
+}
 
 function readIntent(dir) {
   return `[${readFileSync(join(dir, 'anchor-intents.jsonl'), 'utf8').trim().split('\n').join(',')}]`;

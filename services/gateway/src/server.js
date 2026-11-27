@@ -26,7 +26,7 @@ import { setX402PaymentResponseHeaders } from './x402-adapter.js';
 import { isBindingRefusal, paymentFailureBody, paymentFailureStatus, setHoldRetryAfter, stampFailureBody, decisionHoldResult, assertX402Boot, bindingEnforced, samePayee, tfuelBuyerRailAllowed } from './x402-flags.js';
 import { assertV13Boot } from './v13-flags.js';
 import { wireV13Runtime } from './v13-boot.js';
-import { anchorStallStatus, stopV13AnchorScheduler } from './v13-anchor-scheduler.js';
+import { anchorStallStatus, legacyUnreleasedEpochs, stopV13AnchorScheduler } from './v13-anchor-scheduler.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { holdPageForReceiptId, holdPagePayload, terminalStampHold } from './hold-handle.js';
@@ -4657,6 +4657,7 @@ export async function createApp() {
         receiptFailures: receiptFailureCount(),
         issuanceCap: issuanceCapHealth(),
         anchorStall: anchorStallStatus(),
+        legacyUnreleased: legacyUnreleasedEpochs(),
       }));
     } catch (err) {
       logger.error({ err }, 'GET /health error');
