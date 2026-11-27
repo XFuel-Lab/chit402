@@ -8,6 +8,8 @@
       "--test-concurrency=1",
       "services/gateway/test/finality-a.test.mjs",
       "services/gateway/test/finality-a-kills.test.mjs",
+      "services/gateway/test/doctor-repro.test.mjs",
+      "services/gateway/test/doctor-repro-sol.test.mjs",
       "services/chit-sealer/test/rpc-base.test.mjs",
       "services/gateway/test/v13-anchor-scheduler.test.mjs"
     ]
@@ -45,14 +47,14 @@
       "id": "MF5",
       "file": "services/chit-sealer/close.js",
       "find": "const picked = sealCandidates(loaded.leaves, point);",
-      "replace": "const picked = sealCandidates(loaded.leaves, { ok: true, F: 0xffffffffffffffffn, blocks: new Map(), sealAll: true });",
+      "replace": "const picked = loaded.leaves.filter((row) => row && typeof row.line === 'string' && row.receiptId == null).map((row) => ({ line: Uint8Array.from(Buffer.from(row.line, 'hex')), bookId: row.bookId, paymentRef: row.paymentRef }));",
       "note": "seal every pending leaf"
     },
     {
       "id": "MF6",
       "file": "services/chit-sealer/close.js",
-      "find": "const resendCommitted = true;",
-      "replace": "const resendCommitted = false;",
+      "find": "const result = await broadcastRecord(sealer, record, input.send, input.signal);",
+      "replace": "return fail('anchor_finality_unavailable'); const result = await broadcastRecord(sealer, record, input.send, input.signal);",
       "note": "recovery re-runs the finality filter"
     },
     {
@@ -65,7 +67,7 @@
     {
       "id": "MF8",
       "file": "services/gateway/src/openai-gateway.js",
-      "find": "export function isBaseHousePayment(payment) {\n  if (!payment || typeof payment !== 'object') return false;\n  if (Number(payment.chainId) !== 8453) return false;\n  const obs = payment.observation;\n  if (!obs || typeof obs !== 'object' || obs.blockNumber == null) return false;\n  return true;\n}",
+      "find": "export function isBaseHousePayment(payment) {\n  if (!payment || typeof payment !== 'object') return false;\n  if (Number(payment.chainId) !== 8453) return false;\n  return true;\n}",
       "replace": "export function isBaseHousePayment(payment) {\n  void payment;\n  return true;\n}",
       "note": "every rail enters house issuance"
     },
@@ -138,6 +140,48 @@
       "find": "booked = bookLeaf(intake, {\n          paymentRef: key.hex,\n          line,\n          caller: input.caller,\n          hourStart: observation.hourStart,\n          finality: 'pending',\n          paymentHash: input.paymentHash,\n          txHash,\n        });",
       "replace": "booked = { ok: false, reason: 'intake_not_booked' };",
       "note": "delete the status-1 bookLeaf call"
+    },
+    {
+      "id": "MF19",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "const housed = houseIntakeReplay(challenge, paymentHeader);\n    if (housed) return housed;\n",
+      "replace": "",
+      "note": "replay skips the intake lookup"
+    },
+    {
+      "id": "MF20",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "const txIndex = observation.txIndex == null ? null : observation.txIndex;",
+      "replace": "const txIndex = observation.txIndex == null ? 0 : observation.txIndex;",
+      "note": "restore a zero default for a missing transaction index"
+    },
+    {
+      "id": "MF21",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "saltP: randomBytes(32).toString('hex'),",
+      "replace": "saltP: createHash('sha256').update(String(payment.nonce || key.hex)).digest('hex'),",
+      "note": "salt derived from the public nonce"
+    },
+    {
+      "id": "MF22",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "return rows.every((row) => /^0x0{64}$/.test(row.word.trim().toLowerCase()));",
+      "replace": "return rows.every((row) => /^0x0{64}$/.test(row.word.trim().toLowerCase()) || row.word.trim().toLowerCase() === '0x');",
+      "note": "an empty 0x word counts as cleared"
+    },
+    {
+      "id": "MF23",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "const again = await repollSolanaFinality(cfg, challenge, paymentHeader, linked);",
+      "replace": "const again = { ok: false, pending: true };",
+      "note": "Solana retry skips the re-poll"
+    },
+    {
+      "id": "MF24",
+      "file": "services/chit-sealer/close.js",
+      "find": "if (!point) return { ok: true, lines: explicit };\n  const loaded = readIntakeLeaves(sealer.store.dir, sealer.store.io);\n  if (!loaded.ok) return loaded;\n  const picked = sealCandidates(loaded.leaves, point);\n  const pendingLines = picked;",
+      "replace": "const pending = readPendingLines(sealer.store.dir, sealer.store.io);\n  if (!pending.ok) return pending;\n  const pendingLines = pending.lines;",
+      "note": "no finality point seals every pending leaf"
     }
   ]
 }

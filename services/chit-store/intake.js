@@ -7,7 +7,7 @@
  * closeHour is the only reader that turns a booked leaf into an epoch.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -154,7 +154,9 @@ function leafRow(input, lineHex) {
   const hourStart = Number.isSafeInteger(input.hourStart) ? input.hourStart : null;
   const row = {
     paymentRef: input.paymentRef,
-    pendingId: pendingIdFor(input.paymentRef),
+    pendingId: /^[0-9a-f]{32}$/.test(String(input.pendingId || ''))
+      ? input.pendingId
+      : randomBytes(16).toString('hex'),
     bookId: input.bookId,
     tokenHash: input.tokenHash,
     line: lineHex,
@@ -214,6 +216,8 @@ export function bookLeaf(intake, input) {
     if (existing.state === 'refund_owed') return { ok: true, replay: true, row: existing };
     if (existing.line !== lineHex) {
       if (existing.state === 'reorged' && existing.receiptId == null && typeof input.rebookedFrom === 'string') {
+        const oldSha = createHash('sha256').update(Buffer.from(existing.line, 'hex')).digest('hex');
+        if (input.rebookedFrom !== oldSha) return { ok: false, reason: 'intake_conflict' };
         existing.line = lineHex;
         existing.state = 'pending_anchor';
         existing.finality = 'pending';
@@ -314,7 +318,7 @@ export function writeRefund(intake, input) {
   }
   const row = {
     paymentRef,
-    pendingId: pendingIdFor(paymentRef),
+    pendingId: randomBytes(16).toString('hex'),
     bookId,
     tokenHash: tokenHashHex(token),
     line: null,

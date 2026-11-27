@@ -46,7 +46,6 @@ import {
 } from './kms-secp256k1.js';
 import { buildAnchorCalldata } from './calldata.js';
 import { readIntakeLeaves, readPendingLines, sealIntakeLines } from '../chit-store/intake.js';
-import { agreeCloseFinality } from './rpc-base.js';
 import { committedReceiptForLine, reconcileCommittedIntake } from '../chit-store/store.js';
 import { openJournal } from './journal.js';
 import { acceptCoreLine } from './lines.js';
@@ -678,7 +677,6 @@ function blockHashMatches(point, leaf) {
 export function sealCandidates(leaves, point) {
   const out = [];
   if (!Array.isArray(leaves)) return out;
-  const sealAll = !!(point && point.sealAll === true);
   for (let i = 0; i < leaves.length; i += 1) {
     const row = leaves[i];
     if (!row || row.receiptId != null || typeof row.line !== 'string') continue;
@@ -687,7 +685,10 @@ export function sealCandidates(leaves, point) {
     const leaf = leafFromHex(row.line);
     if (!leaf) continue;
     const finality = row.finality === 'final' ? 'final' : 'pending';
-    if (!sealAll && finality !== 'final') {
+    const declaredFinal = row.finality === 'final';
+    // A stored final is still checked. Only a missing field that was
+    // classified as final skips, and that classification is not produced here.
+    if (finality !== 'final' || declaredFinal) {
       if (!point || point.ok !== true || typeof point.F !== 'bigint') continue;
       const F = point.F;
       if (!(leaf.blockNumber <= F)) continue;
@@ -716,17 +717,11 @@ function mergeIntake(sealer, planned, explicit) {
     return { ok: true, lines: explicit };
   }
   const point = sealer._input && sealer._input.finalityPoint;
-  let pendingLines;
-  if (point) {
-    const loaded = readIntakeLeaves(sealer.store.dir, sealer.store.io);
-    if (!loaded.ok) return loaded;
-    const picked = sealCandidates(loaded.leaves, point);
-    pendingLines = picked;
-  } else {
-    const pending = readPendingLines(sealer.store.dir, sealer.store.io);
-    if (!pending.ok) return pending;
-    pendingLines = pending.lines;
-  }
+  if (!point) return { ok: true, lines: explicit };
+  const loaded = readIntakeLeaves(sealer.store.dir, sealer.store.io);
+  if (!loaded.ok) return loaded;
+  const picked = sealCandidates(loaded.leaves, point);
+  const pendingLines = picked;
   const extra = [];
   for (let i = 0; i < pendingLines.length && extra.length < room; i += 1) {
     const item = pendingLines[i];
@@ -823,28 +818,6 @@ export async function closeHour(sealer, input) {
  * @param {object} sealer
  * @param {{ send: Function }} input
  */
-async function committedStillFinal(sealer, record) {
-  const rpc = sealer && sealer._rpc;
-  if (!rpc || !Array.isArray(rpc.urls) || rpc.urls.length === 0) return false;
-  const numbers = [];
-  const receipts = record && Array.isArray(record.receipts) ? record.receipts : [];
-  for (let i = 0; i < receipts.length; i += 1) {
-    const leaf = leafFromHex(receipts[i] && receipts[i].line);
-    if (leaf) numbers.push(leaf.blockNumber);
-  }
-  const point = await agreeCloseFinality({
-    fetchImpl: rpc.fetchImpl,
-    urls: rpc.urls,
-    blockNumbers: numbers,
-    timeoutMs: rpc.timeoutMs,
-  });
-  if (!point.ok) return false;
-  for (let i = 0; i < numbers.length; i += 1) {
-    if (!(numbers[i] <= point.F)) return false;
-  }
-  return numbers.length > 0;
-}
-
 export async function recover(sealer, input) {
   if (!input || typeof input.send !== 'function') return fail('bad_broadcast');
   const pending = sealer.state.commits.filter((row) => row.broadcast === false);
@@ -864,10 +837,6 @@ export async function recover(sealer, input) {
       }
     }
     healCommittedIntake(sealer);
-    const resendCommitted = true;
-    if (!resendCommitted && !(await committedStillFinal(sealer, record))) {
-      return fail('anchor_finality_unavailable');
-    }
     const result = await broadcastRecord(sealer, record, input.send, input.signal);
     sent.push(result);
     if (!result.ok) return { ok: false, reason: result.reason, committed: true, sent };

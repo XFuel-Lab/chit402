@@ -5,7 +5,7 @@
  * A request body cannot replace it.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { LAYOUT, encodeLine, authorizationKey } from '../../../packages/cs2-core/line/index.mjs';
@@ -18,7 +18,6 @@ import {
   findLeafByPendingId,
   houseIntakeDir,
   openIntake,
-  pendingIdFor,
   readOwnedPending,
   setHouseIntakeDir,
   writeRefund,
@@ -99,21 +98,23 @@ function verifyRoot(baseUrl) {
   return baseUrl ? String(baseUrl).replace(/\/$/, '') : 'http://127.0.0.1';
 }
 
-function holdResponse(kind, keyHex, baseUrl, finality = 'pending') {
-  const pendingId = pendingIdFor(keyHex);
-  const verifyUrl = `${verifyRoot(baseUrl)}/verify/${pendingId}`;
+function holdResponse(kind, keyHex, baseUrl, finality = 'pending', pendingId = null) {
+  const id = typeof pendingId === 'string' && /^[0-9a-f]{32}$/.test(pendingId)
+    ? pendingId
+    : randomBytes(16).toString('hex');
+  const verifyUrl = `${verifyRoot(baseUrl)}/receipt/${id}`;
   const terminal = kind === 'refund_owed' || kind === 'not_settled';
   const held = decisionHoldResult({
     code: terminal ? 'settle_failed' : 'settle_pending',
     holdClass: terminal ? 'terminal' : 'resolvable',
-    pendingId,
+    pendingId: id,
     verifyUrl,
   });
   const body = {
     error: kind === 'not_settled' ? 'not_settled' : kind,
     code: kind === 'not_settled' ? 'not_settled' : kind,
     state: kind,
-    pending_id: pendingId,
+    pending_id: id,
     verify_url: verifyUrl,
     finality: finality === 'final' ? 'final' : 'pending',
   };
@@ -153,8 +154,8 @@ export function rebuildHouseLine(line, overrides) {
       blockHash: overrides.blockHash,
       blockNumber: overrides.blockNumber,
       blockTime: (overrides.blockTime != null ? BigInt(overrides.blockTime) : pay.blockTime).toString(),
-      txIndex: Number(pay.txIndex),
-      localLogIndex: Number(pay.localLogIndex),
+      txIndex: overrides.txIndex != null ? Number(overrides.txIndex) : Number(pay.txIndex),
+      localLogIndex: overrides.localLogIndex != null ? Number(overrides.localLogIndex) : Number(pay.localLogIndex),
       txHash: hexField(pay.txHash),
       token: hexField(pay.token),
       from: hexField(pay.from),
@@ -276,10 +277,24 @@ async function withLock(key, fn) {
   }
 }
 
+function houseContent() {
+  const hex = (n) => randomBytes(n).toString('hex');
+  return {
+    ...SAMPLE.content,
+    uuid: hex(16),
+    sellerIdHash: hex(32),
+    sellerKeyId: '00'.repeat(32),
+    uriDigest: hex(32),
+    contentDigest: hex(32),
+    responseDigest: hex(32),
+    saltC: hex(32),
+  };
+}
+
 function coreLine(payment) {
   const encoded = encodeLine({
     payment,
-    content: { ...SAMPLE.content, sellerKeyId: '00'.repeat(32) },
+    content: houseContent(),
     sigma: { alg: 1, sigma: `${'00'.repeat(31)}01${'00'.repeat(31)}01` },
   });
   if (!encoded.ok) {
@@ -416,15 +431,28 @@ function answerRow(input, row, keyHex) {
   const released = releasedReceipt(input.store, row);
   if (released) return { status: 200, body: released, bytes: Buffer.from(JSON.stringify(released)) };
   if (row.state === 'reorged') {
-    const held = holdResponse('pending_anchor', keyHex, input.baseUrl, 'pending');
+    const held = holdResponse('pending_anchor', keyHex, input.baseUrl, 'pending', row.pendingId);
     held.body.state = 'reorged';
     held.body.code = 'pending_anchor';
     held.bytes = Buffer.from(JSON.stringify(held.body));
     return { ...held, replay: true };
   }
   const kind = row.state === 'refund_owed' ? 'refund_owed' : 'pending_anchor';
-  const held = holdResponse(kind, keyHex, input.baseUrl, row.finality);
+  const held = holdResponse(kind, keyHex, input.baseUrl, row.finality, row.pendingId);
   return { ...held, replay: true };
+}
+
+/** Replay answer for a booked house row. No inference. */
+export function answerStoredHouseRow(row, baseUrl) {
+  if (!row) return null;
+  const runtime = readV13Runtime();
+  const answered = answerRow({ store: runtime && runtime.store, baseUrl: baseUrl || '' }, row, row.paymentRef);
+  if (!answered) return null;
+  return {
+    status: answered.status,
+    body: answered.body,
+    retryAfter: answered.retryAfter ?? (answered.status === 202 ? 30 : null),
+  };
 }
 
 async function issueV13(input) {
@@ -435,15 +463,10 @@ async function issueV13(input) {
   }
   let paid = false;
   try {
-    const observation = input.observation;
-    if (!observation || typeof observation !== 'object') return closed(402, 'settle_unconfirmed');
+    const observation = input.observation && typeof input.observation === 'object' ? input.observation : {};
     if (typeof input.rpc === 'function' && observation.finalizedNumber == null) {
       await input.rpc();
     }
-    const blockReady = observation.blockNumber != null
-      && observation.blockHash
-      && observation.blockTime != null;
-    if (!blockReady) return closed(402, 'settle_unconfirmed');
     const payment = input.payment;
     const key = houseAuthorizationKey(payment);
     if (!key.ok) return closed(400, 'verify_failed');
@@ -457,6 +480,14 @@ async function issueV13(input) {
       throw err;
     }
     paid = true;
+    const txIndex = observation.txIndex == null ? null : observation.txIndex;
+    const localLogIndex = observation.localLogIndex == null ? null : observation.localLogIndex;
+    const blockReady = observation.blockNumber != null
+      && observation.blockHash
+      && observation.blockTime != null
+      && txIndex != null
+      && localLogIndex != null;
+    if (!blockReady) return holdResponse('pending_anchor', key.hex, input.baseUrl, 'pending');
     const dir = input.dir;
     if (!dir) return refundOwed(input, key.hex);
     return await withLock(key.hex, async () => {
@@ -479,10 +510,10 @@ async function issueV13(input) {
           blockHash,
           blockNumber: observation.blockNumber,
           blockTime: observation.blockTime,
-          txIndex: observation.txIndex == null ? 0 : observation.txIndex,
-          localLogIndex: observation.localLogIndex == null ? 0 : observation.localLogIndex,
+          txIndex,
+          localLogIndex,
           txHash,
-          saltP: payment.saltP || createHash('sha256').update(String(payment.nonce || key.hex)).digest('hex'),
+          saltP: randomBytes(32).toString('hex'),
         });
       } catch (err) {
         note(input, 'intake_not_booked');
@@ -517,7 +548,7 @@ async function issueV13(input) {
       const kind = booked.row && booked.row.state === 'refund_owed'
         ? 'refund_owed'
         : (booked.row && booked.row.state === 'not_settled' ? 'not_settled' : 'pending_anchor');
-      const held = holdResponse(kind, key.hex, input.baseUrl, booked.row && booked.row.finality);
+      const held = holdResponse(kind, key.hex, input.baseUrl, booked.row && booked.row.finality, booked.row && booked.row.pendingId);
       try {
         bindHold(dir, key.hex, input.caller, held);
       } catch (err) {
@@ -617,7 +648,7 @@ export function serveHousePending({ receiptId, paymentHeader } = {}) {
     && timingSafeEqual(Buffer.from(row.paymentHash), Buffer.from(digest));
   if (released && holder) return { status: 200, body: released };
   if (released) {
-    return { status: 200, body: { state: 'pending_anchor', finality, pending_id: row.pendingId } };
+    return { status: 200, body: { state: 'released', finality, pending_id: row.pendingId } };
   }
   const state = row.state === 'reorged' ? 'reorged' : (row.state === 'refund_owed' ? 'refund_owed' : 'pending_anchor');
   return {

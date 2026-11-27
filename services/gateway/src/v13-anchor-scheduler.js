@@ -669,8 +669,39 @@ async function reconcileReorged(session, leaves) {
     if (present.length === receipts.length && present.length > 0 && present.every((item) => sameTransfer(item, leaf))) {
       const blockNumber = Number(BigInt(present[0].blockNumber));
       const blockHash = String(present[0].blockHash || '').toLowerCase().replace(/^0x/, '');
-      if (!blockHash || blockHash === leaf.blockHash || !Number.isSafeInteger(blockNumber)) continue;
-      const rebuilt = rebuildHouseLine(leaf.line, { blockNumber, blockHash });
+      const agreed = present.every((item) => {
+        let n = NaN;
+        try { n = Number(BigInt(item.blockNumber)); } catch { n = NaN; }
+        const h = String(item.blockHash || '').toLowerCase().replace(/^0x/, '');
+        return n === blockNumber && h === blockHash && h !== '';
+      });
+      if (!agreed || !blockHash || blockHash === leaf.blockHash || !Number.isSafeInteger(blockNumber)) continue;
+      const txIndex = present[0].transactionIndex != null ? Number(BigInt(present[0].transactionIndex)) : null;
+      let localLogIndex = null;
+      const logs = Array.isArray(present[0].logs) ? present[0].logs : [];
+      for (let li = 0; li < logs.length; li += 1) {
+        const topics = logs[li] && logs[li].topics;
+        if (!topics || topics.length < 3) continue;
+        const dest = `0x${String(topics[2]).toLowerCase().replace(/^0x/, '').slice(-40)}`;
+        if (dest === String(leaf.to).toLowerCase()) {
+          localLogIndex = li;
+          break;
+        }
+      }
+      if (!Number.isInteger(txIndex) || !Number.isInteger(localLogIndex)) continue;
+      let blockTime = null;
+      try {
+        const block = await session.rpc.fetchImpl(session.rpc.urls[0], {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBlockByNumber', params: [`0x${blockNumber.toString(16)}`, false] }),
+        });
+        const parsed = await block.json();
+        const ts = parsed && parsed.result && parsed.result.timestamp;
+        if (ts != null) blockTime = Number(BigInt(ts));
+      } catch { blockTime = null; }
+      if (!Number.isInteger(blockTime)) continue;
+      const rebuilt = rebuildHouseLine(leaf.line, { blockNumber, blockHash, blockTime, txIndex, localLogIndex });
       if (!rebuilt) continue;
       const caller = readV13Runtime() && readV13Runtime().caller;
       const oldSha = createHash('sha256').update(Buffer.from(row.line, 'hex')).digest('hex');

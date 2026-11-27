@@ -806,7 +806,7 @@ export async function agreeCloseFinality(input) {
   const answered = [];
   for (let i = 0; i < tips.length; i += 1) {
     const row = tips[i];
-    if (row.error) continue;
+    if (row.error) return unavailable();
     if (!row.block) return unavailable();
     const number = qty(row.block.number);
     const hash = normBlockHash(row.block.hash);
@@ -920,7 +920,7 @@ export async function authorizationCleared(input) {
     }
   }));
   if (rows.some((row) => row.error || typeof row.word !== 'string')) return false;
-  return rows.every((row) => /^0x0+$/.test(row.word.trim().toLowerCase()) || row.word.trim().toLowerCase() === '0x');
+  return rows.every((row) => /^0x0{64}$/.test(row.word.trim().toLowerCase()));
 }
 
 export { ANCHORED_TOPIC, BASE_CHAIN_HEX, AUTH_STATE_SELECTOR };

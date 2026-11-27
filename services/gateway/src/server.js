@@ -28,6 +28,7 @@ import { assertV13Boot } from './v13-flags.js';
 import { wireV13Runtime } from './v13-boot.js';
 import { anchorStallStatus, legacyUnreleasedEpochs, stopV13AnchorScheduler } from './v13-anchor-scheduler.js';
 import { serveHousePending } from './v13-issue.js';
+import { serveSolanaHold } from './x402-settle.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { holdPageForReceiptId, holdPagePayload, terminalStampHold } from './hold-handle.js';
@@ -3575,6 +3576,17 @@ export async function createApp() {
       if (housePending && wantsJson) {
         if (housePending.retryAfter != null) res.set('Retry-After', String(housePending.retryAfter));
         return res.status(housePending.status).json(housePending.body);
+      }
+      if (housePending) {
+        const state = housePending.body && housePending.body.state ? housePending.body.state : 'pending';
+        res.status(housePending.status);
+        if (housePending.retryAfter != null) res.set('Retry-After', String(housePending.retryAfter));
+        return res.type('html').send(`<!doctype html><title>Chit402 receipt</title><p>state ${state}</p>`);
+      }
+      const solanaHold = serveSolanaHold(rawTaskId);
+      if (solanaHold && wantsJson) {
+        if (solanaHold.retryAfter != null) res.set('Retry-After', String(solanaHold.retryAfter));
+        return res.status(solanaHold.status).json(solanaHold.body);
       }
       const tx = txQueryValue(req);
       const rejectsTx = (receipt, task) => {

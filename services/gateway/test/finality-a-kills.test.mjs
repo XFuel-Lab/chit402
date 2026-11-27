@@ -3,6 +3,7 @@
  * Offline. No production host.
  */
 import { createHash, createPublicKey } from 'node:crypto';
+import http from 'node:http';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -180,7 +181,7 @@ async function boot(box, left, right, clock) {
   });
 }
 
-test('FA6 RPC disagreement and a hash mismatch seal nothing', async () => {
+test('FA6 RPC disagreement and a hash mismatch seal nothing', { timeout: 15000 }, async () => {
   resetHouseState();
   const box = world();
   const left = await startLagRpc({ lag: 0, latest: 20, salt: 'same' });
@@ -218,7 +219,11 @@ test('FA5 a replay re-read books the chain hash, not the stored one', async () =
     blockNumber: block,
     status: '0x1',
     from: `0x${'11'.repeat(20)}`,
-    logs: [],
+    logs: [{
+      address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      topics: ['0x' + 'dd'.repeat(32), '0x' + '00'.repeat(12) + '11'.repeat(20), '0x' + '00'.repeat(12) + '22'.repeat(20)],
+      data: '0x' + '0'.repeat(63) + '1',
+    }],
   });
   const prev = {};
   const env = flags();
@@ -505,6 +510,15 @@ test('FA7 reorg is not sealed, and a live pending row still conflicts', async ()
     });
     assert.equal(clash.ok, false);
     assert.equal(clash.reason, 'intake_conflict');
+    const rightHash = createHash('sha256').update(Buffer.from(second.line, 'hex')).digest('hex');
+    const pendingClash = bookLeaf(openIntake(box.store.dir), {
+      paymentRef: second.paymentRef,
+      line: leaves[0].line,
+      caller: box.caller,
+      rebookedFrom: rightHash,
+    });
+    assert.equal(pendingClash.ok, false);
+    assert.equal(pendingClash.reason, 'intake_conflict');
     await stopV13AnchorScheduler();
   } finally {
     await left.close();
@@ -537,7 +551,7 @@ test('MF12 gone without a cleared authorization stays reorged', async () => {
   }
 });
 
-test('FA3-min two finalized heads use the lower one', async () => {
+test('FA3-min two finalized heads use the lower one', { timeout: 15000 }, async () => {
   resetHouseState();
   const box = world();
   const left = await startLagRpc({ lag: 0, latest: 40, salt: 'min' });
@@ -727,10 +741,142 @@ test('FA9 a released receipt body is not returned without the payment header', a
     assert.equal(hidden.status, 200);
     assert.equal(hidden.body.v, undefined);
     assert.equal(hidden.body.line, undefined);
+    assert.equal(hidden.body.state, 'released');
     assert.equal(hidden.body.pending_id, booked.body.pending_id);
   } finally {
     setV13Runtime(null);
     rmSync(box.root, { recursive: true, force: true });
+  }
+});
+
+test('M3 a missing transaction index is a 202 and not a booked line', async () => {
+  resetHouseState();
+  const box = world();
+  try {
+    const out = await issueHouseReceipt({
+      env: flags(),
+      dir: join(box.root, 'bind'),
+      store: box.store,
+      caller: box.caller,
+      client: mockKms(),
+      send: async () => '0x1',
+      payment: payment(40, 10, 'ab'.repeat(32)),
+      observation: {
+        blockNumber: 10,
+        blockHash: 'ab'.repeat(32),
+        blockTime: 1_700_000_000,
+        txIndex: null,
+        localLogIndex: 1,
+        txHash: 'cd'.repeat(32),
+      },
+    });
+    mkdirSync(join(box.root, 'bind'), { recursive: true });
+    assert.equal(out.status, 202);
+    assert.equal(readIntakeLeaves(box.store.dir).leaves.length, 0);
+  } finally {
+    rmSync(box.root, { recursive: true, force: true });
+  }
+});
+
+test('M8 a status-1 read with no block hash is 202 and a later read books one leaf', async () => {
+  resetHouseState();
+  const box = world();
+  mkdirSync(join(box.root, 'bind'), { recursive: true });
+  try {
+    const first = await issueHouseReceipt({
+      env: flags(),
+      dir: join(box.root, 'bind'),
+      store: box.store,
+      caller: box.caller,
+      client: mockKms(),
+      send: async () => '0x1',
+      payment: payment(41, 10, 'ab'.repeat(32)),
+      observation: { blockNumber: 10, blockHash: null, blockTime: null, txIndex: 1, localLogIndex: 1, txHash: 'cd'.repeat(32) },
+    });
+    assert.equal(first.status, 202);
+    assert.match(first.body.pending_id, /^[0-9a-f]{32}$/);
+    assert.equal(readIntakeLeaves(box.store.dir).leaves.length, 0);
+    const second = await book(box, 41, 10, 'ab'.repeat(32));
+    assert.equal(second.status, 202);
+    assert.equal(readIntakeLeaves(box.store.dir).leaves.length, 1);
+  } finally {
+    rmSync(box.root, { recursive: true, force: true });
+  }
+});
+
+test('S1 closeHour without a finality point seals no intake leaf', async () => {
+  const { closeHour, openSealer } = await import('../../chit-sealer/close.js');
+  resetHouseState();
+  const box = world();
+  try {
+    await book(box, 42, 10, 'ab'.repeat(32));
+    const who = await signer();
+    const sealer = openSealer({
+      dir: box.sealerDir,
+      store: box.store,
+      signer: who.signer,
+      chainId: 8453n,
+      contract: '0xC16010f028A00A3addb37609c38D010ec1dF93b1',
+      clock: () => 7200,
+    });
+    const closed = await closeHour(sealer, {
+      hourStart: 0,
+      lines: [],
+      fees: { gasLimit: '21000', maxFeePerGas: '1', maxPriorityFeePerGas: '1' },
+      send: async () => '0x1',
+    });
+    assert.equal(box.store.receipts.size, 0, closed && closed.reason);
+  } finally {
+    rmSync(box.root, { recursive: true, force: true });
+  }
+});
+
+test('S2 a hand-edited final row above F is not sealed', async () => {
+  resetHouseState();
+  const box = world();
+  const left = await startLagRpc({ lag: 400, latest: 20, salt: 'hand' });
+  const right = await startLagRpc({ lag: 400, latest: 20, salt: 'hand' });
+  const clock = { now: 7200 };
+  try {
+    await book(box, 43, 10, left.hashOf(10).slice(2));
+    const file = join(box.store.dir, 'pending-intake.json');
+    const parsed = JSON.parse(readFileSync(file, 'utf8'));
+    parsed.leaves[0].finality = 'final';
+    writeFileSync(file, JSON.stringify(parsed));
+    const handle = await boot(box, left, right, clock);
+    const tick = await handle.tick();
+    assert.equal(left.sends.length, 0, tick.reason);
+    await stopV13AnchorScheduler();
+  } finally {
+    await left.close();
+    await right.close();
+    rmSync(box.root, { recursive: true, force: true });
+    setV13Runtime(null);
+  }
+});
+
+test('M7 an empty eth_call word does not mean the authorization is clear', async () => {
+  const { authorizationCleared } = await import('../../chit-sealer/rpc-base.js');
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      const body = JSON.parse(raw || '{}');
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: '0x' }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const cleared = await authorizationCleared({
+      urls: [`http://127.0.0.1:${server.address().port}`],
+      token: `0x${'11'.repeat(20)}`,
+      authorizer: '22'.repeat(20),
+      nonce: '33'.repeat(32),
+    });
+    assert.equal(cleared, false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

@@ -94,7 +94,7 @@ export function startLagRpc(options = {}) {
       blockHash: row ? row.hash : null,
       from: input.from || null,
       to: input.to || null,
-      transactionIndex: '0x0',
+      transactionIndex: input.transactionIndex == null ? '0x0' : input.transactionIndex,
       logs: Array.isArray(input.logs) ? input.logs : [],
     });
     return receipts.get(tx);
@@ -198,6 +198,7 @@ export function startLagRpc(options = {}) {
   }
 
   return new Promise((resolve) => {
+    server.unref();
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
       resolve({
@@ -227,7 +228,7 @@ export function startLagRpc(options = {}) {
         setFinalizedMode(mode) {
           nullFinalized = mode === 'null';
           errorFinalized = mode === 'error';
-          hangFinalizedMs = mode === 'timeout' ? 2500 : 0;
+          hangFinalizedMs = mode === 'timeout' ? 400 : 0;
         },
         reorg(n) {
           const block = Number(n);

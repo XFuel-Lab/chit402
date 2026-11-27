@@ -142,6 +142,7 @@ function freshBox() {
 function receiptFor(tx, nonce, blockNumber) {
   return {
     txHash: tx,
+    transactionIndex: '0x4',
     blockNumber,
     from: PAYER,
     status: '0x1',
@@ -311,7 +312,7 @@ test('FA1 a lagging finalized head books one pending leaf and returns 202', asyn
       assert.equal(out.body.finality, 'pending');
       assert.equal(out.body.retryable, true);
       assert.match(out.body.pending_id, /^[0-9a-f]{32}$/);
-      assert.match(out.body.verify_url, /\/verify\/[0-9a-f]{32}$/);
+      assert.match(out.body.verify_url, /\/receipt\/[0-9a-f]{32}$/);
       const leaves = readIntakeLeaves(box.store.dir);
       assert.equal(leaves.leaves.filter((row) => row.state === 'pending_anchor').length, 1);
       assert.equal(leaves.leaves[0].finality, 'pending');

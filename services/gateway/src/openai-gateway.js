@@ -651,6 +651,13 @@ async function meterV1Request(req, res, {
       return { halted: true };
     }
 
+    if (decision.kind === 'house_answer') {
+      if (activeHold) await spendHolds.release(activeHold.request_id);
+      if (decision.retryAfter != null) res.set('Retry-After', String(decision.retryAfter));
+      res.status(decision.status || 202).json(decision.body || {});
+      return { halted: true };
+    }
+
     if (decision.kind === 'settled') {
       return {
         halted: false,
@@ -1702,8 +1709,6 @@ export function meteringPaymentFromDecision(decision) {
 export function isBaseHousePayment(payment) {
   if (!payment || typeof payment !== 'object') return false;
   if (Number(payment.chainId) !== 8453) return false;
-  const obs = payment.observation;
-  if (!obs || typeof obs !== 'object' || obs.blockNumber == null) return false;
   return true;
 }
 
@@ -2657,6 +2662,10 @@ export function registerOpenAIRoutes(app, {
       return await bookSpend(req, settleRecord, task, build);
     } catch (err) {
       const failure = v13PaidHookFailure(err, metering?.payment || null);
+      const code = failure.body && failure.body.code;
+      if (code === 'pending_anchor' || code === 'not_settled' || code === 'refund_owed' || failure.status === 202 || failure.status === 409) {
+        abortServedReceipt(extractPaymentNonce(req));
+      }
       setPaidRetryAfter(res, failure);
       res.status(failure.status).json(failure.body);
       return null;

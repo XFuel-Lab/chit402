@@ -168,6 +168,18 @@ function sendOk() {
   return async () => `0x${'ab'.repeat(32)}`;
 }
 
+function intakePoint() {
+  return {
+    ok: true,
+    F: BigInt(SAMPLE.payment.blockNumber),
+    blocks: new Map([[String(SAMPLE.payment.blockNumber), [SAMPLE.payment.blockHash]]]),
+  };
+}
+
+async function closeIntake(sealer, input) {
+  return closeHour(sealer, { ...input, finalityPoint: input.finalityPoint || intakePoint() });
+}
+
 async function crashThenNextHour(index, expectedOp) {
   const box = fresh();
   try {
@@ -189,7 +201,7 @@ async function crashThenNextHour(index, expectedOp) {
       contract: CONTRACT,
       clock: () => HOUR,
     });
-    const first = await closeHour(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
+    const first = await closeIntake(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
     assert.equal(first.ok, false);
     assert.equal(crashedOp(), expectedOp);
 
@@ -207,7 +219,7 @@ async function crashThenNextHour(index, expectedOp) {
       intake: readFileSync(join(box.storeDir, INTAKE_FILE)),
       journal: readFileSync(join(box.sealerDir, 'sealer-state.json')),
     };
-    const replay = await closeHour(again, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
+    const replay = await closeIntake(again, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
     assert.equal(replay.ok, false);
     assert.equal(replay.reason, 'hour_already_covered');
     assert.deepEqual(readFileSync(join(box.storeDir, 'store-state.json')), beforeReplay.store);
@@ -225,7 +237,7 @@ async function crashThenNextHour(index, expectedOp) {
       hourStart: HOUR,
     });
     assert.equal(second.ok, true, second.reason);
-    const next = await closeHour(again, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
+    const next = await closeIntake(again, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
     assert.equal(next.ok, true, next.reason);
     assert.deepEqual(epochsOf(restarted, hexOf(line1)), [1]);
     assert.deepEqual(epochsOf(restarted, hexOf(line2)), [2]);
@@ -575,7 +587,7 @@ test('only the committed leaf is stamped and the other is minted next hour', asy
     });
     assert.equal(booked.ok, true, booked.reason);
     const sealer = sealerOn(box, box.store, HOUR);
-    const closed = await closeHour(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
+    const closed = await closeIntake(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
     assert.equal(closed.ok, true, closed.reason);
     const parsed = JSON.parse(readFileSync(join(box.storeDir, INTAKE_FILE), 'utf8'));
     parsed.leaves[0].receiptId = null;
@@ -597,7 +609,7 @@ test('only the committed leaf is stamped and the other is minted next hour', asy
     assert.equal(waiting.receiptId, null);
     assert.equal(waiting.epoch, null);
     const again = sealerOn(box, restarted, HOUR * 3);
-    const next = await closeHour(again, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
+    const next = await closeIntake(again, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
     assert.equal(next.ok, true, next.reason);
     assert.deepEqual(epochsOf(restarted, hexOf(line1)), [1]);
     assert.deepEqual(epochsOf(restarted, hexOf(line2)), [2]);
@@ -765,7 +777,7 @@ test('recover stamps intake after a crash before the store rename', async () => 
   try {
     const { line, sealer } = await closeBooked(box, 51);
     onceRename(box.store, 'store-state.json');
-    const first = await closeHour(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
+    const first = await closeIntake(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
     assert.equal(first.ok, false);
     assert.equal(first.reason, 'store_not_committed');
     const recovered = await recover(sealer, { send: sendOk() });
@@ -789,7 +801,7 @@ test('recover stamps intake after a crash before the store rename', async () => 
       contract: CONTRACT,
       clock: () => HOUR * 3,
     });
-    const next = await closeHour(clocked, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
+    const next = await closeIntake(clocked, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
     assert.equal(next.ok, true, next.reason);
     assert.deepEqual(epochsOf(box.store, hexOf(line)), [1]);
     assert.deepEqual(epochsOf(box.store, hexOf(line2)), [2]);
@@ -803,12 +815,12 @@ test('a failed intake seal is stamped on the next close without a restart', asyn
   try {
     const { line, sealer } = await closeBooked(box, 61);
     onceRename(box.store, INTAKE_FILE);
-    const first = await closeHour(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
+    const first = await closeIntake(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
     assert.equal(first.ok, false);
     assert.equal(first.committed, true);
     const clock = { now: HOUR * 3 };
     sealer.clock = () => clock.now;
-    const blocked = await closeHour(sealer, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
+    const blocked = await closeIntake(sealer, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
     assert.equal(blocked.reason, 'nonce_reused');
     const row = intakeRows(box.storeDir)[0];
     assert.equal(row.epoch, 1);
@@ -822,7 +834,7 @@ test('a failed intake seal is stamped on the next close without a restart', asyn
       caller: { bookId: BOOK.id, token: BOOK.token },
       hourStart: HOUR,
     });
-    const next = await closeHour(sealer, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
+    const next = await closeIntake(sealer, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
     assert.equal(next.ok, true, next.reason);
     assert.deepEqual(epochsOf(box.store, hexOf(line)), [1]);
     assert.deepEqual(epochsOf(box.store, hexOf(line2)), [2]);
@@ -847,14 +859,14 @@ test('a stuck intake rename does not mint a committed leaf into the next epoch',
         return base.renameSync(from, to);
       },
     };
-    const first = await closeHour(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
+    const first = await closeIntake(sealer, { hourStart: 0, lines: [], fees: FEES, send: sendOk() });
     assert.equal(first.ok, false);
     assert.equal(first.committed, true);
     const recovered = await recover(sealer, { send: sendOk() });
     assert.equal(recovered.ok, true, recovered.reason);
     assert.equal(intakeRows(box.storeDir)[0].receiptId, null);
     sealer.clock = () => HOUR * 3;
-    const next = await closeHour(sealer, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
+    const next = await closeIntake(sealer, { hourStart: HOUR, lines: [], fees: FEES, send: sendOk() });
     assert.equal(next.ok, true, next.reason);
     assert.deepEqual(epochsOf(box.store, hexOf(line)), [1]);
     assert.equal(box.store.epochs.size, 2);

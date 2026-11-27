@@ -536,7 +536,7 @@ test('T9 a store throw after the payment is final returns a pending id and verif
   assert.equal(issued.retryAfter, null);
   assert.equal(issued.body.v, undefined);
   assert.match(issued.body.pending_id, /^[0-9a-f]{32}$/);
-  assert.match(issued.body.verify_url, /^http:\/\/127\.0\.0\.1\/verify\/[0-9a-f]{32}$/);
+  assert.match(issued.body.verify_url, /^http:\/\/127\.0\.0\.1\/receipt\/[0-9a-f]{32}$/);
   assert.equal(JSON.stringify(issued.body).toLowerCase().includes('pay again'), false);
   assert.equal(sends, 0);
   assert.equal(JSON.stringify(issued.body).includes(secret), false);
@@ -1113,7 +1113,7 @@ test('B7 a flags-on buildReceipt failure throws a closed code and opens no hold'
         baseUrl: 'http://127.0.0.1:9',
         payment: { ...payment({ nonce: '23'.repeat(32) }), observation: { blockNumber: 10 } },
       }),
-      (err) => err.code === 'settle_unconfirmed',
+      (err) => err.code === 'pending_anchor' && typeof err.pending_id === 'string',
     );
     await assert.rejects(
       () => buildV1Receipt({

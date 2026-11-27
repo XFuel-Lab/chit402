@@ -410,7 +410,13 @@ export function confirmEvmReceipt(receipt, {
       let value = 0n;
       try { value = BigInt(log.data || '0x0'); } catch { value = 0n; }
       if (from && to && sameEvmAddress(from, wantPayer) && samePayee(to, expectedPayTo)) {
-        matches.push({ value, from, to, logIndex: log.logIndex != null ? Number(log.logIndex) : i });
+        matches.push({
+          value,
+          from,
+          to,
+          logIndex: log.logIndex != null ? Number(log.logIndex) : i,
+          localLogIndex: i,
+        });
       }
     } else if (topic0 === AUTH_USED_TOPIC.toLowerCase()) {
       const authorizer = topicAddress(log.topics?.[1]);
@@ -449,6 +455,8 @@ export function confirmEvmReceipt(receipt, {
     asset: matchedLog?.address ? ethers.getAddress(matchedLog.address) : ethers.getAddress(challenge.asset),
     transferCount: 1,
     logIndex: matches[0].logIndex,
+    localLogIndex: Number.isInteger(matches[0].localLogIndex) ? matches[0].localLogIndex : null,
+    transactionIndex: receipt.transactionIndex != null ? Number(BigInt(receipt.transactionIndex)) : null,
     blockNumber: receipt.blockNumber != null ? Number(receipt.blockNumber) : null,
     network: challenge.network || null,
     blockHash: receipt.blockHash || null,
@@ -812,6 +820,7 @@ export async function readEvmReceipt(rpcUrl, txHash, meter = null) {
     status: result.status === '0x1' || result.status === 1 ? 1 : 0,
     blockNumber: result.blockNumber != null ? Number(BigInt(result.blockNumber)) : null,
     blockHash: result.blockHash || null,
+    transactionIndex: result.transactionIndex != null ? Number(BigInt(result.transactionIndex)) : null,
     contractAddress: result.contractAddress || null,
     logs: (result.logs || []).map((log) => ({
       address: log.address,
