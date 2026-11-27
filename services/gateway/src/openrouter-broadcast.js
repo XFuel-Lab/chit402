@@ -17,6 +17,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import logger from './logger.js';
+import { authorizeExistingSessionRelease } from './agent-registry.js';
 import { STAMP_FEE_UNITS } from './pricing.js';
 import {
   buildReceipt,
@@ -28,6 +29,21 @@ import {
   OPENROUTER_VERIFIED_WITH,
   VERIFIED_OPENROUTER_NOTE,
 } from './receipt.js';
+
+/**
+ * Next step when a numeric agent_id was presented with a proof that does not
+ * belong to that agent. The session from POST /v1/agents/register comes first.
+ * A personal_sign of chit.register.recover is that agent's session-recovery
+ * credential: anyone who holds it within 300 seconds can recover the session.
+ */
+export const OPENROUTER_LEDGER_BIND_NEXT =
+  'Send this agent\'s book session from POST /v1/agents/register (JSON session or X-XFuel-Session). A wallet_signature over chit.register.recover is that agent\'s session-recovery credential: anyone who holds it within 300 seconds can recover the session. Smart-account and AAWP agents use the session.';
+
+const WALLET_BIND_WINDOW = 'wallet signature timestamp is outside the recovery window';
+const WALLET_BIND_INVALID = 'wallet signature did not prove control';
+
+/** Comparison target when the numeric id has no bound wallet. Not a key. */
+const UNBOUND_WALLET = '0x0000000000000000000000000000000000000001';
 
 export const SOURCE = 'openrouter_broadcast';
 export const JOB_KIND = 'openrouter_broadcast';
@@ -657,8 +673,13 @@ function resolveBook(authBook, generation) {
     if (hit) return { book: hit, routedBy: 'chit_book' };
   }
   if (generation.agentId) {
-    const hit = family.find((book) => book.agent_id != null && book.agent_id === generation.agentId);
-    if (hit) return { book: hit, routedBy: 'agent_id' };
+    if (authBook.agent_id != null && authBook.agent_id === generation.agentId) {
+      return { book: authBook, routedBy: 'agent_id' };
+    }
+    const matches = family.filter((book) => book.agent_id != null && book.agent_id === generation.agentId);
+    const bound = matches.find((book) => book.ledger_bound === true);
+    if (bound) return { book: bound, routedBy: 'agent_id' };
+    if (matches[0]) return { book: matches[0], routedBy: 'agent_id' };
   }
   return { book: authBook, routedBy: null };
 }
@@ -822,15 +843,102 @@ function issueKey() {
   return `chit_or_${crypto.randomBytes(32).toString('base64url')}`;
 }
 
+function filledSession(value) {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+function sessionFieldError(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  for (const key of ['session', 'possession_session']) {
+    if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
+    const value = body[key];
+    if (value == null || value === '') continue;
+    if (typeof value !== 'string') {
+      return {
+        ok: false,
+        status: 400,
+        error: 'validation_error',
+        message: `${key} must be a string`,
+      };
+    }
+  }
+  return null;
+}
+
+function sessionBearingBody(body, headers) {
+  const source = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const copy = { ...source };
+  if (filledSession(copy.session) || filledSession(copy.possession_session)) return copy;
+  const header = headers?.['x-xfuel-session'];
+  const fromHeader = Array.isArray(header) ? header[0] : header;
+  if (typeof fromHeader === 'string' && fromHeader.trim() !== '') {
+    copy.session = fromHeader.trim();
+  }
+  return copy;
+}
+
+function bindRefusal(decision) {
+  let message = decision.message;
+  if (decision.error === 'wallet_signature_invalid' || decision.error === 'wallet_signature_required') {
+    if (message !== WALLET_BIND_WINDOW) message = WALLET_BIND_INVALID;
+  }
+  return {
+    ok: false,
+    status: decision.status,
+    error: decision.error,
+    message,
+    next: OPENROUTER_LEDGER_BIND_NEXT,
+  };
+}
+
+/**
+ * A numeric agent_id joins that agent's possession ledger only when this
+ * request carries that agent's session, or the session-recovery signature
+ * authorizeExistingSessionRelease already checks. With no proof the integer
+ * stays the routing tag and ledger_bound stays false. A proof that fails
+ * is a refusal, with the registry's error code and a fixed next step.
+ */
+export function authorizeOpenRouterLedgerAttach(body, headers, numericAgent, registry) {
+  const shape = sessionFieldError(body);
+  if (shape) return shape;
+  if (numericAgent == null) return { ok: true, attach: false };
+  const presented = sessionBearingBody(body, headers);
+  const identity = registry && typeof registry.get === 'function' ? registry.get(numericAgent) : null;
+  const wallet = identity?.agentWallet || UNBOUND_WALLET;
+  const taskId = identity?.task_id ? String(identity.task_id) : '';
+  const decision = authorizeExistingSessionRelease(presented, identity, taskId, wallet);
+  if (!decision.ok) return bindRefusal(decision);
+  if (decision.release === true) return { ok: true, attach: true };
+  return { ok: true, attach: false };
+}
+
 /**
  * Mint a book. The ingest key is returned once and stored only as a hash.
  * A presented family key creates another book in that family.
+ * agent_id is always a routing tag. It is written onto the possession
+ * ledger only after authorizeOpenRouterLedgerAttach grants it.
  */
-export function createOpenRouterBook(body = {}, { familyBook = null, now = new Date() } = {}) {
+export function createOpenRouterBook(body = {}, {
+  familyBook = null,
+  now = new Date(),
+  registry = null,
+  headers = null,
+} = {}) {
   const agent = cleanAgentId(body.agent_id);
   if (agent.error) {
     return { ok: false, status: 400, error: 'validation_error', message: agent.error };
   }
+  const authz = authorizeOpenRouterLedgerAttach(body, headers, agent.numeric, registry);
+  if (!authz.ok) {
+    return {
+      ok: false,
+      status: authz.status,
+      error: authz.error,
+      message: authz.message,
+      next: authz.next,
+    };
+  }
+  const attached = authz.attach === true;
   const ingestKey = issueKey();
   const bookId = `orb_${crypto.randomBytes(16).toString('hex')}`;
   const book = {
@@ -838,7 +946,8 @@ export function createOpenRouterBook(body = {}, { familyBook = null, now = new D
     family_id: familyBook?.family_id || bookId,
     key_hash: hashIngestKey(ingestKey),
     agent_id: agent.tag,
-    agent_id_numeric: agent.numeric,
+    agent_id_numeric: attached ? agent.numeric : null,
+    ledger_bound: attached,
     label: cleanLabel(body.label),
     created_at: now.toISOString(),
   };
@@ -1169,7 +1278,7 @@ async function stampGeneration(generation, book, routedBy, deps) {
   };
   indexReceipt(record);
 
-  const numericAgent = book.agent_id_numeric;
+  const numericAgent = book.ledger_bound === true ? book.agent_id_numeric : null;
   const registry = deps.registry;
   const knownAgent = numericAgent && registry && typeof registry.get === 'function'
     ? registry.get(numericAgent)
@@ -1385,9 +1494,15 @@ export function registerOpenRouterBroadcast(app, {
           message: 'Ingest key does not match a Chit book.',
         });
       }
-      const created = createOpenRouterBook(req.body || {}, { familyBook });
+      const created = createOpenRouterBook(req.body || {}, {
+        familyBook,
+        registry,
+        headers: req.headers,
+      });
       if (!created.ok) {
-        return res.status(created.status).json({ error: created.error, message: created.message });
+        const payload = { error: created.error, message: created.message };
+        if (created.next) payload.next = created.next;
+        return res.status(created.status).json(payload);
       }
       const { baseUrl } = ctx(req);
       const key = created.ingestKey;
@@ -1395,6 +1510,7 @@ export function registerOpenRouterBroadcast(app, {
         book_id: created.book.book_id,
         family_id: created.book.family_id,
         agent_id: created.book.agent_id,
+        ledger_attached: created.book.ledger_bound === true,
         label: created.book.label,
         ingest_key: key,
         shown_once: true,

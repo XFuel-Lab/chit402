@@ -25,7 +25,7 @@ curl -sS -X POST "https://api.chit402.com/v1/openrouter/books" \
   -d '{"agent_id":"fixture-agent","label":"agent"}'
 ```
 
-`agent_id` is the tag you will send as `trace.metadata.agent_id`. A positive integer that matches a registered Chit agent also lands the row on that possession-gated book. Reported rows are not added to the agent's USDC spent total.
+`agent_id` is the tag you will send as `trace.metadata.agent_id`. Send the book session first, as JSON `session` or the `X-XFuel-Session` header, from `POST /v1/agents/register`. A positive integer is written onto that agent's possession-gated book only when this request carries that session. A `wallet_signature` over `chit.register.recover|<task_id>|<checksum address>|<unix seconds>` is that agent's session-recovery credential, not a separate attach signature: anyone who holds it within 300 seconds can recover the session. The signature check is an EOA `personal_sign`. Smart-account and AAWP agents use the session. With no proof, the integer stays a routing tag and does not enter the ledger. A session or signature that does not prove that agent is refused (`session_mismatch` or `wallet_signature_invalid`) with `next` naming the session to send. Reported rows are not added to the agent's USDC spent total.
 
 ## 2. Settings > Observability > Webhook
 
@@ -54,7 +54,7 @@ Optional per-generation tags on the OpenRouter request:
 }
 ```
 
-`chit_book` and `agent_id` select another book in the same family. A tag that does not match stays on the book that owns the ingest key.
+`chit_book` and `agent_id` select another book in the same family. The book that owns the ingest key wins when its tag matches. Otherwise a ledger-bound book with that tag wins, then the first match. A tag that does not match stays on the book that owns the ingest key. Re-minting the same tag inside the family with a session attaches the new book; send later spans with that book's ingest key, or with any family key once a ledger-bound book for the tag exists.
 
 ## Read the book
 
