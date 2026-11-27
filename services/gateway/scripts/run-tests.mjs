@@ -410,7 +410,9 @@ export function readManifest(path = COUNTS_PATH) {
  */
 export function runTestFiles(files, opts = {}) {
   const cwd = opts.cwd || gatewayDir;
-  const timeoutMs = opts.timeoutMs || 120000;
+  // 180s. The anchor scheduler file pads a 1024-leaf tree on every
+  // broadcast, so a slow runner crosses 120s without a hung test.
+  const timeoutMs = opts.timeoutMs || 180000;
   const error = opts.error || ((line) => console.error(line));
   const baseEnv = opts.env || process.env;
   const suiteTimeoutMs = opts.suiteTimeoutMs || SUITE_TIMEOUT_MS;
