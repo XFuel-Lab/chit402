@@ -309,7 +309,7 @@ function atomicReplace(dir, file, text) {
   }
   const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
     | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);
-  const fd = fs.openSync(tmp, flags, 0o666);
+  const fd = fs.openSync(tmp, flags, 0o600);
   try {
     const st = fs.fstatSync(fd);
     if (typeof st.isFile !== 'function' || st.isFile() !== true) {
@@ -331,7 +331,6 @@ function atomicReplace(dir, file, text) {
     throw err;
   }
   fs.closeSync(fd);
-  try { fs.chmodSync(tmp, 0o600); } catch { /* mode was set on create */ }
   fs.renameSync(tmp, file);
   fsyncDir(dir);
 }
@@ -917,7 +916,7 @@ function readStallSeen(dir, now) {
   try {
     parsed = JSON.parse(text);
   } catch {
-    return null;
+    return { at: null };
   }
   if (!parsed || parsed.v !== 1 || !Number.isSafeInteger(parsed.at) || parsed.at < 0 || parsed.at > now) {
     return { at: null };
@@ -970,7 +969,7 @@ function intakeStall(session) {
     // A missing intake file is not a stall by itself.
   }
   if (nullHour) {
-    const stamp = readStallSeen(session.dir, now);
+    const stamp = readStallSeen(session.dir, now) || { at: null };
     let seen = stamp.at;
     if (stamp.unreadable === true) {
       seen = seen == null ? now : seen;
@@ -1006,10 +1005,21 @@ function intakeStall(session) {
 }
 
 function finish(session, body) {
-  const held = holdReason(session.dir);
+  let held = '';
+  try {
+    held = holdReason(session.dir) || '';
+  } catch {
+    held = 'anchor_hold_unreadable';
+  }
   const spent = body && body.ok === false && body.reason === 'anchor_bump_spent' ? 'anchor_bump_spent' : '';
-  const stalled = intakeStall(session);
-  const code = held || spent || stalled;
+  const tempHold = body && body.ok === false && body.reason === 'anchor_hold_unreadable' ? 'anchor_hold_unreadable' : '';
+  let stalled = '';
+  try {
+    stalled = intakeStall(session) || '';
+  } catch {
+    stalled = held || tempHold ? '' : 'sealer_unavailable';
+  }
+  const code = held || tempHold || spent || stalled;
   if (code) {
     report(session.log, code);
     setAnchorStall(code);

@@ -258,7 +258,7 @@
     {
       "id": "L3e",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "    const stamp = readStallSeen(session.dir, now);\n    let seen = stamp.at;\n    if (stamp.unreadable === true) {\n      seen = seen == null ? now : seen;\n      stallSeenMem.set(session.dir, seen);\n      try { writeStallSeen(session.dir, seen); } catch { /* the in-memory stamp still starts the clock */ }\n    } else if (seen == null) {\n      seen = now;\n      stallSeenMem.delete(session.dir);\n      try { writeStallSeen(session.dir, seen); } catch { /* a missing file is rewritten */ }\n    }\n    origin = earlier(origin, seen);",
+      "find": "    const stamp = readStallSeen(session.dir, now) || { at: null };\n    let seen = stamp.at;\n    if (stamp.unreadable === true) {\n      seen = seen == null ? now : seen;\n      stallSeenMem.set(session.dir, seen);\n      try { writeStallSeen(session.dir, seen); } catch { /* the in-memory stamp still starts the clock */ }\n    } else if (seen == null) {\n      seen = now;\n      stallSeenMem.delete(session.dir);\n      try { writeStallSeen(session.dir, seen); } catch { /* a missing file is rewritten */ }\n    }\n    origin = earlier(origin, seen);",
       "replace": "    origin = origin;",
       "note": "a null hourStart does not use the persisted stamp"
     },
@@ -382,11 +382,25 @@
       "note": "a seen file in the future is accepted"
     },
     {
+      "id": "N14",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "    stallSeenMem.delete(session.dir);\n    try { fs.unlinkSync(stallSeenFile(session.dir)); } catch { /* no stamp to drop */ }",
+      "replace": "    stallSeenMem.delete(session.dir);",
+      "note": "a seen file is kept when nothing is pending"
+    },
+    {
       "id": "N17",
       "file": "services/gateway/src/v13-anchor-scheduler.js",
-      "find": "  try { fs.chmodSync(tmp, 0o600); } catch { /* mode was set on create */ }",
-      "replace": "  void tmp;",
-      "note": "a rewritten hold keeps the previous mode"
+      "find": "if (!row || row.released === true || isHouseShapedEpoch(session.sealer.store, row)) continue;",
+      "replace": "if (!row) continue;",
+      "note": "every epoch is counted as legacy unreleased"
+    },
+    {
+      "id": "N26",
+      "file": "services/chit-sealer/kms-secp256k1.js",
+      "find": "return fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "replace": "return fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | (fs.constants.O_CLOEXEC || 0);",
+      "note": "intent read follows a symlink"
     },
     {
       "id": "N18",
