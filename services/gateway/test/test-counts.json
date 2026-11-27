@@ -1,6 +1,6 @@
 {
   "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.",
-  "total": 2886,
+  "total": 2892,
   "skipped": 3,
   "files": {
     "test/a2a-paid-door.test.mjs": 6,
@@ -109,7 +109,7 @@
     "test/openai-gateway.test.mjs": 20,
     "test/openai-metering.test.mjs": 12,
     "test/openai-settle-failure.test.mjs": 2,
-    "test/openrouter-broadcast.test.mjs": 19,
+    "test/openrouter-broadcast.test.mjs": 25,
     "test/openrouter-http.test.mjs": 2,
     "test/openrouter.test.mjs": 22,
     "test/output-commitment-kind.test.mjs": 9,

@@ -31,13 +31,16 @@ import {
 } from './receipt.js';
 
 /**
- * Next step when a numeric agent_id was presented with a session or wallet
- * bind that does not prove that agent. Same possession proof the registry
- * already accepts: the book session, or personal_sign of
- * chit.register.recover (300 second window).
+ * Next step when a numeric agent_id was presented with a proof that does not
+ * belong to that agent. The session from POST /v1/agents/register comes first.
+ * A personal_sign of chit.register.recover is that agent's session-recovery
+ * credential: anyone who holds it within 300 seconds can recover the session.
  */
 export const OPENROUTER_LEDGER_BIND_NEXT =
-  'Send this agent\'s book session from POST /v1/agents/register (JSON session or X-XFuel-Session), or wallet_signature over chit.register.recover for this agent\'s task within 300 seconds.';
+  'Send this agent\'s book session from POST /v1/agents/register (JSON session or X-XFuel-Session). A wallet_signature over chit.register.recover is that agent\'s session-recovery credential: anyone who holds it within 300 seconds can recover the session. Smart-account and AAWP agents use the session.';
+
+const WALLET_BIND_WINDOW = 'wallet signature timestamp is outside the recovery window';
+const WALLET_BIND_INVALID = 'wallet signature did not prove control';
 
 /** Comparison target when the numeric id has no bound wallet. Not a key. */
 const UNBOUND_WALLET = '0x0000000000000000000000000000000000000001';
@@ -670,8 +673,13 @@ function resolveBook(authBook, generation) {
     if (hit) return { book: hit, routedBy: 'chit_book' };
   }
   if (generation.agentId) {
-    const hit = family.find((book) => book.agent_id != null && book.agent_id === generation.agentId);
-    if (hit) return { book: hit, routedBy: 'agent_id' };
+    if (authBook.agent_id != null && authBook.agent_id === generation.agentId) {
+      return { book: authBook, routedBy: 'agent_id' };
+    }
+    const matches = family.filter((book) => book.agent_id != null && book.agent_id === generation.agentId);
+    const bound = matches.find((book) => book.ledger_bound === true);
+    if (bound) return { book: bound, routedBy: 'agent_id' };
+    if (matches[0]) return { book: matches[0], routedBy: 'agent_id' };
   }
   return { book: authBook, routedBy: null };
 }
@@ -835,65 +843,72 @@ function issueKey() {
   return `chit_or_${crypto.randomBytes(32).toString('base64url')}`;
 }
 
+function filledSession(value) {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+function sessionFieldError(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  for (const key of ['session', 'possession_session']) {
+    if (!Object.prototype.hasOwnProperty.call(body, key)) continue;
+    const value = body[key];
+    if (value == null || value === '') continue;
+    if (typeof value !== 'string') {
+      return {
+        ok: false,
+        status: 400,
+        error: 'validation_error',
+        message: `${key} must be a string`,
+      };
+    }
+  }
+  return null;
+}
+
 function sessionBearingBody(body, headers) {
   const source = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
   const copy = { ...source };
+  if (filledSession(copy.session) || filledSession(copy.possession_session)) return copy;
   const header = headers?.['x-xfuel-session'];
   const fromHeader = Array.isArray(header) ? header[0] : header;
-  if ((copy.session == null || copy.session === '') && fromHeader != null && String(fromHeader).trim() !== '') {
-    copy.session = String(fromHeader).trim();
+  if (typeof fromHeader === 'string' && fromHeader.trim() !== '') {
+    copy.session = fromHeader.trim();
   }
   return copy;
 }
 
+function bindRefusal(decision) {
+  let message = decision.message;
+  if (decision.error === 'wallet_signature_invalid' || decision.error === 'wallet_signature_required') {
+    if (message !== WALLET_BIND_WINDOW) message = WALLET_BIND_INVALID;
+  }
+  return {
+    ok: false,
+    status: decision.status,
+    error: decision.error,
+    message,
+    next: OPENROUTER_LEDGER_BIND_NEXT,
+  };
+}
+
 /**
  * A numeric agent_id joins that agent's possession ledger only when this
- * request carries that agent's session, or the wallet-control bind
+ * request carries that agent's session, or the session-recovery signature
  * authorizeExistingSessionRelease already checks. With no proof the integer
  * stays the routing tag and ledger_bound stays false. A proof that fails
- * is a refusal, with the registry's own error code and a next step.
+ * is a refusal, with the registry's error code and a fixed next step.
  */
 export function authorizeOpenRouterLedgerAttach(body, headers, numericAgent, registry) {
+  const shape = sessionFieldError(body);
+  if (shape) return shape;
   if (numericAgent == null) return { ok: true, attach: false };
   const presented = sessionBearingBody(body, headers);
   const identity = registry && typeof registry.get === 'function' ? registry.get(numericAgent) : null;
   const wallet = identity?.agentWallet || UNBOUND_WALLET;
   const taskId = identity?.task_id ? String(identity.task_id) : '';
   const decision = authorizeExistingSessionRelease(presented, identity, taskId, wallet);
-  if (!decision.ok) {
-    return {
-      ok: false,
-      status: decision.status,
-      error: decision.error,
-      message: decision.message,
-      next: OPENROUTER_LEDGER_BIND_NEXT,
-    };
-  }
-  if (decision.release === true) {
-    const sessionPresented = (presented.session != null && presented.session !== '')
-      || (presented.possession_session != null && presented.possession_session !== '');
-    // A wallet-less row has no key to recover. The placeholder address is only
-    // a comparison target, so a signature cannot attach that row.
-    if (!sessionPresented && !identity?.agentWallet) {
-      return {
-        ok: false,
-        status: 401,
-        error: 'wallet_signature_invalid',
-        message: 'wallet signature did not prove control',
-        next: OPENROUTER_LEDGER_BIND_NEXT,
-      };
-    }
-    if (!identity || Number(identity.agent_id) !== Number(numericAgent)) {
-      return {
-        ok: false,
-        status: 403,
-        error: 'session_mismatch',
-        message: 'presented session does not match this agent',
-        next: OPENROUTER_LEDGER_BIND_NEXT,
-      };
-    }
-    return { ok: true, attach: true };
-  }
+  if (!decision.ok) return bindRefusal(decision);
+  if (decision.release === true) return { ok: true, attach: true };
   return { ok: true, attach: false };
 }
 

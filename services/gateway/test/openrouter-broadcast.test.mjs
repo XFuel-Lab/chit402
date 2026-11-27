@@ -663,6 +663,17 @@ function oneGeneration(id = 'gen-fixture-fabricated-001') {
   return payload;
 }
 
+function taggedGeneration(id, agentId) {
+  const payload = oneGeneration(id);
+  const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
+  span.attributes = span.attributes.filter((attr) => attr.key !== 'trace.metadata.agent_id');
+  span.attributes.push({
+    key: 'trace.metadata.agent_id',
+    value: { stringValue: String(agentId) },
+  });
+  return payload;
+}
+
 function generationBody(over = {}) {
   return {
     data: {
@@ -866,5 +877,163 @@ test('with no OpenRouter key the receipt stays unverified and no lookup runs', a
   });
   await flushOpenRouterVerifications();
   assert.equal(used, OR_KEY_ROTATED);
+});
+
+test('a pre-fix book with agent_id_numeric and no boolean ledger_bound writes no ledger rows', async () => {
+  const ledger = new UsageSettledLedger();
+  const registry = { get(id) { return Number(id) === 7 ? { agent_id: 7 } : null; } };
+  const shapes = [
+    { agent_id: '7', agent_id_numeric: 7 },
+    { agent_id: '7', agent_id_numeric: 7, ledger_bound: 'true' },
+  ];
+  for (const [index, shape] of shapes.entries()) {
+    const book = {
+      book_id: `orb_legacy_${index}`,
+      family_id: `orb_legacy_family_${index}`,
+      ...shape,
+    };
+    const result = await ingestOpenRouterBroadcast(oneGeneration(`gen-or-legacy-${index}`), {
+      book,
+      ledger,
+      registry,
+      baseUrl: 'http://127.0.0.1',
+      signingSecret: 'test-receipt-secret',
+    });
+    assert.equal(result.body.stamped, 1);
+  }
+  assert.equal(ledger.listByAgent(7).length, 0);
+});
+
+test('body session wins over X-XFuel-Session', async () => {
+  const { registry, ledger } = house();
+  const owner = registry.allocate({ taskId: 'task-or-precedence' });
+  const other = registry.allocate({ taskId: 'task-or-precedence-other' });
+  const before = ledger.listByAgent(owner.agent_id).length;
+  const mismatch = await mintBook(
+    { agent_id: String(owner.agent_id), session: other.session },
+    null,
+    { 'x-xfuel-session': owner.session },
+  );
+  assert.equal(mismatch.status, 403);
+  assert.equal(mismatch.json.error, 'session_mismatch');
+  assert.equal(mismatch.json.ingest_key, undefined);
+  assert.equal(ledger.listByAgent(owner.agent_id).length, before);
+
+  const possession = await mintBook(
+    { agent_id: String(owner.agent_id), possession_session: other.session },
+    null,
+    { 'x-xfuel-session': owner.session },
+  );
+  assert.equal(possession.status, 403);
+  assert.equal(possession.json.error, 'session_mismatch');
+  assert.equal(ledger.listByAgent(owner.agent_id).length, before);
+
+  const attached = await mintBook(
+    { agent_id: String(owner.agent_id), session: owner.session },
+    null,
+    { 'x-xfuel-session': 'not-a-session' },
+  );
+  assert.equal(attached.status, 201);
+  assert.equal(attached.json.ledger_attached, true);
+  const posted = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(attached.json.ingest_key),
+    body: JSON.stringify(taggedGeneration('gen-or-precedence', owner.agent_id)),
+  });
+  const body = await posted.json();
+  assert.equal(body.stamped, 1);
+  assert.equal(ledger.listByAgent(owner.agent_id).length, before + 1);
+});
+
+test('a non-canonical agent_id stays a tag with or without a session', async () => {
+  const { registry, ledger } = house();
+  const owner = registry.allocate({ taskId: 'task-or-tag' });
+  const before = ledger.listByAgent(7).length;
+  const tags = ['fixture-agent', '07', '-7', '7.0'];
+  for (const tag of tags) {
+    const plain = await mintBook({ agent_id: tag });
+    assert.equal(plain.status, 201);
+    assert.equal(plain.json.ledger_attached, false);
+    const withSession = await mintBook({ agent_id: tag, session: owner.session });
+    assert.equal(withSession.status, 201);
+    assert.equal(withSession.json.ledger_attached, false);
+  }
+  assert.equal(ledger.listByAgent(7).length, before);
+  assert.equal(ledger.listByAgent(owner.agent_id).length, 0);
+});
+
+test('a malformed wallet signature is refused with fixed text', async () => {
+  const { registry } = house();
+  const signer = Wallet.createRandom();
+  const bound = registry.upsert({
+    agentWallet: signer.address,
+    taskId: 'task-or-malformed',
+    kind: 'eoa',
+  });
+  const junk = '0xdeadbeef<script>';
+  const created = await mintBook({
+    agent_id: String(bound.identity.agent_id),
+    wallet_signature: junk,
+    signature_timestamp: Math.floor(Date.now() / 1000),
+  });
+  assert.equal(created.status, 401);
+  assert.equal(created.json.error, 'wallet_signature_invalid');
+  assert.equal(created.json.message, 'wallet signature did not prove control');
+  assert.equal(created.json.next, OPENROUTER_LEDGER_BIND_NEXT);
+  const text = JSON.stringify(created.json);
+  assert.equal(text.includes(junk), false);
+  assert.equal(text.includes('INVALID_ARGUMENT'), false);
+  assert.equal(text.includes('BytesLike'), false);
+  assert.equal(created.json.ingest_key, undefined);
+});
+
+test('a bound re-mint in the same family receives a tagged span', async () => {
+  const { registry, ledger } = house();
+  const owner = registry.allocate({ taskId: 'task-or-remint' });
+  const tag = String(owner.agent_id);
+  const before = ledger.listByAgent(owner.agent_id).length;
+  const root = await mintBook({ label: 'family' });
+  const legacy = await mintBook({ agent_id: tag, label: 'legacy' }, root.json.ingest_key);
+  assert.equal(legacy.status, 201);
+  assert.equal(legacy.json.ledger_attached, false);
+  const bound = await mintBook({
+    agent_id: tag,
+    session: owner.session,
+    label: 'bound',
+  }, root.json.ingest_key);
+  assert.equal(bound.status, 201);
+  assert.equal(bound.json.ledger_attached, true);
+  assert.equal(bound.json.family_id, legacy.json.family_id);
+  const posted = await fetch(`${base}/v1/openrouter/broadcast`, {
+    method: 'POST',
+    headers: authHeaders(bound.json.ingest_key),
+    body: JSON.stringify(taggedGeneration('gen-or-remint', tag)),
+  });
+  const body = await posted.json();
+  assert.equal(posted.status, 200);
+  assert.equal(body.stamped, 1);
+  assert.equal(body.receipts[0].book_id, bound.json.book_id);
+  assert.equal(ledger.listByAgent(owner.agent_id).length, before + 1);
+});
+
+test('a non-string session is rejected', async () => {
+  const { registry, ledger } = house();
+  const owner = registry.allocate({ taskId: 'task-or-session-type' });
+  const before = ledger.listByAgent(owner.agent_id).length;
+  const created = await mintBook({
+    agent_id: String(owner.agent_id),
+    session: [owner.session],
+  });
+  assert.equal(created.status, 400);
+  assert.equal(created.json.error, 'validation_error');
+  assert.equal(created.json.message, 'session must be a string');
+  assert.equal(created.json.ingest_key, undefined);
+  const possession = await mintBook({
+    agent_id: String(owner.agent_id),
+    possession_session: { token: owner.session },
+  });
+  assert.equal(possession.status, 400);
+  assert.equal(possession.json.message, 'possession_session must be a string');
+  assert.equal(ledger.listByAgent(owner.agent_id).length, before);
 });
 });
