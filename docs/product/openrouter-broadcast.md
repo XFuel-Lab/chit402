@@ -25,7 +25,7 @@ curl -sS -X POST "https://api.chit402.com/v1/openrouter/books" \
   -d '{"agent_id":"fixture-agent","label":"agent"}'
 ```
 
-`agent_id` is the tag you will send as `trace.metadata.agent_id`. A positive integer that matches a registered Chit agent also lands the row on that possession-gated book. Reported rows are not added to the agent's USDC spent total.
+`agent_id` is the tag you will send as `trace.metadata.agent_id`. A positive integer is written onto that registered agent's possession-gated book only when this request carries that agent's book session, or a `wallet_signature` over `chit.register.recover|<task_id>|<checksum address>|<unix seconds>` inside the 300 second window. Send the session as JSON `session` or the `X-XFuel-Session` header. With no proof, the integer stays a routing tag and does not enter the ledger. A session or signature that does not prove that agent is refused (`session_mismatch` or `wallet_signature_invalid`) with `next` set to the proof to send. Reported rows are not added to the agent's USDC spent total.
 
 ## 2. Settings > Observability > Webhook
 
