@@ -24,6 +24,7 @@ import {
 import { jsonRpc } from '../rpc-deadline.js';
 import { readTestSnapshot } from '../internal/test-seam.js';
 import { DEFAULT_TRUSTED_ISSUER_KIDS } from '../jws.js';
+import { activeVersionWindows, checkSignedTime, type VersionWindows } from '../version-windows.js';
 import type { VerifyVerdict } from '../verdict.js';
 import { V13_RPC_DEFAULTS } from './rpc-defaults.js';
 import {
@@ -651,6 +652,26 @@ function addressFromWord(word: string): string | null {
   return `0x${body.slice(24).toLowerCase()}`;
 }
 
+/**
+ * pv13 opens at the anchored hour, not at a receipt clock. Test-signed
+ * windows are not enforceable, so this is a no-op until the ceremony.
+ */
+export function applyPv13Window(result: V13Result, windows: VersionWindows | null): V13Result {
+  if (!windows || result.exit !== 0 || result.hourStart == null) return result;
+  const timed = checkSignedTime('pv13', result.hourStart * 1000, windows);
+  if (timed.ok) return result;
+  const message = timed.reason === 'version_window_not_open'
+    ? 'The anchored hour is before this version opened.'
+    : 'This version has no signed validity window.';
+  return {
+    ...result,
+    exit: 1,
+    reason: timed.reason,
+    message,
+    checks: { ...result.checks, anchor: 'fail' },
+  };
+}
+
 export function verdictOf(result: V13Result, version: string): VerifyVerdict {
   const resultName = result.exit === 0 ? 'verified' : result.exit === 1 ? 'invalid' : 'could_not_check';
   return {
@@ -940,7 +961,8 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     ),
     paymentOk: paymentSlotOk(loaded.line, loaded.smt, line),
   };
-  return verdictOf(runV13(receipt, blankWorld(history, {
+  const pv13Windows = activeVersionWindows(readTestSnapshot(options)?.versionWindows);
+  return verdictOf(applyPv13Window(runV13(receipt, blankWorld(history, {
     ...base,
     finalizedNumber,
     events,
@@ -964,7 +986,7 @@ export async function verifyV13Document(receipt: unknown, options: V13Options = 
     frozenEpoch,
     keyCutoff,
     rpcConfigured: true,
-  }), hooks), version);
+  }), hooks), pv13Windows), version);
 }
 
 function idleHooks() {

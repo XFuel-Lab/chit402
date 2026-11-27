@@ -3,7 +3,7 @@
  * Fails when the versions differ or the alias dependency is a range.
  */
 import { readFileSync } from 'node:fs';
-import { createPublicKey, verify } from 'node:crypto';
+import { createHash, createPublicKey, verify } from 'node:crypto';
 
 const primary = JSON.parse(readFileSync(new URL('../packages/verify/package.json', import.meta.url), 'utf8'));
 const alias = JSON.parse(readFileSync(new URL('../packages/aliases/chit402-verify/package.json', import.meta.url), 'utf8'));
@@ -31,8 +31,12 @@ try {
   const jws = String(windows.issuer_signature?.jws || '');
   const [h, p, sig] = jws.split('.');
   const header = JSON.parse(Buffer.from(h || '', 'base64url').toString('utf8') || '{}');
-  const entry = (history.entries || []).find((e) => e.kid === PROD_KID);
-  const ok = header.kid === PROD_KID && entry && sig && verify('sha256', Buffer.from(`${h}.${p}`), {
+  const entry = (history.entries || []).find((e) => e.kid === PROD_KID && e.jwk);
+  const thumb = entry && createHash('sha256').update(JSON.stringify({
+    crv: entry.jwk.crv, kty: entry.jwk.kty, x: entry.jwk.x, y: entry.jwk.y,
+  })).digest('base64url');
+  if (thumb !== PROD_KID) errors.push('issuer-history production key thumbprint does not match the kid');
+  const ok = header.kid === PROD_KID && entry && thumb === PROD_KID && sig && verify('sha256', Buffer.from(`${h}.${p}`), {
     key: createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: entry.jwk.x, y: entry.jwk.y }, format: 'jwk' }),
     dsaEncoding: 'ieee-p1363',
   }, Buffer.from(sig, 'base64url'));

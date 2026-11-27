@@ -1,0 +1,199 @@
+{
+  "about": "chit402-verify 0.5.0 issuer-history ceremony. Every mutant below is killed by a behavior assertion in test/issuer-history-050.test.mjs. String matches of source text are not the killer. V3 (one eth_call answer) is equivalent: every public slot must already have succeeded and there are at least two, so answers.length < 2 cannot be reached.",
+  "timeoutSec": 180,
+  "equivalents": ["V3_one_answer"],
+  "suites": {
+    "verify": {
+      "cwd": "packages/verify",
+      "argv": [
+        "sh",
+        "-c",
+        "./node_modules/.bin/tsc -p . --pretty false && node --test --test-concurrency=1 test/issuer-history-050.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test"
+      }
+    },
+    "v13exit": {
+      "cwd": "packages/verify",
+      "argv": [
+        "sh",
+        "-c",
+        "./node_modules/.bin/tsc -p . --pretty false && node --test --test-concurrency=1 --test-name-pattern 'exit 2 is could_not_check and the library' test/v13-path.test.mjs"
+      ],
+      "env": {
+        "NODE_ENV": "test"
+      }
+    }
+  },
+  "mutants": [
+    {
+      "id": "H5_short_signature",
+      "file": "packages/verify/scripts/issuer-history.mjs",
+      "find": "\\[A-Za-z0-9_\\-]\\{86\\}",
+      "replace": "[A-Za-z0-9_-]{1,86}",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "H7_version_or_seq",
+      "file": "packages/verify/scripts/issuer-history.mjs",
+      "find": "version > sealedVersion && seq > sealedSeq",
+      "replace": "version > sealedVersion || seq > sealedSeq",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "H8_first_code_hash",
+      "file": "packages/verify/scripts/issuer-history.mjs",
+      "find": "for \\(const pin of parsed\\.pins\\)",
+      "replace": "for (const pin of parsed.pins.slice(0, 1))",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "H12_seq_from_version",
+      "file": "packages/verify/scripts/issuer-history.mjs",
+      "find": "if \\(body\\.seq != null\\) claims\\.seq = body\\.seq;",
+      "replace": "if (body.seq != null) claims.seq = body.version;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "CHK_entries_prefix",
+      "file": "packages/verify/scripts/issuer-history.mjs",
+      "find": "if \\(!entriesCover\\(sealed, doc\\)\\)",
+      "replace": "if (false)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "CHK_genesis_required",
+      "file": "packages/verify/scripts/issuer-history.mjs",
+      "find": "if \\(!isJsonInteger\\(expectGenesis\\)\\)",
+      "replace": "if (false)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "CHK_kid_prod",
+      "file": "packages/verify/scripts/issuer-history.mjs",
+      "find": "if \\(kid !== PROD_KID\\)",
+      "replace": "if (false)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "CHK_test_signed",
+      "file": "packages/verify/scripts/issuer-history.mjs",
+      "find": "if \\(!verified\\.valid\\) fail\\('issuer-history snapshot is test-signed'\\);",
+      "replace": "if (false) fail('issuer-history snapshot is test-signed');",
+      "nth": 2,
+      "suite": "verify"
+    },
+    {
+      "id": "S1_v2_hash",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "hash: 'b5ecff74a0c5a493268c100ab164b641a5cb2bed8792d0526a997d9d5aa7b07d'",
+      "replace": "hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "S2_v2_seq",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "version: 2, seq: 2",
+      "replace": "version: 2, seq: 9",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "S3_v2_row_deleted",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "\\n  \\{ file: '\\.\\./issuer-history\\.v2\\.snapshot\\.json'[^\\n]+\\n",
+      "replace": "\n",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "I1_v2_points_at_bundle",
+      "file": "packages/verify/src/issuer-history.ts",
+      "find": "issuer-history\\.v2\\.snapshot\\.json",
+      "replace": "issuer-history.snapshot.json",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "D4_chain_genesis",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if \\(world\\.chainGenesis != null && world\\.chainGenesis !== pin\\.genesisHourStart\\)",
+      "replace": "if (false)",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "D5b_missing_finalized",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if \\(input\\.finalizedNumber == null\\) return 'finality_unavailable';",
+      "replace": "if (input.finalizedNumber == null) return 'ok';",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "PARSE_missing_member",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if \\(!isPlain\\(payload\\) \\|\\| !hasOwn\\(payload, 'contracts'\\)\\) return \\{ ok: true, pins: \\[\\] \\};",
+      "replace": "if (!isPlain(payload) || !hasOwn(payload, 'contracts')) return { ok: false, reason: 'snapshot_contracts_invalid' };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "PARSE_not_array",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if \\(!Array\\.isArray\\(list\\)\\) return \\{ ok: false, reason: 'snapshot_contracts_invalid' \\};",
+      "replace": "if (!Array.isArray(list)) return { ok: true, pins: [] };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "PARSE_item_shape",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if \\(!isPlain\\(item\\)\\) return \\{ ok: false, reason: 'snapshot_contracts_invalid' \\};",
+      "replace": "if (!isPlain(item)) continue;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "PARSE_genesis",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "const genesis = safeUint\\(item\\.genesisHourStart\\);",
+      "replace": "const genesis = 1;",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "PARSE_retire_order",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if \\(retire != null && retire < genesis\\) return \\{ ok: false, reason: 'snapshot_contracts_invalid' \\};",
+      "replace": "if (false) return { ok: false, reason: 'snapshot_contracts_invalid' };",
+      "nth": 1,
+      "suite": "verify"
+    },
+    {
+      "id": "X1_payer_checked_on_exit_2",
+      "file": "packages/verify/src/index.ts",
+      "find": "payer: \\{ checked: exit === 0, valid: exit === 0,",
+      "replace": "payer: { checked: true, valid: true,",
+      "nth": 1,
+      "suite": "v13exit"
+    },
+    {
+      "id": "PARSE_checkpoint_versions",
+      "file": "packages/verify/src/v13/core/decide.ts",
+      "find": "if \\(hasOwn\\(item, 'checkpointVersions'\\)\\) \\{",
+      "replace": "if (false && hasOwn(item, 'checkpointVersions')) {",
+      "nth": 1,
+      "suite": "verify"
+    }
+  ]
+}

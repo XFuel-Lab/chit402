@@ -8,6 +8,7 @@ The package re-exports `chit402-verify` and forwards CLI arguments to that verif
 ## 0.5.0-pre.0: Pin chit402-verify 0.5.0-pre.0
 
 - Depends on exactly `chit402-verify` `0.5.0-pre.0` (version validity windows, the closed legacy list, the log-time check). Pre-release. Not published. No deploy.
+- The alias pin is unchanged. Issuer-history ceremony tooling (`signing-input`, `assemble`, `check`) lives in `chit402-verify` and does not change this package's flags, exit codes, or dependency.
 
 ## 0.4.11: Pin chit402-verify 0.4.11
 

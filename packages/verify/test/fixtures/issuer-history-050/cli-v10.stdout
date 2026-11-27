@@ -1,0 +1,29 @@
+{
+  "result": "invalid",
+  "exit_code": 1,
+  "reason": "key untrusted",
+  "message": "Signed by a key that is not the issuer's.",
+  "next_step": null,
+  "receipt_id": null,
+  "display_id": null,
+  "payload_version": 10,
+  "checks": {
+    "signature": "fail",
+    "key_window": "could_not_check",
+    "payment_binding": "could_not_check",
+    "log_inclusion": "could_not_check",
+    "anchor": "could_not_check",
+    "shape": "pass"
+  },
+  "history": {
+    "source": "file",
+    "head_hash": "349d7bb495bad55aaa25d05ee91134575e6e7d300795b37b41f4bcf29af80f0e",
+    "entry_count": 1,
+    "as_of": null
+  },
+  "log": null,
+  "verifier": {
+    "name": "chit402-verify",
+    "version": "0.5.0-pre.0"
+  }
+}

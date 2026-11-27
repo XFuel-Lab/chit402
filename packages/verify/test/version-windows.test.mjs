@@ -97,8 +97,12 @@ test('the publish check refuses the test-signed document', () => {
 
 test('every registry version outside the L1 list has exactly one window', () => {
   const w = loadBundledVersionWindows();
-  const expected = VERSION_REGISTRY.filter((r) => !r.l1_allowlist).map((r) => r.id).sort();
+  const expected = [...VERSION_REGISTRY.filter((r) => !r.l1_allowlist).map((r) => r.id), 'pv13'].sort();
   assert.deepEqual([...w.windows.keys()].sort(), expected);
+  const pv13 = w.windows.get('pv13');
+  assert.equal(pv13.not_before, '2026-11-23T19:28:25Z');
+  assert.equal(pv13.not_after, null);
+  assert.equal(pv13.floor, true);
   for (const r of VERSION_REGISTRY.filter((v) => v.l1_allowlist)) assert.equal(w.windows.has(r.id), false, r.id);
 });
 
