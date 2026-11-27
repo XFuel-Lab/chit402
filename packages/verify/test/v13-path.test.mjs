@@ -1510,11 +1510,13 @@ test('pv13 floor is the anchored hour and is off until windows are enforceable',
       [TEST_SNAPSHOT]: { ...base[TEST_SNAPSHOT], versionWindows: windows(notBefore) },
     };
   };
-  const early = await runScene(scene, receipt, withWindows('2099-01-01T00:00:00Z'));
-  assert.equal(early.v.exit_code, 1);
-  assert.equal(early.v.reason, 'version_window_not_open');
-  const open = await runScene(scene, receipt, withWindows('2020-01-01T00:00:00Z'));
-  assert.equal(open.v.exit_code, 0, open.v.reason);
+  const hourIso = new Date(HOUR * 1000).toISOString().replace('.000Z', 'Z');
+  const nextSecond = new Date((HOUR + 1) * 1000).toISOString().replace('.000Z', 'Z');
+  const atHour = await runScene(scene, receipt, withWindows(hourIso));
+  assert.equal(atHour.v.exit_code, 0, atHour.v.reason);
+  const justAfter = await runScene(scene, receipt, withWindows(nextSecond));
+  assert.equal(justAfter.v.exit_code, 1);
+  assert.equal(justAfter.v.reason, 'version_window_not_open');
   const noRow = (u) => {
     const base = optionsFor(key, doc, u);
     const empty = windows('2020-01-01T00:00:00Z');

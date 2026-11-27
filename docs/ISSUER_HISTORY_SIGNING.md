@@ -10,13 +10,15 @@ Two documents are signed, in either order. Both stay test-signed in git until th
 
 ## Anchor pin
 
-The signed payload and the document both carry one `contracts` row. The bytes the issuer signs are exactly the string printed by:
+The signed payload and the document both carry one `contracts` row. Do not add `narrowing`. Leaving it out means there is no narrowing; an empty list is not required. The bytes the issuer signs are exactly the string printed by:
 
 ```
 node scripts/issuer-history.mjs signing-input <unsigned.json> <production-kid>
 ```
 
-Run that from `packages/verify`. `<production-kid>` is the thumbprint of the key in the frozen v2 snapshot. Sign that ASCII string with the production key (ES256, raw R||S, base64url). Then:
+Run that from `packages/verify`. `<production-kid>` is the thumbprint of the key in the frozen v2 snapshot. Sign that ASCII string with the production key. The verifier wants the signature as raw R||S, 64 bytes, base64url. A library that returns DER must be converted to raw R||S. Normalise to low-S before `assemble`. The verifier also accepts high-S; low-S is hygiene so every signature has one encoding.
+
+Before `assemble`, verify that signature against the production JWK in the frozen v2 file. Do not take the key from the document being signed. Then:
 
 ```
 node scripts/issuer-history.mjs assemble <unsigned.json> <production-kid> <signature> <out.json>
@@ -45,7 +47,9 @@ node scripts/issuer-history.mjs check --expect-genesis <hourStart>
 
 The check compares the candidate at `issuer-history.snapshot.json` with the frozen v2 file, not with itself. It requires version and seq to both increase, the entry prefix above, one contract row with the values in the table, and a signature by the production key from the frozen file. A test key is refused. `--test-signer` exists for the package tests and is not used here.
 
-Until `<hourStart>` is known, leave `PINNED_GENESIS` in `scripts/issuer-history.mjs` unset. The check then exits 1. After the hour is known, set that constant to the same integer so `prepublishOnly` can pass it without a flag.
+Until `<hourStart>` is known, leave `PINNED_GENESIS` in `scripts/issuer-history.mjs` unset. The check then exits 1. After the hour is known, set that constant to the same integer so `prepublishOnly` can pass it without a flag. Setting `PINNED_GENESIS` is a code change and belongs in the same reviewed pull request as the signed snapshot. The value must be a whole UTC hour, at or after 1795460400 (19:00Z on 2026-11-23). `--expect-genesis` uses the same rule: an empty string, a non-integer, or an hour that is not a multiple of 3600 is refused.
+
+`--test-signer` is for the package tests. It runs only when `CHIT402_TEST_SIGNER=1`, and it prints `TEST-SIGNED, not publishable`. The ceremony does not set that variable.
 
 ## Version windows
 
@@ -67,3 +71,5 @@ Sign the exact signing-input string. Then update `VERSION_WINDOWS_SHA256` to the
 ## Publish
 
 `npm publish` runs `prepublishOnly`, which runs both checks. Both must exit 0. Do not publish, tag, or merge as part of preparing the documents.
+
+The check hashes the frozen v2 file and verifies its production signature before it trusts that file as the version baseline. The next ceremony, the one that replaces this v3 snapshot, must first copy the signed v3 bytes to a new sealed file and add that row. Do not point the sealed row at the file the ceremony is about to overwrite.

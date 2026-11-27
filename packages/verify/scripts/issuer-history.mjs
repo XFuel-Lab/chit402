@@ -121,8 +121,15 @@ function isJsonInteger(value) {
   return typeof value === 'number' && Number.isInteger(value) && !Object.is(value, -0) && value >= 0;
 }
 
-/** Filled at the signing ceremony with the first finalized Anchored hourStart. */
+/**
+ * Filled at the signing ceremony with the first finalized Anchored hourStart.
+ * That edit is a reviewed code change. Until then this stays null and check
+ * refuses to publish. A value must be a whole UTC hour at or after 19:00Z
+ * on 2026-11-23 (1795460400).
+ */
 const PINNED_GENESIS = null;
+const MIN_GENESIS_HOUR = 1795460400;
+const SEALED_V2_SHA256 = 'b5ecff74a0c5a493268c100ab164b641a5cb2bed8792d0526a997d9d5aa7b07d';
 const MAINNET_CHAIN_ID = 8453;
 const MAINNET_ADDRESS = '0xc16010f028a00a3addb37609c38d010ec1df93b1';
 const MAINNET_CODEHASH = '0xbaad531853ab89c65eeddee489d0290f41a623f785ded9855e80aefee9fb087f';
@@ -135,8 +142,41 @@ function jwkThumbprint(jwk) {
   })).digest('base64url');
 }
 
+function hourOk(value) {
+  return Number.isSafeInteger(value) && value % 3600 === 0 && value >= MIN_GENESIS_HOUR;
+}
+
+function parseGenesisFlag(raw) {
+  if (typeof raw !== 'string' || !/^[1-9][0-9]*$/.test(raw)) return null;
+  const n = Number(raw);
+  return hourOk(n) ? n : null;
+}
+
 function loadSealedV2() {
-  return readJson(new URL('issuer-history.v2.snapshot.json', here));
+  const file = new URL('issuer-history.v2.snapshot.json', here);
+  let raw;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch (err) {
+    fail(`issuer-history frozen snapshot unreadable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (createHash('sha256').update(raw).digest('hex') !== SEALED_V2_SHA256) {
+    fail('issuer-history frozen snapshot hash mismatch');
+  }
+  let doc;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    fail('issuer-history frozen snapshot hash mismatch');
+  }
+  const key = productionKey(doc);
+  if (!key) fail('issuer-history frozen snapshot signature invalid');
+  const verified = historyMod.verifyIssuerHistoryDocument(doc, {
+    trustedKids: [PROD_KID],
+    jwks: { keys: [key] },
+  });
+  if (!verified.valid) fail('issuer-history frozen snapshot signature invalid');
+  return doc;
 }
 
 function productionKey(sealed) {
@@ -191,7 +231,7 @@ function checkDocument(doc, sealed, { expectGenesis, testSigner }) {
   if (pin.retireHourStart !== null) fail('issuer-history retireHourStart is not null');
   const versions = pin.checkpointVersions ?? [1];
   if (versions.length !== 1 || versions[0] !== 1) fail('issuer-history checkpointVersions is not [1]');
-  if (!isJsonInteger(expectGenesis)) fail('issuer-history genesisHourStart is not set');
+  if (!hourOk(expectGenesis)) fail('issuer-history genesisHourStart is not set');
   if (pin.genesisHourStart !== expectGenesis) fail('issuer-history genesisHourStart does not match the expected hour');
   const sealedVersion = Number(sealed.version);
   const sealedSeq = Number(sealed.seq);
@@ -223,7 +263,8 @@ function checkDocument(doc, sealed, { expectGenesis, testSigner }) {
     });
     if (!verified.valid) fail('issuer-history snapshot is test-signed');
   }
-  console.log(`issuer-history ok: ${parsed.pins.length} contract, version ${version} seq ${seq}`);
+  if (testSigner) console.log('TEST-SIGNED, not publishable');
+  else console.log(`issuer-history ok: ${parsed.pins.length} contract, version ${version} seq ${seq}`);
 }
 
 function parseCheckArgs(argv) {
@@ -236,7 +277,9 @@ function parseCheckArgs(argv) {
       genesis = argv[i + 1];
       i += 1;
       if (genesis == null) fail('issuer-history genesisHourStart is not set');
+      if (parseGenesisFlag(String(genesis)) == null) fail('issuer-history genesisHourStart is not an integer');
     } else if (arg === '--test-signer') {
+      if (process.env.CHIT402_TEST_SIGNER !== '1') fail('issuer-history --test-signer is test-only');
       testSigner = true;
     } else if (!arg.startsWith('-')) {
       file = arg;
@@ -244,7 +287,14 @@ function parseCheckArgs(argv) {
       fail(`unknown argument ${arg}`);
     }
   }
-  const expectGenesis = genesis == null ? PINNED_GENESIS : Number(genesis);
+  let expectGenesis = null;
+  if (genesis == null) {
+    if (PINNED_GENESIS == null) expectGenesis = null;
+    else if (!hourOk(PINNED_GENESIS)) fail('issuer-history genesisHourStart is not an integer');
+    else expectGenesis = PINNED_GENESIS;
+  } else {
+    expectGenesis = parseGenesisFlag(String(genesis));
+  }
   return { file, expectGenesis, testSigner };
 }
 

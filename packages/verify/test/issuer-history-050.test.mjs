@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loopbackGuardImport } from './loopback-guard.mjs';
@@ -70,7 +70,7 @@ function keyPair() {
   };
 }
 
-const GENESIS = 1700000000;
+const GENESIS = 1795460400;
 const MAINNET_CODEHASH = '0xbaad531853ab89c65eeddee489d0290f41a623f785ded9855e80aefee9fb087f';
 
 function mainnetPin(over = {}) {
@@ -302,6 +302,80 @@ test('check exits 1 for each publish refusal', () => {
   assert.equal(unset.status, 1);
   assert.match(unset.stderr, /genesisHourStart is not set/);
 
+  const blankGenesis = runCheck(withPayload(ready, basePayload, PROD), ['--expect-genesis', '']);
+  assert.equal(blankGenesis.status, 1);
+  assert.match(blankGenesis.stderr, /genesisHourStart is not an integer/);
+
+  const oddHour = runCheck(withPayload(ready, basePayload, PROD), ['--expect-genesis', String(GENESIS + 1)]);
+  assert.equal(oddHour.status, 1);
+  assert.match(oddHour.stderr, /genesisHourStart is not an integer/);
+
+  const wrongHour = runCheck(withPayload(ready, {
+    ...basePayload,
+    contracts: [goodPin({ genesisHourStart: GENESIS + 3600 })],
+  }, PROD));
+  assert.equal(wrongHour.status, 1);
+  assert.match(wrongHour.stderr, /does not match the expected hour/);
+
+  const otherChain = runCheck(withPayload(ready, {
+    ...basePayload,
+    contracts: [goodPin({ chainId: 84532 })],
+  }, PROD));
+  assert.equal(otherChain.status, 1);
+  assert.match(otherChain.stderr, /chainId is not 8453/);
+
+  const otherAddress = runCheck(withPayload(ready, {
+    ...basePayload,
+    contracts: [goodPin({ address: `0x${'ab'.repeat(20)}` })],
+  }, PROD));
+  assert.equal(otherAddress.status, 1);
+  assert.match(otherAddress.stderr, /address is not the mainnet anchor/);
+
+  const otherCheckpoint = runCheck(withPayload(ready, {
+    ...basePayload,
+    contracts: [goodPin({ checkpoint: `0x${'cd'.repeat(20)}` })],
+  }, PROD));
+  assert.equal(otherCheckpoint.status, 1);
+  assert.match(otherCheckpoint.stderr, /checkpoint is not the pinned checkpoint/);
+
+  const retired = runCheck(withPayload(ready, {
+    ...basePayload,
+    contracts: [goodPin({ retireHourStart: GENESIS + 3600 })],
+  }, PROD));
+  assert.equal(retired.status, 1);
+  assert.match(retired.stderr, /retireHourStart is not null/);
+
+  const versions = runCheck(withPayload(ready, {
+    ...basePayload,
+    contracts: [goodPin({ checkpointVersions: [1, 2] })],
+  }, PROD));
+  assert.equal(versions.status, 1);
+  assert.match(versions.stderr, /checkpointVersions is not \[1\]/);
+
+  const otherPred = runCheck(withPayload(ready, {
+    ...basePayload,
+    contracts: [goodPin({ predecessor: `0x${'11'.repeat(20)}` })],
+  }, PROD));
+  assert.equal(otherPred.status, 1);
+  assert.match(otherPred.stderr, /predecessor is not the zero address/);
+
+  const extraRow = runCheck(withPayload(ready, {
+    ...basePayload,
+    contracts: [goodPin(), goodPin()],
+  }, PROD));
+  assert.equal(extraRow.status, 1);
+  assert.match(extraRow.stderr, /must be the one mainnet anchor/);
+
+  const drifted = withPayload(ready, basePayload, PROD);
+  drifted.contracts = [goodPin({ chainId: 1 })];
+  const drift = runCheck(drifted);
+  assert.equal(drift.status, 1);
+  assert.match(drift.stderr, /does not match the signed payload/);
+
+  const mismatched = runCheck(withPayload(ready, { ...basePayload, version: 4, seq: 4 }, PROD));
+  assert.equal(mismatched.status, 1);
+  assert.match(mismatched.stderr, /version\/seq did not increase/);
+
   const otherKid = runCheck(withPayload(ready, basePayload, 'test-not-prod'));
   assert.equal(otherKid.status, 1);
   assert.match(otherKid.stderr, /kid is not the production issuer key/);
@@ -366,34 +440,119 @@ test('a v1 pin and a v2 pin still resolve, and a later body stands in for v2', a
   execFileSync(process.execPath, [helper, 'assemble', bodyPath, key.kid, sig, outPath], { encoding: 'utf8' });
   const successor = JSON.parse(readFileSync(outPath, 'utf8'));
   successor.issuer_signature.issuer_jwk = key.publicJwk;
-  const original = readFileSync(snapshotPath);
-  try {
-    writeFileSync(snapshotPath, `${JSON.stringify(successor)}\n`);
-    const stood = sealedSnapshotForPin(V2_PIN, successor, { trustedKids: [PROD, key.kid] });
-    assert.ok(stood, 'sealed v2 row');
-    assert.equal(stood.version, 2);
-    assert.equal(stood.head_hash, bundled.head_hash);
-    const resolved = await checkReceiptIssuerHistory(receiptRef, {
-      document: successor,
-      documentBytes: JSON.stringify(successor),
-      kid: PROD,
-      issuedAt,
-      pin: V2_PIN,
-      requirePin: true,
-      trustedKids: [PROD, key.kid],
+  const copy = packageCopy();
+  writeFileSync(join(copy, 'successor.json'), JSON.stringify(successor));
+  writeFileSync(join(copy, 'issuer-history.snapshot.json'), `${JSON.stringify(successor)}\n`);
+  const runner = `
+import { readFileSync } from 'node:fs';
+import { sealedSnapshotForPin, checkReceiptIssuerHistory } from './dist/issuer-history.js';
+const successor = JSON.parse(readFileSync('successor.json', 'utf8'));
+const pin = JSON.parse(process.env.PIN);
+const kids = process.env.KIDS.split(',');
+const stood = sealedSnapshotForPin(pin, successor, { trustedKids: kids });
+if (!stood || stood.version !== 2 || stood.head_hash !== process.env.HEAD) {
+  console.error('sealed v2 row');
+  process.exit(1);
+}
+const resolved = await checkReceiptIssuerHistory(
+  { verify_url: 'https://example.test/receipt/pin' },
+  {
+    document: successor,
+    documentBytes: JSON.stringify(successor),
+    kid: kids[0],
+    issuedAt: '2026-10-08T05:32:21Z',
+    pin,
+    requirePin: true,
+    trustedKids: kids,
+  },
+);
+if (!resolved.ok) {
+  console.error(resolved.reason || 'not resolved');
+  process.exit(1);
+}
+console.log('ok');
+`;
+  writeFileSync(join(copy, 'swap.mjs'), runner);
+  const swapped = spawnSync(process.execPath, ['swap.mjs'], {
+    encoding: 'utf8',
+    cwd: copy,
+    env: {
+      ...process.env,
+      PIN: JSON.stringify(V2_PIN),
+      KIDS: `${PROD},${key.kid}`,
+      HEAD: bundled.head_hash,
+    },
+  });
+  assert.equal(swapped.status, 0, swapped.stderr);
+  assert.match(swapped.stdout, /ok/);
+  const gate = spawnSync(process.execPath, [
+    join(copy, 'scripts', 'issuer-history.mjs'), 'check', '--expect-genesis', String(GENESIS), '--test-signer',
+  ], {
+    encoding: 'utf8',
+    cwd: copy,
+    env: { ...process.env, CHIT402_TEST_SIGNER: '1' },
+  });
+  assert.equal(gate.status, 0, gate.stderr);
+  assert.match(gate.stdout, /TEST-SIGNED, not publishable/);
+  const bare = spawnSync(process.execPath, [
+    join(copy, 'scripts', 'issuer-history.mjs'), 'check', '--expect-genesis', String(GENESIS), '--test-signer',
+  ], { encoding: 'utf8', cwd: copy });
+  assert.equal(bare.status, 1);
+  assert.match(bare.stderr, /test-only/);
+});
+
+function packageCopy() {
+  const dir = tempDir('ih-pkg-');
+  mkdirSync(join(dir, 'scripts'));
+  cpSync(join(pkgDir, 'dist'), join(dir, 'dist'), { recursive: true });
+  cpSync(join(pkgDir, 'package.json'), join(dir, 'package.json'));
+  cpSync(helper, join(dir, 'scripts', 'issuer-history.mjs'));
+  for (const name of ['issuer-history.snapshot.json', 'issuer-history.v1.snapshot.json', 'issuer-history.v2.snapshot.json']) {
+    cpSync(join(pkgDir, name), join(dir, name));
+  }
+  return dir;
+}
+
+test('a tampered frozen v2 snapshot is refused', () => {
+  const key = keyPair();
+  const dir = tempDir('ih050-tamper-');
+  const bodyPath = join(dir, 'body.json');
+  const outPath = join(dir, 'out.json');
+  const ceremony = { ...structuredClone(bundled), version: 3, seq: 3, contracts: [mainnetPin()] };
+  delete ceremony.issuer_signature;
+  writeFileSync(bodyPath, JSON.stringify(ceremony));
+  const input = execFileSync(process.execPath, [helper, 'signing-input', bodyPath, key.kid], { encoding: 'utf8' });
+  const sig = sign('sha256', Buffer.from(input), { key: key.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  execFileSync(process.execPath, [helper, 'assemble', bodyPath, key.kid, sig, outPath], { encoding: 'utf8' });
+  const successor = JSON.parse(readFileSync(outPath, 'utf8'));
+  successor.issuer_signature.issuer_jwk = key.publicJwk;
+  const variants = [];
+  const noted = structuredClone(bundled);
+  noted.canonicalization = `${noted.canonicalization || ''} tampered`;
+  variants.push(noted);
+  const edited = structuredClone(bundled);
+  edited.entries[0].not_before = '2020-01-01T00:00:00Z';
+  variants.push(edited);
+  const lowered = structuredClone(bundled);
+  lowered.version = 1;
+  lowered.seq = 1;
+  variants.push(lowered);
+  const unsigned = structuredClone(bundled);
+  delete unsigned.issuer_signature;
+  variants.push(unsigned);
+  for (const sealed of variants) {
+    const copy = packageCopy();
+    writeFileSync(join(copy, 'issuer-history.v2.snapshot.json'), JSON.stringify(sealed));
+    writeFileSync(join(copy, 'issuer-history.snapshot.json'), `${JSON.stringify(successor)}\n`);
+    const proc = spawnSync(process.execPath, [
+      join(copy, 'scripts', 'issuer-history.mjs'), 'check', '--expect-genesis', String(GENESIS), '--test-signer',
+    ], {
+      encoding: 'utf8',
+      cwd: copy,
+      env: { ...process.env, CHIT402_TEST_SIGNER: '1' },
     });
-    assert.equal(resolved.ok, true, resolved.reason);
-    assert.equal(resolved.document.head_hash, bundled.head_hash);
-    const replaced = loadBundledIssuerHistory();
-    assert.notEqual(sha256(replaced.bytes), V2_PIN.hash);
-    const frozen = readFileSync(join(pkgDir, 'issuer-history.v2.snapshot.json'));
-    assert.equal(sha256(frozen), V2_PIN.hash);
-    const gate = spawnSync(process.execPath, [
-      helper, 'check', '--expect-genesis', String(GENESIS), '--test-signer',
-    ], { encoding: 'utf8', cwd: pkgDir });
-    assert.equal(gate.status, 0, gate.stderr);
-  } finally {
-    writeFileSync(snapshotPath, original);
+    assert.equal(proc.status, 1, proc.stdout);
+    assert.match(proc.stderr, /frozen snapshot/);
   }
 });
 
