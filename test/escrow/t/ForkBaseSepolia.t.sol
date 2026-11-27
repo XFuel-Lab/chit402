@@ -124,7 +124,7 @@ contract ForkBaseSepoliaTest is EscrowFixture {
     function test_F1_escrow_on_fork_typeA_commit_reveal() public {
         _skipIfNoRpc();
         E.TreeHead memory lh = liveHead();
-        E fe = new E(owner, CIRCLE_USDC, kid, pubX, pubY, LOG_SALT, lh, signHead(lh));
+        E fe = new E(owner, CIRCLE_USDC, kid, pubX, pubY, LOG_SALT, lh, signHead(lh), 1000 * ONE);
         esc = fe;
         E.HeadRef[] memory entries = new E.HeadRef[](1);
         entries[0] = E.HeadRef({epoch: 2, treeSize: 11, root: keccak256("q")});

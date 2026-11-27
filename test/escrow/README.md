@@ -26,11 +26,19 @@ forge-std submodule: `t/utils/Test.sol` holds the small cheatcode interface and 
 | `t/EdgeCases.t.sol` | Extra edge cases and a payout bound fuzz |
 | `t/IncidentScope.t.sol` | One incident per (epoch, kid), one open at a time, 28-day cumulative freeze cap: chained epochs N to N+4, refusal while open, withdrawal and accepted payouts after the cap, no double pay |
 | `t/Precompile.t.sol` | Local 0x100 against a Wycheproof P-256 subset and edge cases |
-| `t/Vectors.t.sol` | Constants, the worked head vector, the production kid thumbprint, node-signed vectors |
+| `t/Vectors.t.sol` | Constants, the worked head vector, the production kid thumbprint, node-signed vectors, and the gateway fixture byte for byte |
+| `t/MinBond.t.sol` | minBond constructor floor: 1,000 USDC, or 10 USDC on Base Sepolia |
+| `t/SlashOnce.t.sol` | One equivocation slashes once inside one escrow |
+| `t/CrossEscrow.t.sol` | Per-log heads and refunds, redeploy quarantine, isolation |
 | `t/ForkBaseSepolia.t.sol` | F1, opt-in: read-only Base Sepolia fork and `eth_call` to 0x100 |
 | `vectors/*.json` | Shared vectors (also meant for the gateway fixed-head and binding tests) |
 | `gen-vectors.mjs` | Rebuilds the vectors from gateway code; `--check` verifies them |
 | `script/DeployEquivocationEscrowV0.s.sol` | Deploy script. Not run. Reads every input from the environment |
+
+Testnet V0 signing domains, the one-escrow redeploy rule, and the 10–20 test USDC
+bounty limit are in `contracts/escrow/README.md`. The checklist to copy into the
+deploy pack is `contracts/escrow/MAINNET-GATES.md`. Re-pin the pack TARGET to the
+merge commit after merge.
 
 ## Fork test (F1)
 
