@@ -518,7 +518,7 @@ test('cli flags stay --issuer-history and --json, and v10-v12 --json output is b
 
   for (const version of [10, 11, 12]) {
     const receipt = fileURLToPath(new URL(`./fixtures/issuer-history-050/cli-v${version}.json`, import.meta.url));
-    const pinned = readFileSync(fileURLToPath(new URL(`./fixtures/issuer-history-050/cli-v${version}.stdout`, import.meta.url)));
+    const pinned = readFileSync(fileURLToPath(new URL(`./fixtures/issuer-history-050/cli-v${version}.stdout`, import.meta.url)), 'utf8');
     const proc = spawnSync(process.execPath, [
       '--import', loopbackGuardImport,
       cli,
@@ -528,6 +528,8 @@ test('cli flags stay --issuer-history and --json, and v10-v12 --json output is b
     ], { encoding: 'utf8', timeout: 20000 });
     assert.equal(proc.stderr, '', `v${version} stderr`);
     assert.equal(proc.status, version === 10 ? 1 : 2);
-    assert.equal(proc.stdout, pinned.toString('utf8'));
+    // The pin is the JSON. Git on Windows checks the fixture out with CRLF;
+    // the CLI prints LF. Compare the normalized text.
+    assert.equal(proc.stdout.replace(/\r\n/g, '\n'), pinned.replace(/\r\n/g, '\n'));
   }
 });
