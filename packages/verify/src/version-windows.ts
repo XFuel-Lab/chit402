@@ -31,7 +31,7 @@ import type { Es256Jwk } from './jws.js';
 export const VERSION_WINDOWS_SCHEMA = 'chit402.version_windows.v1';
 export const VERSION_WINDOWS_TYP = 'chit402-version-windows+jwt';
 /** SHA-256 of version-windows.json (LF newlines). Changes only with the document. */
-export const VERSION_WINDOWS_SHA256 = 'f6c92c9e76385d336aa14ce25d061d57b2e4289acde51afe6447fe6f65ab62d2';
+export const VERSION_WINDOWS_SHA256 = '6af37a4956977fcfb900cc1fb6c664bcdaa8ccb931fee8113e923652147c7ebd';
 /** Production issuer kid. The windows document must be signed by it before publish. */
 export const VERSION_WINDOWS_PRODUCTION_KID = 'IvFpmC-vPhkY_v0vidsrWVT9uzlE5XWKZgAEOeJTq1Q';
 

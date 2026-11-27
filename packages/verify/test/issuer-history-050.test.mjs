@@ -31,6 +31,7 @@ const {
   POST_HARDENING_RUNTIME_HASHES,
   PRE_HARDENING_RUNTIME_HASHES,
   contractsFromPayload,
+  classifyCanonical,
   runV13,
   TRANSFER_TOPIC0,
   AUTHORIZATION_USED_TOPIC0,
@@ -69,17 +70,25 @@ function keyPair() {
   };
 }
 
-function goodPin(over = {}) {
+const GENESIS = 1700000000;
+const MAINNET_CODEHASH = '0xbaad531853ab89c65eeddee489d0290f41a623f785ded9855e80aefee9fb087f';
+
+function mainnetPin(over = {}) {
   return {
     chainId: 8453,
-    address: `0x${'11'.repeat(20)}`,
-    codeHash: POST_HASH,
+    address: '0xc16010f028a00a3addb37609c38d010ec1df93b1',
+    codeHash: MAINNET_CODEHASH,
     predecessor: ZERO,
-    checkpoint: `0x${'22'.repeat(20)}`,
-    genesisHourStart: 1699999200,
+    checkpoint: '0x7a8d6426e1057535a5442ba526ec9f317a9d9026',
+    genesisHourStart: GENESIS,
     retireHourStart: null,
+    checkpointVersions: [1],
     ...over,
   };
+}
+
+function goodPin(over = {}) {
+  return mainnetPin(over);
 }
 
 function compactJws(header, payload, sig = 'A'.repeat(86)) {
@@ -88,6 +97,7 @@ function compactJws(header, payload, sig = 'A'.repeat(86)) {
 
 function withPayload(doc, payload, kid) {
   const next = structuredClone(doc);
+  if (Object.prototype.hasOwnProperty.call(payload, 'contracts')) next.contracts = payload.contracts;
   next.issuer_signature = {
     ...(next.issuer_signature || {}),
     alg: 'ES256',
@@ -99,11 +109,11 @@ function withPayload(doc, payload, kid) {
   return next;
 }
 
-function runCheck(doc) {
+function runCheck(doc, extra = ['--expect-genesis', String(GENESIS)]) {
   const dir = tempDir('ih050-');
   const file = join(dir, 'doc.json');
   writeFileSync(file, JSON.stringify(doc));
-  const proc = spawnSync(process.execPath, [helper, 'check', file], { encoding: 'utf8' });
+  const proc = spawnSync(process.execPath, [helper, 'check', file, ...extra], { encoding: 'utf8' });
   return { status: proc.status, stderr: proc.stderr, stdout: proc.stdout };
 }
 
@@ -164,6 +174,20 @@ test('signing-input matches the reference JCS/JWS fixture', () => {
   assert.equal(payload.contracts[0].chainId, 8453);
 });
 
+test('signing-input keeps seq when it differs from version', () => {
+  const dir = tempDir('ih050-seq-');
+  const doc = JSON.parse(readFileSync(signingDocPath, 'utf8'));
+  doc.version = 3;
+  doc.seq = 4;
+  const body = join(dir, 'body.json');
+  writeFileSync(body, JSON.stringify(doc));
+  const input = execFileSync(process.execPath, [helper, 'signing-input', body, 'test-issuer-history-050'], { encoding: 'utf8' });
+  const payload = JSON.parse(Buffer.from(input.split('.')[1], 'base64url').toString('utf8'));
+  assert.equal(payload.version, 3);
+  assert.equal(payload.seq, 4);
+  assert.equal(Buffer.from(input.split('.')[1], 'base64url').toString('utf8'), jcs(payload));
+});
+
 test('assemble plus a test-key signature verifies and contracts round-trip', () => {
   const key = keyPair();
   const entry = historyEntry(key, null);
@@ -185,6 +209,16 @@ test('assemble plus a test-key signature verifies and contracts round-trip', () 
   const sig = sign('sha256', Buffer.from(input), { key: key.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
   execFileSync(process.execPath, [helper, 'assemble', bodyPath, key.kid, sig, outPath], { encoding: 'utf8' });
   const assembled = JSON.parse(readFileSync(outPath, 'utf8'));
+  assert.equal(assembled.issuer_signature.jws.startsWith(`${input}.`), true);
+  const short = spawnSync(process.execPath, [helper, 'assemble', bodyPath, key.kid, 'abc', join(dir, 'short.json')], { encoding: 'utf8' });
+  assert.equal(short.status, 1);
+  assert.match(short.stderr, /64 bytes/);
+  const forked = { ...doc, head_hash: 'ab'.repeat(32) };
+  const forkPath = join(dir, 'fork.json');
+  writeFileSync(forkPath, JSON.stringify(forked));
+  const head = spawnSync(process.execPath, [helper, 'assemble', forkPath, key.kid, sig, join(dir, 'fork-out.json')], { encoding: 'utf8' });
+  assert.equal(head.status, 1);
+  assert.match(head.stderr, /head_hash does not match/);
   const verified = verifyIssuerHistoryDocument(assembled, { trustedKids: [key.kid] });
   assert.equal(verified.valid, true, verified.reason);
   const payload = JSON.parse(Buffer.from(assembled.issuer_signature.jws.split('.')[1], 'base64url').toString('utf8'));
@@ -234,22 +268,39 @@ test('check exits 1 for each publish refusal', () => {
     contracts: [goodPin({ codeHash: PRE_HASH })],
   }, PROD));
   assert.equal(hash.status, 1);
-  assert.match(hash.stderr, /code hash is not a post-hardening runtime/);
+  assert.match(hash.stderr, /code hash is not the mainnet runtime/);
+
+  const second = goodPin({ codeHash: PRE_HASH, address: `0x${'ab'.repeat(20)}` });
+  const two = runCheck(withPayload(ready, { ...basePayload, contracts: [goodPin(), second] }, PROD));
+  assert.equal(two.status, 1);
+  assert.match(two.stderr, /code hash is not the mainnet runtime/);
 
   const stuck = structuredClone(bundled);
   const stuckRun = runCheck(withPayload(stuck, { ...basePayload, version: 2, seq: 2 }, PROD));
   assert.equal(stuckRun.status, 1);
   assert.match(stuckRun.stderr, /version\/seq did not increase/);
 
-  const extension = structuredClone(ready);
-  extension.entries = [...bundled.entries, { ...bundled.entries[0], prev_hash: bundled.head_hash, entry_hash: 'ab'.repeat(32) }];
-  const extensionRun = runCheck(withPayload(extension, {
-    ...basePayload,
-    entry_count: extension.entries.length,
-    head_hash: 'ab'.repeat(32),
-  }, PROD));
-  assert.equal(extensionRun.status, 1);
-  assert.match(extensionRun.stderr, /live extension adds contracts/);
+  const seqOnly = structuredClone(ready);
+  seqOnly.seq = 2;
+  const seqRun = runCheck(withPayload(seqOnly, { ...basePayload, seq: 2 }, PROD));
+  assert.equal(seqRun.status, 1);
+  assert.match(seqRun.stderr, /version\/seq did not increase/);
+
+  const versionOnly = structuredClone(ready);
+  versionOnly.version = 2;
+  const versionRun = runCheck(withPayload(versionOnly, { ...basePayload, version: 2 }, PROD));
+  assert.equal(versionRun.status, 1);
+  assert.match(versionRun.stderr, /version\/seq did not increase/);
+
+  const forked = structuredClone(ready);
+  forked.entries = [{ ...bundled.entries[0], entry_hash: 'cd'.repeat(32) }];
+  const forkRun = runCheck(withPayload(forked, { ...basePayload, head_hash: 'cd'.repeat(32) }, PROD));
+  assert.equal(forkRun.status, 1);
+  assert.match(forkRun.stderr, /entries do not extend/);
+
+  const unset = runCheck(withPayload(ready, basePayload, PROD), []);
+  assert.equal(unset.status, 1);
+  assert.match(unset.stderr, /genesisHourStart is not set/);
 
   const otherKid = runCheck(withPayload(ready, basePayload, 'test-not-prod'));
   assert.equal(otherKid.status, 1);
@@ -258,7 +309,6 @@ test('check exits 1 for each publish refusal', () => {
   const testSigned = runCheck(withPayload(ready, basePayload, PROD));
   assert.equal(testSigned.status, 1);
   assert.match(testSigned.stderr, /snapshot is test-signed/);
-  assert.doesNotMatch(testSigned.stderr, /live extension adds contracts/);
 });
 
 test('prepublishOnly runs issuer-history check and the helper usage is unchanged', () => {
@@ -299,22 +349,52 @@ test('a v1 pin and a v2 pin still resolve, and a later body stands in for v2', a
   });
   assert.equal(v1.ok, true, v1.reason);
 
-  // A test key cannot sign the successor: the production key is entry 0, so a
-  // later kid is introduced_key_signature. The row is still the sealed v2
-  // bytes. A pin that is not that hash does not resolve through it.
-  const source = readFileSync(fileURLToPath(new URL('../src/issuer-history.ts', import.meta.url)), 'utf8');
-  assert.match(source, /issuer-history\.snapshot\.json', hash: 'b5ecff74a0c5a493268c100ab164b641a5cb2bed8792d0526a997d9d5aa7b07d', version: 2, seq: 2/);
   const key = keyPair();
-  const appended = historyEntry(key, bundled.head_hash);
-  const successor = signHistory({
-    ...bundled,
+  const dir = tempDir('ih050-v3-');
+  const bodyPath = join(dir, 'body.json');
+  const outPath = join(dir, 'out.json');
+  const ceremony = {
+    ...structuredClone(bundled),
     version: 3,
     seq: 3,
-    entries: [...bundled.entries, appended],
-    head_hash: appended.entry_hash,
-  }, key);
-  assert.equal(sealedSnapshotForPin(V2_PIN, successor, { trustedKids: [PROD, key.kid] }), null);
-  assert.equal(sealedSnapshotForPin(V2_PIN, bundled), null);
+    contracts: [mainnetPin()],
+  };
+  delete ceremony.issuer_signature;
+  writeFileSync(bodyPath, JSON.stringify(ceremony));
+  const input = execFileSync(process.execPath, [helper, 'signing-input', bodyPath, key.kid], { encoding: 'utf8' });
+  const sig = sign('sha256', Buffer.from(input), { key: key.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+  execFileSync(process.execPath, [helper, 'assemble', bodyPath, key.kid, sig, outPath], { encoding: 'utf8' });
+  const successor = JSON.parse(readFileSync(outPath, 'utf8'));
+  successor.issuer_signature.issuer_jwk = key.publicJwk;
+  const original = readFileSync(snapshotPath);
+  try {
+    writeFileSync(snapshotPath, `${JSON.stringify(successor)}\n`);
+    const stood = sealedSnapshotForPin(V2_PIN, successor, { trustedKids: [PROD, key.kid] });
+    assert.ok(stood, 'sealed v2 row');
+    assert.equal(stood.version, 2);
+    assert.equal(stood.head_hash, bundled.head_hash);
+    const resolved = await checkReceiptIssuerHistory(receiptRef, {
+      document: successor,
+      documentBytes: JSON.stringify(successor),
+      kid: PROD,
+      issuedAt,
+      pin: V2_PIN,
+      requirePin: true,
+      trustedKids: [PROD, key.kid],
+    });
+    assert.equal(resolved.ok, true, resolved.reason);
+    assert.equal(resolved.document.head_hash, bundled.head_hash);
+    const replaced = loadBundledIssuerHistory();
+    assert.notEqual(sha256(replaced.bytes), V2_PIN.hash);
+    const frozen = readFileSync(join(pkgDir, 'issuer-history.v2.snapshot.json'));
+    assert.equal(sha256(frozen), V2_PIN.hash);
+    const gate = spawnSync(process.execPath, [
+      helper, 'check', '--expect-genesis', String(GENESIS), '--test-signer',
+    ], { encoding: 'utf8', cwd: pkgDir });
+    assert.equal(gate.status, 0, gate.stderr);
+  } finally {
+    writeFileSync(snapshotPath, original);
+  }
 });
 
 test('contractsFromPayload accepts a pin and rejects a broken list', () => {
@@ -456,6 +536,16 @@ const passHooks = {
 test('v13 fixture world: anchored, altered proof, freeze, retirement, and the exit-2 reads', () => {
   const anchored = runV13(worldReceipt(), fixtureWorld(), passHooks);
   assert.equal(anchored.exit, 0, anchored.reason);
+  const genesis = runV13(worldReceipt(), fixtureWorld({ chainGenesis: 1 }), passHooks);
+  assert.equal(genesis.exit, 1);
+  assert.equal(genesis.reason, 'hour_outside_coverage');
+  assert.equal(classifyCanonical({
+    rpcError: false,
+    block: { number: 10, hash: '0xabc' },
+    finalizedNumber: null,
+    canonicalHash: '0xabc',
+    wantHash: '0xabc',
+  }), 'finality_unavailable');
 
   const altered = runV13(worldReceipt({ proof: ['ab'.repeat(32)] }), fixtureWorld(), passHooks);
   assert.equal(altered.exit, 1);

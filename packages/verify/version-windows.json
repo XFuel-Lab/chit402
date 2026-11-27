@@ -86,11 +86,18 @@
    "not_after": null,
    "floor": true,
    "basis": "opens at #483 merge; not issued while the flag is off"
+  },
+  {
+   "id": "pv13",
+   "not_before": "2026-11-23T19:28:25Z",
+   "not_after": null,
+   "floor": true,
+   "basis": "opens at the v13 merge; floor is the anchored hour"
   }
  ],
  "issuer_signature": {
   "alg": "ES256",
-  "kid": "test-version-windows-5cYMZo4mwD73UNyK",
-  "jws": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItdmVyc2lvbi13aW5kb3dzK2p3dCIsImtpZCI6InRlc3QtdmVyc2lvbi13aW5kb3dzLTVjWU1abzRtd0Q3M1VOeUsifQ.eyJzY2hlbWEiOiJjaGl0NDAyLnZlcnNpb25fd2luZG93cy52MSIsImJvZHlfc2hhMjU2IjoiYzIzZjZjNTNkNTg4YTRkYzdlMDM0NDBmN2NhNjQ0Mjg4MWYwNjQ0YjUyMDMzMDJkMzEyYzRjMGM5MjE1OTI2MiIsImlhdCI6MTc5MjY3NDAwMH0.q1U8HBQffOOb1p73TbkYbyFsvEHHzs1mRpoyN39Ey4GgSRr1MuEdvpdA3Ua_5JolgZbpMwLmX4qRcRTuItQSkA"
+  "kid": "test-version-windows-pv13",
+  "jws": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImNoaXQ0MDItdmVyc2lvbi13aW5kb3dzK2p3dCIsImtpZCI6InRlc3QtdmVyc2lvbi13aW5kb3dzLXB2MTMifQ.eyJzY2hlbWEiOiJjaGl0NDAyLnZlcnNpb25fd2luZG93cy52MSIsImJvZHlfc2hhMjU2IjoiNjhlM2RkOTJhYTFkYjhhYmJlYWQyZjgwOGZiOWNlZjIxMTZhZTU1MWJhZTYxMWVhZWE3OGEzMjAxMmYzNjIwOSIsImlhdCI6MTc5MjY3NDAwMH0.9xEBSuLmS0KsTYzHUoXwzxEXDXVIiFGCGTavgmh9rZ3wvFObdSwcNl7X2vAq8NJCxcDx8OsVbXn45VB_vvtFHw"
  }
 }

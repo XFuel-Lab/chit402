@@ -29,7 +29,6 @@ const decide = require('../dist/v13/core/decide.js');
 const windows = require('../dist/version-windows.js');
 
 const PROD_KID = windows.VERSION_WINDOWS_PRODUCTION_KID;
-const POST_HARDENING_RUNTIME_HASHES = decide.POST_HARDENING_RUNTIME_HASHES;
 const TYP = 'chit402-issuer-history+jwt';
 
 function jcs(value) {
@@ -118,78 +117,135 @@ function headerKid(doc) {
   return typeof doc?.issuer_signature?.kid === 'string' ? doc.issuer_signature.kid : null;
 }
 
-function signedContractList(doc) {
-  const payload = signedPayload(doc);
-  if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'contracts')) return undefined;
-  return payload.contracts;
-}
-
-function signedPayloadHasContracts(doc) {
-  const payload = signedPayload(doc);
-  return !!(payload && Object.prototype.hasOwnProperty.call(payload, 'contracts'));
-}
-
-function entryPrefixExtended(base, doc) {
-  const left = Array.isArray(base?.entries) ? base.entries : [];
-  const right = Array.isArray(doc?.entries) ? doc.entries : [];
-  if (right.length <= left.length) return false;
-  for (let i = 0; i < left.length; i += 1) {
-    if (!left[i] || !left[i].entry_hash || !right[i] || right[i].entry_hash !== left[i].entry_hash) return false;
-  }
-  return true;
-}
-
 function isJsonInteger(value) {
   return typeof value === 'number' && Number.isInteger(value) && !Object.is(value, -0) && value >= 0;
 }
 
-function postHardening(codeHash) {
-  const hash = String(codeHash || '').toLowerCase();
-  return POST_HARDENING_RUNTIME_HASHES.some((item) => item.toLowerCase() === hash);
+/** Filled at the signing ceremony with the first finalized Anchored hourStart. */
+const PINNED_GENESIS = null;
+const MAINNET_CHAIN_ID = 8453;
+const MAINNET_ADDRESS = '0xc16010f028a00a3addb37609c38d010ec1df93b1';
+const MAINNET_CODEHASH = '0xbaad531853ab89c65eeddee489d0290f41a623f785ded9855e80aefee9fb087f';
+const MAINNET_PREDECESSOR = '0x0000000000000000000000000000000000000000';
+const MAINNET_CHECKPOINT = '0x7a8d6426e1057535a5442ba526ec9f317a9d9026';
+
+function jwkThumbprint(jwk) {
+  return createHash('sha256').update(JSON.stringify({
+    crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y,
+  })).digest('base64url');
 }
 
-function loadBundled() {
-  return readJson(new URL('issuer-history.snapshot.json', here));
+function loadSealedV2() {
+  return readJson(new URL('issuer-history.v2.snapshot.json', here));
 }
 
-function productionKeys(bundled) {
-  return (bundled.entries || [])
-    .filter((entry) => entry && entry.kid === PROD_KID && entry.jwk)
-    .map((entry) => ({ ...entry.jwk, kid: entry.kid }));
-}
-
-function checkDocument(doc, bundled) {
-  if (entryPrefixExtended(bundled, doc) && signedPayloadHasContracts(doc)) {
-    fail('a live extension adds contracts');
+function productionKey(sealed) {
+  for (const entry of sealed.entries || []) {
+    if (entry?.jwk && jwkThumbprint(entry.jwk) === PROD_KID) return { ...entry.jwk, kid: PROD_KID };
   }
-  const list = signedContractList(doc);
+  return null;
+}
+
+function entriesCover(base, doc) {
+  const left = Array.isArray(base?.entries) ? base.entries : [];
+  const right = Array.isArray(doc?.entries) ? doc.entries : [];
+  if (!left.length || right.length < left.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (!left[i]?.entry_hash || right[i]?.entry_hash !== left[i].entry_hash) return false;
+  }
+  return true;
+}
+
+function sameJson(left, right) {
+  try {
+    return jcs(left) === jcs(right);
+  } catch {
+    return false;
+  }
+}
+
+function checkDocument(doc, sealed, { expectGenesis, testSigner }) {
+  if (!entriesCover(sealed, doc)) fail('issuer-history entries do not extend the sealed snapshot');
+  const payload = signedPayload(doc);
+  const list = payload && Object.prototype.hasOwnProperty.call(payload, 'contracts') ? payload.contracts : undefined;
   if (!Array.isArray(list) || list.length === 0) fail('issuer-history contracts[] is missing');
+  if (!Object.prototype.hasOwnProperty.call(doc, 'contracts') || !sameJson(doc.contracts, list)) {
+    fail('issuer-history contracts[] does not match the signed payload');
+  }
   for (const item of list) {
     if (!item || typeof item !== 'object' || Array.isArray(item) || !isJsonInteger(item.genesisHourStart)) {
       fail('issuer-history genesisHourStart is not an integer');
     }
   }
-  const payload = signedPayload(doc);
   const parsed = decide.contractsFromPayload(payload);
   if (!parsed.ok) fail(`issuer-history contracts[]: ${parsed.reason}`);
   for (const pin of parsed.pins) {
-    if (!postHardening(pin.codeHash)) fail('issuer-history code hash is not a post-hardening runtime');
+    if (pin.codeHash !== MAINNET_CODEHASH) fail('issuer-history code hash is not the mainnet runtime');
   }
-  const bundledVersion = Number(bundled.version);
-  const bundledSeq = Number(bundled.seq);
+  if (parsed.pins.length !== 1) fail('issuer-history contracts[] must be the one mainnet anchor');
+  const pin = parsed.pins[0];
+  if (pin.chainId !== MAINNET_CHAIN_ID) fail('issuer-history chainId is not 8453');
+  if (pin.address !== MAINNET_ADDRESS) fail('issuer-history address is not the mainnet anchor');
+  if (pin.predecessor !== MAINNET_PREDECESSOR) fail('issuer-history predecessor is not the zero address');
+  if (pin.checkpoint !== MAINNET_CHECKPOINT) fail('issuer-history checkpoint is not the pinned checkpoint');
+  if (pin.retireHourStart !== null) fail('issuer-history retireHourStart is not null');
+  const versions = pin.checkpointVersions ?? [1];
+  if (versions.length !== 1 || versions[0] !== 1) fail('issuer-history checkpointVersions is not [1]');
+  if (!isJsonInteger(expectGenesis)) fail('issuer-history genesisHourStart is not set');
+  if (pin.genesisHourStart !== expectGenesis) fail('issuer-history genesisHourStart does not match the expected hour');
+  const sealedVersion = Number(sealed.version);
+  const sealedSeq = Number(sealed.seq);
   const version = doc.version;
   const seq = doc.seq;
-  if (!Number.isInteger(version) || !Number.isInteger(seq) || !(version > bundledVersion && seq > bundledSeq)) {
+  if (!Number.isInteger(version) || !Number.isInteger(seq) || !(version > sealedVersion && seq > sealedSeq)) {
     fail('issuer-history version/seq did not increase');
   }
-  const kid = headerKid(doc);
-  if (kid !== PROD_KID) fail('issuer-history kid is not the production issuer key');
-  const verified = historyMod.verifyIssuerHistoryDocument(doc, {
-    trustedKids: [PROD_KID],
-    jwks: { keys: productionKeys(bundled) },
-  });
-  if (!verified.valid) fail('issuer-history snapshot is test-signed');
-  console.log(`issuer-history ok: production-signed, ${parsed.pins.length} contracts, version ${version} seq ${seq}`);
+  if (Number(payload.version) !== version || Number(payload.seq) !== seq) {
+    fail('issuer-history version/seq did not increase');
+  }
+  if (testSigner) {
+    const kid = headerKid(doc);
+    const embedded = doc.issuer_signature?.issuer_jwk;
+    if (!kid || !embedded) fail('issuer-history snapshot is test-signed');
+    const verified = historyMod.verifyIssuerHistoryDocument(doc, {
+      trustedKids: [kid],
+      jwks: { keys: [{ ...embedded, kid }] },
+    });
+    if (!verified.valid) fail('issuer-history snapshot is test-signed');
+  } else {
+    const key = productionKey(sealed);
+    if (!key) fail('issuer-history snapshot is test-signed');
+    const kid = headerKid(doc);
+    if (kid !== PROD_KID) fail('issuer-history kid is not the production issuer key');
+    const verified = historyMod.verifyIssuerHistoryDocument(doc, {
+      trustedKids: [PROD_KID],
+      jwks: { keys: [key] },
+    });
+    if (!verified.valid) fail('issuer-history snapshot is test-signed');
+  }
+  console.log(`issuer-history ok: ${parsed.pins.length} contract, version ${version} seq ${seq}`);
+}
+
+function parseCheckArgs(argv) {
+  let file = null;
+  let genesis = null;
+  let testSigner = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--expect-genesis') {
+      genesis = argv[i + 1];
+      i += 1;
+      if (genesis == null) fail('issuer-history genesisHourStart is not set');
+    } else if (arg === '--test-signer') {
+      testSigner = true;
+    } else if (!arg.startsWith('-')) {
+      file = arg;
+    } else {
+      fail(`unknown argument ${arg}`);
+    }
+  }
+  const expectGenesis = genesis == null ? PINNED_GENESIS : Number(genesis);
+  return { file, expectGenesis, testSigner };
 }
 
 const [cmd, ...args] = process.argv.slice(2);
@@ -201,6 +257,8 @@ if (cmd === 'signing-input') {
   const [file, kid, sig, out] = args;
   if (!file || !kid || !sig || !out) fail('usage: issuer-history.mjs assemble <doc.json> <kid> <signature-b64url> <out.json>');
   const doc = unsigned(readJson(file));
+  const head = Array.isArray(doc.entries) && doc.entries.length ? doc.entries[doc.entries.length - 1].entry_hash : null;
+  if (doc.head_hash != null && doc.head_hash !== head) fail('issuer-history head_hash does not match the last entry');
   if (!/^[A-Za-z0-9_-]{86}$/.test(sig)) fail('signature must be 64 bytes base64url');
   const entry = (doc.entries || []).find((item) => item && item.kid === kid);
   doc.issuer_signature = {
@@ -215,8 +273,9 @@ if (cmd === 'signing-input') {
   writeFileSync(out, bytes);
   console.log(createHash('sha256').update(bytes).digest('hex'));
 } else if (cmd === 'check') {
-  const file = args[0] || new URL('issuer-history.snapshot.json', here);
-  checkDocument(readJson(file), loadBundled());
+  const parsedArgs = parseCheckArgs(args);
+  const file = parsedArgs.file || new URL('issuer-history.snapshot.json', here);
+  checkDocument(readJson(file), loadSealedV2(), parsedArgs);
 } else {
   console.error('usage: issuer-history.mjs signing-input|assemble|check ...');
   process.exit(2);

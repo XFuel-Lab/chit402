@@ -238,10 +238,13 @@ for (const m of mutants) {
       }
       if (result === 'KILLED') {
         const names = [];
-        const re = /\[FAIL(?::[^\]]*)?\]\s+([A-Za-z0-9_]+)\(\)/g;
-        let hit;
-        while ((hit = re.exec(ran.out))) {
-          if (!names.includes(hit[1])) names.push(hit[1]);
+        const patterns = [/\[FAIL(?::[^\]]*)?\]\s+([A-Za-z0-9_]+)\(\)/g, /✖ ([^\n]+)/g];
+        for (const re of patterns) {
+          let hit;
+          while ((hit = re.exec(ran.out))) {
+            const name = hit[1].trim();
+            if (name && !names.includes(name)) names.push(name);
+          }
         }
         if (names.length) {
           detail = `${detail ? detail + ' | ' : ''}killed by ${names.join(', ')}`;

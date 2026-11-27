@@ -1477,9 +1477,53 @@ test('exit 2 is could_not_check and the library overall is partial', async () =>
     const lib = await verifyReceipt(v13Receipt(built), optionsFor(key, doc, server.url));
     assert.equal(lib.overall, 'partial');
     assert.equal(lib.verdict.result, 'could_not_check');
+    assert.equal(lib.verdict.exit_code, 2);
+    assert.equal(lib.payer.checked, false);
+    assert.equal(lib.payer.valid, false);
   } finally {
     await server.close();
   }
+});
+
+test('pv13 floor is the anchored hour and is off until windows are enforceable', async () => {
+  const key = makeKey();
+  const built = signedLine();
+  const doc = bundleFor(key);
+  const receipt = v13Receipt(built);
+  const scene = { payment: built.payment, logs: [okLog(built)] };
+  const plain = await runScene(scene, receipt, (u) => optionsFor(key, doc, u));
+  assert.equal(plain.v.exit_code, 0, plain.v.reason);
+  const windows = (notBefore) => ({
+    ok: true,
+    reason: null,
+    log_grace_seconds: 0,
+    windows: new Map([['pv13', {
+      id: 'pv13', not_before: notBefore, not_after: null, floor: true, basis: 'anchored hour',
+    }]]),
+    signature: 'not_production',
+    signed_kid: 'test-pv13',
+  });
+  const withWindows = (notBefore) => (u) => {
+    const base = optionsFor(key, doc, u);
+    return {
+      ...base,
+      [TEST_SNAPSHOT]: { ...base[TEST_SNAPSHOT], versionWindows: windows(notBefore) },
+    };
+  };
+  const early = await runScene(scene, receipt, withWindows('2099-01-01T00:00:00Z'));
+  assert.equal(early.v.exit_code, 1);
+  assert.equal(early.v.reason, 'version_window_not_open');
+  const open = await runScene(scene, receipt, withWindows('2020-01-01T00:00:00Z'));
+  assert.equal(open.v.exit_code, 0, open.v.reason);
+  const noRow = (u) => {
+    const base = optionsFor(key, doc, u);
+    const empty = windows('2020-01-01T00:00:00Z');
+    empty.windows = new Map();
+    return { ...base, [TEST_SNAPSHOT]: { ...base[TEST_SNAPSHOT], versionWindows: empty } };
+  };
+  const absent = await runScene(scene, receipt, noRow);
+  assert.equal(absent.v.exit_code, 1);
+  assert.equal(absent.v.reason, 'version_window_missing');
 });
 
 test('an extra pin key and a forged extension signature are refused', async () => {

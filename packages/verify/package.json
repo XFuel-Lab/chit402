@@ -31,6 +31,7 @@
     "vendor",
     "issuer-history.snapshot.json",
     "issuer-history.v1.snapshot.json",
+    "issuer-history.v2.snapshot.json",
     "legacy-allowlist.json",
     "version-windows.json",
     "README.md",

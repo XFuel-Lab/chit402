@@ -657,7 +657,7 @@ export async function checkReceiptIssuerHistory(
  */
 const SEALED_HISTORY_SNAPSHOTS = [
   { file: '../issuer-history.v1.snapshot.json', hash: 'e20d606904df1fe71ab96d8f71100d50ce1a3686fa099b3af3d92b8d8b79f1e8', version: 1, seq: 1 },
-  { file: '../issuer-history.snapshot.json', hash: 'b5ecff74a0c5a493268c100ab164b641a5cb2bed8792d0526a997d9d5aa7b07d', version: 2, seq: 2 },
+  { file: '../issuer-history.v2.snapshot.json', hash: 'b5ecff74a0c5a493268c100ab164b641a5cb2bed8792d0526a997d9d5aa7b07d', version: 2, seq: 2 },
 ] as const;
 
 function loadSealedSnapshot(file: string): { document: IssuerHistoryDocument; bytes: string } | null {
