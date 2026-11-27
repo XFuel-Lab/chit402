@@ -237,6 +237,7 @@ test('invariant (source): after /settle returns sent, every exit is a hold, a na
     // The original payment already has its receipt. These four replays carry no handle.
     /^refused\(req, 'payment_replayed', \{ network: net, sub: '[a-z_]+' \}\)$/,
     /^refused\(req, 'settle_pending', \{\s*retryAfter: LATE_RETRY_AFTER_SEC,\s*pendingId,\s*verifyUrl: lateVerifyUrl\(cfg, pendingId\),\s*holdClass: 'resolvable',\s*(network: net,\s*sub: '[a-z_]+',\s*)?\}\)$/,
+    /^refused\(req, 'not_settled', \{\s*pendingId,\s*verifyUrl,\s*holdClass: 'terminal',\s*network: challenge\.network,\s*sub: failed \? 'chain_mismatch' : 'missing_tx',\s*\}\)$/,
     /^held$/,
     /^await confirmAndSettle\(\)$/,
     /^\{\s*kind: 'settled',\s*confirmed: true,/,

@@ -535,7 +535,6 @@ export async function settleBoundPayment({
       if (resumed) return resumed;
     }
   }
-  let solanaRepoll = false;
   const spent = active.isSpent(nonce);
   const challenge = spent
     ? (typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null)
@@ -556,13 +555,7 @@ export async function settleBoundPayment({
         }
         : null;
       const linked = lateLinked || (handle?.pending_id && samePayment(handle.payment_hash) ? handle : null);
-      if (linked?.pending_id && isSolanaNetwork(challenge.network) && linked.hold_class !== 'terminal') {
-        if (typeof active.patch === 'function') {
-          active.patch(nonce, { state: 'issued', lease_owner: null, lease_until: null });
-        }
-        challenge.state = 'issued';
-        solanaRepoll = true;
-      } else if (linked?.pending_id) {
+      if (linked?.pending_id) {
         const terminal = linked.hold_class === 'terminal';
         const code = linked.code || (terminal ? 'settle_unconfirmed' : 'settle_pending');
         return refused(req, code, {
@@ -576,7 +569,7 @@ export async function settleBoundPayment({
         });
       }
     }
-    if (!solanaRepoll) return refused(
+    return refused(
       req,
       spent ? 'payment_replayed' : (challenge?.state === 'unknown' ? 'settle_unconfirmed' : 'challenge_required'),
       {
@@ -598,7 +591,7 @@ export async function settleBoundPayment({
       holdClass: 'terminal',
       network: challenge.network,
       preSettle: false,
-      sub: 'not_settled',
+      sub: 'other',
     });
   }
   const net = challenge.network;
@@ -1267,11 +1260,24 @@ export async function settleBoundPayment({
         if (typeof active.patch === 'function') {
           active.patch(nonce, { state: 'issued', lease_owner: null, lease_until: null });
         }
+        let pendingId = lateRow?.pending_id || null;
+        if (!pendingId && nonce) {
+          const opened = openPostSettleHandle(active, {
+            key: settleHoldKey(challenge.network, nonce),
+            holdClass: 'terminal',
+            code: 'not_settled',
+            cfg,
+            paymentHash: headerDigest(paymentHeader),
+          });
+          pendingId = opened?.pendingId || null;
+        }
+        const verifyUrl = lateVerifyUrl(cfg, pendingId);
         return refused(req, 'not_settled', {
-          pendingId: lateRow?.pending_id || null,
+          pendingId,
+          verifyUrl,
           holdClass: 'terminal',
           network: challenge.network,
-          sub: failed ? 'solana_err' : 'solana_dropped',
+          sub: failed ? 'chain_mismatch' : 'missing_tx',
         });
       }
     }
