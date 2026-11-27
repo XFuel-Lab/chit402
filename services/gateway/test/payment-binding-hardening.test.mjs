@@ -860,7 +860,8 @@ test('PT13 Solana transfers are one finalized transferChecked into the house ATA
       extra: [{ programId: 'CloseAccount1111111111111111111111111111111', parsed: { type: 'closeAccount' } }],
     }))).code, 'settle_unconfirmed');
     const pending = await once(tx({ status: 'confirmed' }));
-    assert.equal(pending.code, 'settle_unconfirmed');
+    assert.equal(pending.code, 'settle_pending');
+    assert.equal(pending.holdClass, 'resolvable');
     assert.equal((await once(tx({ authority: SOL_HOUSE }))).code, 'settle_unconfirmed');
     const ok = await once(tx());
     assert.equal(ok.kind, 'settled', ok.code);

@@ -8,15 +8,19 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { LAYOUT, encodeLine } from '../../../packages/cs2-core/line/index.mjs';
-import { authorizationKey } from '../../../packages/cs2-core/line/index.mjs';
+import { LAYOUT, encodeLine, authorizationKey } from '../../../packages/cs2-core/line/index.mjs';
 import { SAMPLE } from '../../../packages/cs2-core/line/sample.mjs';
 import { MAINNET_USDC, assertLivePin, mainnetPin, normHex } from '../../chit-sealer/mainnet-pin.js';
+import { acceptCoreLine } from '../../chit-sealer/lines.js';
 import {
   bookLeaf,
+  findByPaymentRef,
+  findLeafByPendingId,
+  houseIntakeDir,
   openIntake,
   pendingIdFor,
   readOwnedPending,
+  setHouseIntakeDir,
   writeRefund,
 } from '../../chit-store/intake.js';
 import { decisionHoldResult } from './x402-flags.js';
@@ -33,10 +37,15 @@ import { boundCheckpointAttempt, checkpointKmsTimeoutMs } from '../../chit-seale
 const tails = new Map();
 const pendings = new Map();
 let houseRuntime = null;
+let houseIssueCalls = 0;
 
 /** Server-side v13 deps. Not read from a request body. */
 export function setV13Runtime(next) {
   houseRuntime = next && typeof next === 'object' ? next : null;
+  const dir = houseRuntime && houseRuntime.store && typeof houseRuntime.store.dir === 'string'
+    ? houseRuntime.store.dir
+    : '';
+  setHouseIntakeDir(dir);
 }
 
 export function readV13Runtime() {
@@ -52,6 +61,11 @@ function note(input, code) {
 export function resetHouseState() {
   tails.clear();
   pendings.clear();
+  houseIssueCalls = 0;
+}
+
+export function houseIssueCallsForTest() {
+  return houseIssueCalls;
 }
 
 export function paymentIsFinal(blockNumber, finalizedNumber) {
@@ -85,10 +99,10 @@ function verifyRoot(baseUrl) {
   return baseUrl ? String(baseUrl).replace(/\/$/, '') : 'http://127.0.0.1';
 }
 
-function holdResponse(kind, keyHex, baseUrl) {
+function holdResponse(kind, keyHex, baseUrl, finality = 'pending') {
   const pendingId = pendingIdFor(keyHex);
   const verifyUrl = `${verifyRoot(baseUrl)}/verify/${pendingId}`;
-  const terminal = kind === 'refund_owed';
+  const terminal = kind === 'refund_owed' || kind === 'not_settled';
   const held = decisionHoldResult({
     code: terminal ? 'settle_failed' : 'settle_pending',
     holdClass: terminal ? 'terminal' : 'resolvable',
@@ -96,20 +110,78 @@ function holdResponse(kind, keyHex, baseUrl) {
     verifyUrl,
   });
   const body = {
-    error: kind,
-    code: kind,
+    error: kind === 'not_settled' ? 'not_settled' : kind,
+    code: kind === 'not_settled' ? 'not_settled' : kind,
     state: kind,
     pending_id: pendingId,
     verify_url: verifyUrl,
+    finality: finality === 'final' ? 'final' : 'pending',
   };
-  if (terminal) body.status = 'refund_owed';
+  if (kind === 'refund_owed') body.status = 'refund_owed';
+  if (kind === 'not_settled') body.retryable = false;
+  const status = kind === 'not_settled' ? 409 : held.status;
   return {
-    status: held.status,
-    retryAfter: terminal ? null : (held.retryAfter ?? null),
+    status,
+    retryAfter: terminal ? null : 30,
     paid: true,
     body,
     bytes: Buffer.from(JSON.stringify(body)),
   };
+}
+
+function hexField(bytes) {
+  return Buffer.from(bytes).toString('hex');
+}
+
+function textField(bytes) {
+  const buf = Buffer.from(bytes);
+  const end = buf.indexOf(0);
+  return buf.subarray(0, end === -1 ? buf.length : end).toString('utf8');
+}
+
+/** New line bytes after a reorg re-includes the same transfer in another block. */
+export function rebuildHouseLine(line, overrides) {
+  const bytes = line instanceof Uint8Array ? line : null;
+  if (!bytes) return null;
+  const accepted = acceptCoreLine(bytes);
+  if (!accepted.ok) return null;
+  const pay = accepted.payment;
+  const content = accepted.content;
+  const encoded = encodeLine({
+    payment: {
+      chainId: pay.chainId.toString(),
+      blockHash: overrides.blockHash,
+      blockNumber: overrides.blockNumber,
+      blockTime: (overrides.blockTime != null ? BigInt(overrides.blockTime) : pay.blockTime).toString(),
+      txIndex: Number(pay.txIndex),
+      localLogIndex: Number(pay.localLogIndex),
+      txHash: hexField(pay.txHash),
+      token: hexField(pay.token),
+      from: hexField(pay.from),
+      to: hexField(pay.to),
+      value: pay.value.toString(),
+      method: Number(pay.method),
+      authorizer: hexField(pay.authorizer),
+      nonce: hexField(pay.nonce),
+      saltP: hexField(pay.saltP),
+    },
+    content: {
+      uuid: hexField(content.uuid),
+      sellerIdHash: hexField(content.sellerIdHash),
+      sellerKeyId: hexField(content.sellerKeyId),
+      requestMethod: Number(content.requestMethod),
+      uriDigest: hexField(content.uriDigest),
+      uriPrefix: textField(content.uriPrefix),
+      contentDigest: hexField(content.contentDigest),
+      responseDigest: hexField(content.responseDigest),
+      saltC: hexField(content.saltC),
+    },
+    sigma: { alg: 1, sigma: `${'00'.repeat(31)}01${'00'.repeat(31)}01` },
+  });
+  if (!encoded.ok) return null;
+  const next = new Uint8Array(encoded.line);
+  next.fill(0, LAYOUT.sigma, LAYOUT.sigma + LAYOUT.sigmaBytes);
+  return next;
 }
 
 function intakeDirOf(input) {
@@ -213,6 +285,7 @@ function coreLine(payment) {
   if (!encoded.ok) {
     const err = new Error('bad line');
     err.code = 'bad_line';
+    err.reason = encoded.reason;
     throw err;
   }
   const line = new Uint8Array(encoded.line);
@@ -252,6 +325,7 @@ async function armIfSealer(env, input) {
 }
 
 export async function issueHouseReceipt(input) {
+  houseIssueCalls += 1;
   const env = input.env || {};
   if (issuanceEnabled(env) !== true) {
     if (mainnetSealerEnabled(env) === true || storeEnabled(env) === true) {
@@ -298,6 +372,61 @@ function refundOwed(input, keyHex) {
   return held;
 }
 
+function releasedReceipt(store, row) {
+  if (!store || !row || !row.receiptId || row.epoch == null) return null;
+  if (!store.epochs || typeof store.epochs.get !== 'function' || !store.receipts) return null;
+  const epoch = store.epochs.get(String(row.epoch));
+  const receipt = store.receipts.get(row.receiptId);
+  if (!epoch || epoch.released !== true || !receipt) return null;
+  return {
+    v: 13,
+    schema: 'chit402.cs2.receipt.v1',
+    id: receipt.id,
+    bookId: receipt.bookId,
+    epoch: epoch.epoch,
+    hourStart: epoch.hourStart,
+    size: epoch.size,
+    root: epoch.root,
+    stateRoot: epoch.stateRoot,
+    index: receipt.index,
+    line: receipt.line,
+    proof: receipt.proof,
+    epochProof: receipt.epochProof,
+    paymentProof: receipt.paymentProof,
+    saltedBook: receipt.saltedBook,
+    slotKey: receipt.slotKey,
+    slotValue: receipt.slotValue,
+    slotProof: receipt.slotProof,
+  };
+}
+
+function answerRow(input, row, keyHex) {
+  if (!row) return null;
+  if (row.state === 'not_settled') {
+    const body = {
+      error: { code: 'not_settled', type: 'server_error' },
+      code: 'not_settled',
+      state: 'not_settled',
+      retryable: false,
+      pending_id: row.pendingId,
+      finality: row.finality === 'final' ? 'final' : 'pending',
+    };
+    return { status: 409, paid: true, body, bytes: Buffer.from(JSON.stringify(body)) };
+  }
+  const released = releasedReceipt(input.store, row);
+  if (released) return { status: 200, body: released, bytes: Buffer.from(JSON.stringify(released)) };
+  if (row.state === 'reorged') {
+    const held = holdResponse('pending_anchor', keyHex, input.baseUrl, 'pending');
+    held.body.state = 'reorged';
+    held.body.code = 'pending_anchor';
+    held.bytes = Buffer.from(JSON.stringify(held.body));
+    return { ...held, replay: true };
+  }
+  const kind = row.state === 'refund_owed' ? 'refund_owed' : 'pending_anchor';
+  const held = holdResponse(kind, keyHex, input.baseUrl, row.finality);
+  return { ...held, replay: true };
+}
+
 async function issueV13(input) {
   const pin = input.pin || mainnetPin();
   assertLivePin(pin);
@@ -311,8 +440,10 @@ async function issueV13(input) {
     if (typeof input.rpc === 'function' && observation.finalizedNumber == null) {
       await input.rpc();
     }
-    const final = paymentIsFinal(observation.blockNumber, observation.finalizedNumber);
-    if (!final) return closed(402, 'settle_unconfirmed');
+    const blockReady = observation.blockNumber != null
+      && observation.blockHash
+      && observation.blockTime != null;
+    if (!blockReady) return closed(402, 'settle_unconfirmed');
     const payment = input.payment;
     const key = houseAuthorizationKey(payment);
     if (!key.ok) return closed(400, 'verify_failed');
@@ -329,7 +460,18 @@ async function issueV13(input) {
     const dir = input.dir;
     if (!dir) return refundOwed(input, key.hex);
     return await withLock(key.hex, async () => {
+      let intake;
+      try {
+        intake = openIntake(intakeDirOf(input), { io: intakeIo(input) });
+      } catch (err) {
+        note(input, 'intake_not_booked');
+        void err;
+        return refundOwed(input, key.hex);
+      }
+      const existing = findByPaymentRef(intake, key.hex);
+      if (existing) return answerRow(input, existing, key.hex);
       const blockHash = String(observation.blockHash || '').replace(/^0x/, '').toLowerCase();
+      const txHash = String(observation.txHash || '').toLowerCase().split(':').pop().replace(/^0x/, '');
       let line;
       try {
         line = coreLine({
@@ -337,19 +479,11 @@ async function issueV13(input) {
           blockHash,
           blockNumber: observation.blockNumber,
           blockTime: observation.blockTime,
-          txIndex: observation.txIndex,
-          localLogIndex: observation.localLogIndex,
-          txHash: String(observation.txHash || '').replace(/^0x/, '').toLowerCase(),
-          saltP: payment.saltP,
+          txIndex: observation.txIndex == null ? 0 : observation.txIndex,
+          localLogIndex: observation.localLogIndex == null ? 0 : observation.localLogIndex,
+          txHash,
+          saltP: payment.saltP || createHash('sha256').update(String(payment.nonce || key.hex)).digest('hex'),
         });
-      } catch (err) {
-        note(input, 'intake_not_booked');
-        void err;
-        return refundOwed(input, key.hex);
-      }
-      let intake;
-      try {
-        intake = openIntake(intakeDirOf(input), { io: intakeIo(input) });
       } catch (err) {
         note(input, 'intake_not_booked');
         void err;
@@ -362,6 +496,9 @@ async function issueV13(input) {
           line,
           caller: input.caller,
           hourStart: observation.hourStart,
+          finality: 'pending',
+          paymentHash: input.paymentHash,
+          txHash,
         });
       } catch (err) {
         note(input, 'intake_not_booked');
@@ -373,8 +510,14 @@ async function issueV13(input) {
         if (booked && booked.reason === 'not_owner') return notFound();
         return refundOwed(input, key.hex);
       }
-      const kind = booked.row && booked.row.state === 'refund_owed' ? 'refund_owed' : 'pending_anchor';
-      const held = holdResponse(kind, key.hex, input.baseUrl);
+      if (booked.row && booked.row.receiptId && booked.row.epoch != null) {
+        const answered = answerRow(input, booked.row, key.hex);
+        if (answered.status === 200) return answered;
+      }
+      const kind = booked.row && booked.row.state === 'refund_owed'
+        ? 'refund_owed'
+        : (booked.row && booked.row.state === 'not_settled' ? 'not_settled' : 'pending_anchor');
+      const held = holdResponse(kind, key.hex, input.baseUrl, booked.row && booked.row.finality);
       try {
         bindHold(dir, key.hex, input.caller, held);
       } catch (err) {
@@ -436,6 +579,52 @@ export function readHouse(input) {
     return { status, body: row.receipt, bytes: Buffer.from(row.bytes, 'utf8') };
   }
   return { status: 200, body: row.receipt, bytes: Buffer.from(row.bytes, 'utf8') };
+}
+
+function headerDigest(header) {
+  if (typeof header !== 'string' || header.length === 0) return null;
+  return createHash('sha256').update(header, 'utf8').digest('hex');
+}
+
+/**
+ * GET /receipt/:id for a v13 pending id. Unknown ids return null so the
+ * public receipt route keeps today's 404. The receipt body is only for the
+ * payment-header holder.
+ */
+export function serveHousePending({ receiptId, paymentHeader } = {}) {
+  const dir = houseIntakeDir();
+  if (!dir) return null;
+  const row = findLeafByPendingId(dir, receiptId);
+  if (!row) return null;
+  const finality = row.finality === 'final' ? 'final' : 'pending';
+  if (row.state === 'not_settled') {
+    return {
+      status: 409,
+      body: {
+        code: 'not_settled',
+        state: 'not_settled',
+        retryable: false,
+        pending_id: row.pendingId,
+        finality,
+      },
+    };
+  }
+  const store = readV13Runtime() && readV13Runtime().store;
+  const released = releasedReceipt(store, row);
+  const digest = headerDigest(paymentHeader);
+  const holder = typeof row.paymentHash === 'string' && typeof digest === 'string'
+    && row.paymentHash.length === digest.length
+    && timingSafeEqual(Buffer.from(row.paymentHash), Buffer.from(digest));
+  if (released && holder) return { status: 200, body: released };
+  if (released) {
+    return { status: 200, body: { state: 'pending_anchor', finality, pending_id: row.pendingId } };
+  }
+  const state = row.state === 'reorged' ? 'reorged' : (row.state === 'refund_owed' ? 'refund_owed' : 'pending_anchor');
+  return {
+    status: state === 'refund_owed' ? 409 : 202,
+    retryAfter: state === 'refund_owed' ? null : 30,
+    body: { state, finality, pending_id: row.pendingId },
+  };
 }
 
 export function pendingOpen(id) {

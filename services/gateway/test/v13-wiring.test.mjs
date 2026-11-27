@@ -389,7 +389,7 @@ test('T5 a swapped chain, address, or code hash is refused', async () => {
   }
 });
 
-test('T6 no line until the payment is final, then one line under that block hash', async () => {
+test('T6 a status-1 block books before finality, and a final block books its own line', async () => {
   resetHouseState();
   resetAnchorLedger();
   const box = fresh();
@@ -398,12 +398,14 @@ test('T6 no line until the payment is final, then one line under that block hash
     dir: box.dir,
     store: box.store,
     caller: box.caller,
-    payment: payment(),
-    observation: observation({ blockNumber: 11, finalizedNumber: 10, blockHash: 'ee'.repeat(32) }),
+    payment: payment({ nonce: '11'.repeat(32) }),
+    observation: observation({ blockNumber: 11, finalizedNumber: 10, blockHash: 'ee'.repeat(32), txHash: 'e1'.repeat(32) }),
     client: mockKms(),
     send: async () => '0x1',
   });
-  assert.equal(early.status, 402);
+  assert.equal(early.status, 202);
+  assert.equal(early.body.state, 'pending_anchor');
+  assert.equal(early.body.finality, 'pending');
   assert.equal(early.body.v, undefined);
   const finalHash = 'ab'.repeat(32);
   const done = await issueHouseReceipt({
@@ -411,8 +413,8 @@ test('T6 no line until the payment is final, then one line under that block hash
     dir: box.dir,
     store: box.store,
     caller: box.caller,
-    payment: payment({ blockHash: finalHash }),
-    observation: observation({ blockNumber: 10, finalizedNumber: 10, blockHash: finalHash }),
+    payment: payment({ blockHash: finalHash, nonce: '12'.repeat(32) }),
+    observation: observation({ blockNumber: 10, finalizedNumber: 10, blockHash: finalHash, txHash: 'e2'.repeat(32) }),
     client: mockKms(),
     addressOf: asCheckpoint,
     send: async () => '0xabc',
@@ -421,7 +423,11 @@ test('T6 no line until the payment is final, then one line under that block hash
   assert.equal(done.body.state, 'pending_anchor');
   assert.equal(done.body.v, undefined);
   const intake = JSON.parse(readFileSync(join(box.store.dir, 'pending-intake.json'), 'utf8'));
-  const line = Buffer.from(intake.leaves[0].line, 'hex');
+  assert.equal(intake.leaves.length, 2);
+  assert.equal(intake.leaves[0].finality, 'pending');
+  const earlyLine = Buffer.from(intake.leaves[0].line, 'hex');
+  assert.equal(earlyLine.subarray(10, 42).toString('hex'), 'ee'.repeat(32));
+  const line = Buffer.from(intake.leaves[1].line, 'hex');
   assert.equal(line.subarray(10, 42).toString('hex'), finalHash);
   assert.equal(paymentIsFinal(10, 10), true);
   assert.equal(paymentIsFinal(11, 10), false);
@@ -1105,12 +1111,10 @@ test('B7 a flags-on buildReceipt failure throws a closed code and opens no hold'
         mock: true,
         proverConfigured: false,
         baseUrl: 'http://127.0.0.1:9',
-        payment: payment({ nonce: '23'.repeat(32) }),
+        payment: { ...payment({ nonce: '23'.repeat(32) }), observation: { blockNumber: 10 } },
       }),
       (err) => err.code === 'settle_unconfirmed',
     );
-    const pay = payment({ nonce: '24'.repeat(32) });
-    delete pay.chainId;
     await assert.rejects(
       () => buildV1Receipt({
         task: byteTask(),
@@ -1119,7 +1123,7 @@ test('B7 a flags-on buildReceipt failure throws a closed code and opens no hold'
         mock: true,
         proverConfigured: false,
         baseUrl: 'http://127.0.0.1:9',
-        payment: { ...pay, observation: observation() },
+        payment: { ...payment({ nonce: '24'.repeat(32), token: '44'.repeat(20) }), observation: observation() },
       }),
       (err) => err.code === 'verify_failed',
     );
@@ -1272,10 +1276,11 @@ test('B8 a paid hook throw is retryable JSON, 202 with a hold and 503 without', 
     const box = fresh();
     await wireOpenedHouse(box);
     const held = await withProcessFlags(true, () => settle('b8-hold'));
-    assert.equal(held.status, 409);
-    assert.equal(held.body.code, 'refund_owed');
-    assert.equal(held.body.retryable, false);
-    assert.equal(held.body.state, 'refund_owed');
+    assert.equal(held.status, 202);
+    assert.equal(held.body.code, 'pending_anchor');
+    assert.equal(held.body.retryable, true);
+    assert.equal(held.body.finality, 'pending');
+    assert.equal(held.body.state, 'pending_anchor');
     assert.equal(typeof held.body.pending_id, 'string');
     assert.equal(typeof held.body.verify_url, 'string');
     assert.equal(typeof held.body.payment_ref, 'string');

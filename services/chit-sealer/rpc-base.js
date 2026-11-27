@@ -760,4 +760,167 @@ async function findTx(fetchImpl, url, txHash, signal, timeoutMs) {
   return '';
 }
 
-export { ANCHORED_TOPIC, BASE_CHAIN_HEX };
+const AUTH_STATE_SELECTOR = `0x${bytesToHex(keccak256(new TextEncoder().encode('authorizationState(address,bytes32)')).subarray(0, 4))}`;
+
+function normBlockHash(value) {
+  if (typeof value !== 'string') return null;
+  const hex = value.trim().toLowerCase().replace(/^0x/, '');
+  if (!/^[0-9a-f]{64}$/.test(hex)) return null;
+  return hex;
+}
+
+function qty(value) {
+  if (typeof value === 'bigint') return value;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return BigInt(value);
+  if (typeof value !== 'string') return null;
+  const text = value.trim().toLowerCase();
+  if (!/^0x[0-9a-f]+$/.test(text)) return null;
+  try { return BigInt(text); } catch { return null; }
+}
+
+function unavailable() {
+  return { ok: false, code: 'anchor_finality_unavailable' };
+}
+
+/**
+ * One finalized point for a close. F is the min finalized number across the
+ * RPCs that answered. Both are required when both are configured and both
+ * answered. A null, an error, a timeout, or a hash disagreement at F fails
+ * closed. Leaf-block hashes are read in the same round.
+ * @param {{ fetchImpl?: Function, urls: string[], blockNumbers?: Array<bigint|number>, signal?: AbortSignal, timeoutMs?: number }} input
+ */
+export async function agreeCloseFinality(input) {
+  const urls = input && Array.isArray(input.urls) ? input.urls.filter((url) => typeof url === 'string' && url) : [];
+  if (urls.length === 0) return unavailable();
+  const fetchImpl = input && typeof input.fetchImpl === 'function' ? input.fetchImpl : globalThis.fetch;
+  const timeoutMs = Number.isFinite(input && input.timeoutMs) && input.timeoutMs > 0 ? input.timeoutMs : RPC_TIMEOUT_MS;
+  const signal = input && input.signal;
+  const tips = await Promise.all(urls.map(async (url) => {
+    try {
+      const block = await rpcCall(fetchImpl, url, 'eth_getBlockByNumber', ['finalized', false], signal, timeoutMs);
+      return { url, block, error: false };
+    } catch {
+      return { url, block: null, error: true };
+    }
+  }));
+  const answered = [];
+  for (let i = 0; i < tips.length; i += 1) {
+    const row = tips[i];
+    if (row.error) continue;
+    if (!row.block) return unavailable();
+    const number = qty(row.block.number);
+    const hash = normBlockHash(row.block.hash);
+    if (number == null || hash == null) return unavailable();
+    answered.push({ url: row.url, number, hash });
+  }
+  if (answered.length === 0) return unavailable();
+  let F = answered[0].number;
+  for (let i = 1; i < answered.length; i += 1) {
+    if (answered[i].number < F) F = answered[i].number;
+  }
+  const atF = await Promise.all(answered.map(async (row) => {
+    try {
+      const block = await rpcCall(fetchImpl, row.url, 'eth_getBlockByNumber', [`0x${F.toString(16)}`, false], signal, timeoutMs);
+      return { hash: block ? normBlockHash(block.hash) : null, error: false };
+    } catch {
+      return { hash: null, error: true };
+    }
+  }));
+  let hashF = null;
+  for (let i = 0; i < atF.length; i += 1) {
+    if (atF[i].error || atF[i].hash == null) return unavailable();
+    if (hashF == null) hashF = atF[i].hash;
+    else if (answered.length >= 2 && hashF !== atF[i].hash) return unavailable();
+  }
+  const wanted = [];
+  const seen = new Set();
+  const rawNumbers = input && Array.isArray(input.blockNumbers) ? input.blockNumbers : [];
+  for (let i = 0; i < rawNumbers.length; i += 1) {
+    const n = qty(rawNumbers[i]);
+    if (n == null) continue;
+    const key = n.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    wanted.push(n);
+  }
+  const blocks = new Map();
+  const reads = [];
+  for (let u = 0; u < answered.length; u += 1) {
+    for (let b = 0; b < wanted.length; b += 1) {
+      const number = wanted[b];
+      reads.push((async () => {
+        try {
+          const block = await rpcCall(
+            fetchImpl,
+            answered[u].url,
+            'eth_getBlockByNumber',
+            [`0x${number.toString(16)}`, false],
+            signal,
+            timeoutMs,
+          );
+          return { key: number.toString(), hash: block ? normBlockHash(block.hash) : null, error: !block };
+        } catch {
+          return { key: number.toString(), hash: null, error: true };
+        }
+      })());
+    }
+  }
+  const got = await Promise.all(reads);
+  for (let i = 0; i < got.length; i += 1) {
+    if (got[i].error || got[i].hash == null) return unavailable();
+    const list = blocks.get(got[i].key) || [];
+    list.push(got[i].hash);
+    blocks.set(got[i].key, list);
+  }
+  return { ok: true, F, hashF, blocks, answered: answered.length };
+}
+
+/**
+ * Receipts for one payment hash. A transport error is unknown, not gone.
+ * @param {{ fetchImpl?: Function, urls: string[], txHash: string, signal?: AbortSignal, timeoutMs?: number }} input
+ */
+export async function readPaymentReceipts(input) {
+  const urls = input && Array.isArray(input.urls) ? input.urls.filter(Boolean) : [];
+  const fetchImpl = input && typeof input.fetchImpl === 'function' ? input.fetchImpl : globalThis.fetch;
+  const timeoutMs = Number.isFinite(input && input.timeoutMs) && input.timeoutMs > 0 ? input.timeoutMs : RPC_TIMEOUT_MS;
+  const txHash = typeof input?.txHash === 'string' ? input.txHash : '';
+  if (!txHash || urls.length === 0) return { ok: false, code: 'anchor_finality_unavailable' };
+  const rows = await Promise.all(urls.map(async (url) => {
+    try {
+      const receipt = await rpcCall(fetchImpl, url, 'eth_getTransactionReceipt', [txHash], input.signal, timeoutMs);
+      return { receipt: receipt || null, error: false };
+    } catch {
+      return { receipt: null, error: true };
+    }
+  }));
+  if (rows.some((row) => row.error)) return { ok: false, disagree: true };
+  return { ok: true, receipts: rows.map((row) => row.receipt) };
+}
+
+/**
+ * True only when every answered RPC returns authorizationState == false.
+ * An error or a true value is not cleared.
+ */
+export async function authorizationCleared(input) {
+  const urls = input && Array.isArray(input.urls) ? input.urls.filter(Boolean) : [];
+  const fetchImpl = input && typeof input.fetchImpl === 'function' ? input.fetchImpl : globalThis.fetch;
+  const timeoutMs = Number.isFinite(input && input.timeoutMs) && input.timeoutMs > 0 ? input.timeoutMs : RPC_TIMEOUT_MS;
+  const token = typeof input?.token === 'string' ? input.token : '';
+  const authorizer = typeof input?.authorizer === 'string' ? input.authorizer.replace(/^0x/, '') : '';
+  const nonce = typeof input?.nonce === 'string' ? input.nonce.replace(/^0x/, '') : '';
+  if (!token || authorizer.length !== 40 || nonce.length !== 64 || urls.length === 0) return false;
+  const data = `${AUTH_STATE_SELECTOR}${authorizer.padStart(64, '0')}${nonce}`;
+  const to = token.startsWith('0x') ? token : `0x${token}`;
+  const rows = await Promise.all(urls.map(async (url) => {
+    try {
+      const word = await rpcCall(fetchImpl, url, 'eth_call', [{ to, data }, 'latest'], input.signal, timeoutMs);
+      return { word, error: false };
+    } catch {
+      return { word: null, error: true };
+    }
+  }));
+  if (rows.some((row) => row.error || typeof row.word !== 'string')) return false;
+  return rows.every((row) => /^0x0+$/.test(row.word.trim().toLowerCase()) || row.word.trim().toLowerCase() === '0x');
+}
+
+export { ANCHORED_TOPIC, BASE_CHAIN_HEX, AUTH_STATE_SELECTOR };

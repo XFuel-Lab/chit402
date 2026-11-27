@@ -1692,7 +1692,29 @@ export function meteringPaymentFromDecision(decision) {
     token: decision.token ?? null,
     authorizer: decision.authorizer ?? null,
     observation: decision.observation || null,
+    paymentHash: decision.paymentHash || null,
+    network: decision.network || null,
+    payTo: decision.payTo || null,
   };
+}
+
+/** Base house issuance only. Other rails keep the legacy receipt. */
+export function isBaseHousePayment(payment) {
+  if (!payment || typeof payment !== 'object') return false;
+  if (Number(payment.chainId) !== 8453) return false;
+  const obs = payment.observation;
+  if (!obs || typeof obs !== 'object' || obs.blockNumber == null) return false;
+  return true;
+}
+
+export function stampLegacySolana(res, payment) {
+  if (!res || typeof res.set !== 'function') return;
+  if (!(issuanceEnabled(process.env) && mainnetSealerEnabled(process.env) && storeEnabled(process.env))) return;
+  if (isBaseHousePayment(payment)) return;
+  const network = String(payment?.network || '');
+  const solana = network === 'solana' || network.startsWith('solana:');
+  if (!solana) return;
+  res.set('x-chit402-receipt-track', 'legacy-solana');
 }
 
 function settleHousePayment(payment) {
@@ -1702,10 +1724,10 @@ function settleHousePayment(payment) {
     token: lineHex(payment.token, 20),
     authorizer: lineHex(payment.authorizer, 20),
     nonce: lineHex(payment.nonce, 32),
-    from: lineHex(payment.from, 20),
-    to: lineHex(payment.to, 20),
-    value: payment.value,
-    method: payment.method,
+    from: lineHex(payment.from, 20) || lineHex(payment.authorizer, 20),
+    to: lineHex(payment.to, 20) || lineHex(payment.payTo, 20),
+    value: payment.value != null ? payment.value : (payment.settledAmount || payment.amount),
+    method: payment.method == null ? 1 : payment.method,
     saltP: lineHex(payment.saltP, 32),
   };
 }
@@ -1730,7 +1752,7 @@ export async function buildReceipt({
   baseUrl = '', privateSpend = false, payment = null, requestedModel = null, resolvedModel = null,
   reqHost = null,
 }) {
-  if (issuanceEnabled(process.env) && mainnetSealerEnabled(process.env) && storeEnabled(process.env)) {
+  if (issuanceEnabled(process.env) && mainnetSealerEnabled(process.env) && storeEnabled(process.env) && isBaseHousePayment(payment)) {
     const runtime = readV13Runtime();
     const issued = await issueHouseReceipt({
       env: process.env,
@@ -1739,6 +1761,7 @@ export async function buildReceipt({
       baseUrl,
       payment: settleHousePayment(payment),
       observation: settleHouseObservation(payment),
+      paymentHash: payment?.paymentHash || null,
       store: runtime?.store,
       dir: runtime?.dir,
       caller: runtime?.caller || null,
@@ -1747,8 +1770,9 @@ export async function buildReceipt({
     });
     if (issued?.body?.v === 13) return issued.body;
     const err = new Error('v13 house receipt was not issued');
-    err.code = issued?.body?.state || issued?.body?.code || 'verify_failed';
+    err.code = issued?.body?.code || issued?.body?.state || 'verify_failed';
     err.state = issued?.body?.state || null;
+    err.finality = issued?.body?.finality || null;
     if (issued?.body?.pending_id) {
       err.pending_id = issued.body.pending_id;
       err.verify_url = issued.body.verify_url;
@@ -1919,6 +1943,24 @@ function unheldOpenAiMessage() {
 }
 
 export function openAiFailurePayload(decision) {
+  if (decision?.code === 'not_settled' || decision?.reason === 'not_settled') {
+    const pending = decision.pendingId || decision.pending_id || null;
+    return {
+      status: 409,
+      retryAfter: null,
+      body: {
+        error: {
+          message: 'Funds did not move.',
+          type: 'server_error',
+          code: 'not_settled',
+          ...(pending ? { pending_id: pending } : {}),
+        },
+        code: 'not_settled',
+        retryable: false,
+        ...(pending ? { pending_id: pending } : {}),
+      },
+    };
+  }
   const view = paymentFailureStatus(decision);
   const failure = paymentFailureBody(decision);
   const held = decision?.holdClass === 'resolvable'
@@ -2502,19 +2544,35 @@ export function v13PaidHookFailure(err, payment) {
     }
     return { status: 409, body, retryAfter: null };
   }
-  if (raw === 'pending_anchor' || err?.state === 'pending_anchor') {
+  if (raw === 'not_settled' || err?.state === 'not_settled') {
     const body = {
-      error: { code: 'pending_anchor', type: 'server_error' },
-      code: 'pending_anchor',
-      state: 'pending_anchor',
-      retryable: true,
+      error: { code: 'not_settled', type: 'server_error' },
+      code: 'not_settled',
+      state: 'not_settled',
+      retryable: false,
+      finality: err?.finality === 'final' ? 'final' : 'pending',
     };
     if (payment?.ref) body.payment_ref = payment.ref;
     if (pendingId) {
       body.pending_id = pendingId;
       body.verify_url = err.verify_url || null;
     }
-    return { status: 202, body, retryAfter: 5 };
+    return { status: 409, body, retryAfter: null };
+  }
+  if (raw === 'pending_anchor' || err?.state === 'pending_anchor' || raw === 'reorged' || err?.state === 'reorged') {
+    const body = {
+      error: { code: 'pending_anchor', type: 'server_error' },
+      code: 'pending_anchor',
+      state: err?.state === 'reorged' ? 'reorged' : 'pending_anchor',
+      retryable: true,
+      finality: err?.finality === 'final' ? 'final' : 'pending',
+    };
+    if (payment?.ref) body.payment_ref = payment.ref;
+    if (pendingId) {
+      body.pending_id = pendingId;
+      body.verify_url = err.verify_url || null;
+    }
+    return { status: 202, body, retryAfter: 30 };
   }
   const code = V13_HOOK_CODES.has(raw) ? raw : 'verify_failed';
   const body = {
@@ -2590,12 +2648,16 @@ export function registerOpenAIRoutes(app, {
   };
 
   // A hook throw after payment. respondPaidV1Failure calls buildReceipt again.
+  function setPaidRetryAfter(res, failure) {
+    if (failure.retryAfter != null) res.set('Retry-After', String(failure.retryAfter));
+  }
+
   async function paidReceipt(req, res, metering, settleRecord, task, build) {
     try {
       return await bookSpend(req, settleRecord, task, build);
     } catch (err) {
       const failure = v13PaidHookFailure(err, metering?.payment || null);
-      if (failure.retryAfter != null) res.set('Retry-After', String(failure.retryAfter));
+      setPaidRetryAfter(res, failure);
       res.status(failure.status).json(failure.body);
       return null;
     }
@@ -2606,6 +2668,7 @@ export function registerOpenAIRoutes(app, {
       return await build();
     } catch (err) {
       const failure = v13PaidHookFailure(err, null);
+      setPaidRetryAfter(res, failure);
       res.status(failure.status).json(failure.body);
       return null;
     }
@@ -3122,6 +3185,7 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }));
     if (!receipt) return undefined;
+    stampLegacySolana(res, metering.payment);
 
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, resourcePath));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));
@@ -3592,6 +3656,7 @@ export function registerOpenAIRoutes(app, {
       reqHost,
     }));
     if (!receipt) return undefined;
+    stampLegacySolana(res, metering.payment);
 
     await setReceiptHeaders(res, receipt, paidResourceUrl(baseUrl, '/v1/responses'));
     applySubstitutionHeaders(res, modelSubstitution(requestedModel, echoModel));

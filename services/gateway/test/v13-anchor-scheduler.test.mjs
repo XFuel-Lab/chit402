@@ -61,6 +61,7 @@ function coreLine(n) {
   const encoded = encodeLine({
     payment: {
       ...SAMPLE.payment,
+      blockNumber: 1,
       value: '1000000',
       localLogIndex: n,
       saltP: tagged(n, 0x51),
@@ -247,8 +248,15 @@ function handlerFor(state, role) {
       return role.domain == null ? state.domain : role.domain;
     }
     if (method === 'eth_getBlockByNumber') {
-      if (params[0] === 'finalized') return { number: state.finalized };
-      return { number: '0x10', baseFeePerGas: state.base };
+      if (params[0] === 'finalized') {
+        return { number: state.finalized, hash: state.finalizedHash || `0x${'ff'.repeat(32)}` };
+      }
+      if (params[0] === 'latest') return { number: '0x10', hash: `0x${'11'.repeat(32)}`, baseFeePerGas: state.base };
+      const key = String(params[0] || '').toLowerCase();
+      const hash = state.blockHashes && state.blockHashes[key]
+        ? state.blockHashes[key]
+        : `0x${'ab'.repeat(32)}`;
+      return { number: params[0], hash, baseFeePerGas: state.base };
     }
     if (method === 'eth_maxPriorityFeePerGas') return state.tip;
     if (method === 'eth_sendRawTransaction') {

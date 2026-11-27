@@ -27,6 +27,7 @@ import { isBindingRefusal, paymentFailureBody, paymentFailureStatus, setHoldRetr
 import { assertV13Boot } from './v13-flags.js';
 import { wireV13Runtime } from './v13-boot.js';
 import { anchorStallStatus, legacyUnreleasedEpochs, stopV13AnchorScheduler } from './v13-anchor-scheduler.js';
+import { serveHousePending } from './v13-issue.js';
 import { openDurableChallengeStore, markChallengeStoreFailed, challengeStorePlan, getActiveChallengeStore, assertReserveTxInstances } from './x402-durable-store.js';
 import { findLatePublicReceipt, listLateIssueOwnerView, startLateIssueResolver } from './late-issue.js';
 import { holdPageForReceiptId, holdPagePayload, terminalStampHold } from './hold-handle.js';
@@ -3567,6 +3568,14 @@ export async function createApp() {
         || wantsAuditor
         || fmt === 'json'
         || req.accepts(['html', 'json']) === 'json';
+      const housePending = serveHousePending({
+        receiptId: rawTaskId,
+        paymentHeader: extractPaymentHeader(req).header,
+      });
+      if (housePending && wantsJson) {
+        if (housePending.retryAfter != null) res.set('Retry-After', String(housePending.retryAfter));
+        return res.status(housePending.status).json(housePending.body);
+      }
       const tx = txQueryValue(req);
       const rejectsTx = (receipt, task) => {
         if (tx === undefined) return false;
