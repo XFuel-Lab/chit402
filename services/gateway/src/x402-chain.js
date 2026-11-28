@@ -29,6 +29,33 @@ export {
 };
 
 const TRANSFER_TOPIC = ethers.id('Transfer(address,address,uint256)');
+
+/** Index of the single matching Transfer inside a receipt, or null. */
+export function localTransferIndex(logs, want = {}) {
+  const bare = (value) => String(value || '').toLowerCase().replace(/^0x/, '');
+  const token = bare(want.token);
+  const from = bare(want.from);
+  const to = bare(want.to);
+  const value = want.value == null || want.value === '' ? null : BigInt(want.value);
+  const hits = [];
+  const list = Array.isArray(logs) ? logs : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const log = list[i];
+    const topics = log && log.topics;
+    if (!topics || topics.length < 3) continue;
+    if (String(topics[0] || '').toLowerCase() !== TRANSFER_TOPIC.toLowerCase()) continue;
+    if (token && bare(log.address) !== token) continue;
+    if (from && bare(topics[1]).slice(-40) !== from.slice(-40)) continue;
+    if (to && bare(topics[2]).slice(-40) !== to.slice(-40)) continue;
+    if (value != null) {
+      let got = null;
+      try { got = BigInt(log.data || '0x0'); } catch { got = null; }
+      if (got !== value) continue;
+    }
+    hits.push(i);
+  }
+  return hits.length === 1 ? hits[0] : null;
+}
 const AUTH_USED_TOPIC = ethers.id('AuthorizationUsed(address,bytes32)');
 // Late-issue search window (chunk size, chunk cap, margin, block time) is per
 // chain: see lateIssueWindow in arc-rail.js. Base keeps 2,000 x 2 chunks, a
@@ -410,7 +437,13 @@ export function confirmEvmReceipt(receipt, {
       let value = 0n;
       try { value = BigInt(log.data || '0x0'); } catch { value = 0n; }
       if (from && to && sameEvmAddress(from, wantPayer) && samePayee(to, expectedPayTo)) {
-        matches.push({ value, from, to, logIndex: log.logIndex != null ? Number(log.logIndex) : i });
+        matches.push({
+          value,
+          from,
+          to,
+          logIndex: log.logIndex != null ? Number(log.logIndex) : i,
+          localLogIndex: i,
+        });
       }
     } else if (topic0 === AUTH_USED_TOPIC.toLowerCase()) {
       const authorizer = topicAddress(log.topics?.[1]);
@@ -449,6 +482,8 @@ export function confirmEvmReceipt(receipt, {
     asset: matchedLog?.address ? ethers.getAddress(matchedLog.address) : ethers.getAddress(challenge.asset),
     transferCount: 1,
     logIndex: matches[0].logIndex,
+    localLogIndex: Number.isInteger(matches[0].localLogIndex) ? matches[0].localLogIndex : null,
+    transactionIndex: receipt.transactionIndex != null ? Number(BigInt(receipt.transactionIndex)) : null,
     blockNumber: receipt.blockNumber != null ? Number(receipt.blockNumber) : null,
     network: challenge.network || null,
     blockHash: receipt.blockHash || null,
@@ -552,7 +587,9 @@ export function confirmSolanaTransaction(tx, {
   if (signature && tx.transaction?.signatures?.[0] && tx.transaction.signatures[0] !== signature) {
     return { ok: false, code: 'settle_unconfirmed' };
   }
-  const finalized = tx.confirmationStatus === 'finalized' || tx.finalized === true;
+  const finalized = tx.confirmationStatus == null
+    ? tx.finalized !== false
+    : (tx.confirmationStatus === 'finalized' || tx.finalized === true);
   return {
     ok: true,
     confirmed: true,
@@ -812,6 +849,7 @@ export async function readEvmReceipt(rpcUrl, txHash, meter = null) {
     status: result.status === '0x1' || result.status === 1 ? 1 : 0,
     blockNumber: result.blockNumber != null ? Number(BigInt(result.blockNumber)) : null,
     blockHash: result.blockHash || null,
+    transactionIndex: result.transactionIndex != null ? Number(BigInt(result.transactionIndex)) : null,
     contractAddress: result.contractAddress || null,
     logs: (result.logs || []).map((log) => ({
       address: log.address,
@@ -832,7 +870,10 @@ export async function readSolanaTransaction(rpcUrl, signature, { waitMs = 30000,
       maxSupportedTransactionVersion: 0,
       encoding: 'jsonParsed',
     }]);
-    if (last) return last;
+    if (last) {
+      if (last.confirmationStatus == null && last.finalized !== false) last.finalized = true;
+      return last;
+    }
     if (Date.now() >= deadline) break;
     await sleep(Math.min(intervalMs, Math.max(0, deadline - Date.now())));
   } while (Date.now() <= deadline);

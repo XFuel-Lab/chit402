@@ -260,7 +260,9 @@ test('LT1 Solana is not a late-issue network', async () => {
       lateSigner: () => { signs += 1; return 'jws.sol.no'; },
     });
     const pending = await pay(store, cfg, nonce, solHeader({ transaction: tx }), { clientVersion: 2 });
-    assert.notEqual(pending.code, 'settle_pending');
+    assert.equal(pending.code, 'settle_pending');
+    assert.equal(pending.holdClass, 'resolvable');
+    assert.match(String(pending.pendingId || ''), /^[0-9a-f]{32}$/);
     assert.equal(pending.receiptJws, undefined);
     assert.equal(fac.hits.settle, 1);
     assert.equal(store.listLate().length, 0);

@@ -16,10 +16,13 @@ import {
   truncateWallet,
   userAgentOf,
 } from './x402-flags.js';
-import { normalizePaymentRef, sameNetwork, canonicalNetwork } from './payment-ref.js';
+import { normalizePaymentRef, sameNetwork, canonicalNetwork, encodeBase58 } from './payment-ref.js';
 import { testSwitchesOn } from './test-switch.js';
-import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusalDetail, evmFinality, expectedEvmChainId, facilitatorFieldsOk, readEvmAuthorization, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
-import { v13Flags } from './v13-flags.js';
+import { canonicalAuthNonce, confirmSettlement, evmAuthorizationRefusalDetail, evmFinality, expectedEvmChainId, facilitatorFieldsOk, localTransferIndex, readEvmAuthorization, readEvmReceipt, getChainReaderForTests, settlementRefusal, settlementSolanaRpcUrl } from './x402-chain.js';
+import { authorizationKey } from '../../../packages/cs2-core/line/index.mjs';
+import { findByPaymentRef, houseIntakeDir, openIntake } from '../../chit-store/intake.js';
+import { answerStoredHouseRow } from './v13-issue.js';
+import { issuanceEnabled, mainnetSealerEnabled, storeEnabled, v13Flags } from './v13-flags.js';
 import { recordReceiptFailure, refusalNetworkName, refusalSubReason } from './receipt-failures.js';
 import { arcAssetAllowed, arcRefused, evmRpcUrlFor, isArcId } from './arc-rail.js';
 import { challengeStoreFailed, getActiveChallengeStore } from './x402-durable-store.js';
@@ -270,8 +273,8 @@ export async function houseSettlementIdentity({
     finalizedNumber: fin.finalized === true ? blockNumber : null,
     blockHash: fin.blockHash || chain?.blockHash || null,
     blockTime,
-    txIndex: chain?.transactionIndex != null ? Number(chain.transactionIndex) : null,
-    localLogIndex: chain?.logIndex != null ? Number(chain.logIndex) : null,
+    txIndex: Number.isInteger(chain?.transactionIndex) ? chain.transactionIndex : null,
+    localLogIndex: Number.isInteger(chain?.localLogIndex) ? chain.localLogIndex : null,
     txHash: txRef || chain?.transaction || null,
     hourStart: blockTime != null ? blockTime - (blockTime % 3600) : null,
   };
@@ -311,8 +314,45 @@ function idempotentReplay(decision) {
   };
 }
 
+async function rereadBaseObservation(rec, cfg) {
+  const settlement = rec?.settlement;
+  if (!settlement || typeof settlement !== 'object') return null;
+  if (isSolanaNetwork(rec.network || settlement.network)) return null;
+  const tx = settlement.txRef || settlement.txHash;
+  const matched = String(tx || '').match(/0x[0-9a-fA-F]{64}/);
+  const hash = matched ? `0x${matched[0].slice(2).toLowerCase()}` : null;
+  const url = evmRpcUrlFor(rec.network || settlement.network, cfg || {});
+  if (!url || !hash) return null;
+  try {
+    const receipt = await readEvmReceipt(url, hash);
+    if (!receipt || receipt.status !== 1 || receipt.blockNumber == null) return null;
+    const fin = await evmFinality(url, receipt.blockNumber);
+    const blockTime = Number.isFinite(fin && fin.blockTimestamp) ? fin.blockTimestamp : null;
+    const blockHash = String((fin && fin.blockHash) || receipt.blockHash || '').replace(/^0x/, '').toLowerCase();
+    const txIndex = Number.isInteger(receipt.transactionIndex) ? receipt.transactionIndex : null;
+    const localLogIndex = localTransferIndex(receipt.logs, {
+      token: settlement.token || rec.asset,
+      from: settlement.authorizer || settlement.payer || rec.payer,
+      to: settlement.payTo || rec.payTo,
+      value: settlement.amount,
+    });
+    return {
+      blockNumber: receipt.blockNumber,
+      finalizedNumber: null,
+      blockHash: blockHash || null,
+      blockTime,
+      txIndex,
+      localLogIndex,
+      txHash: hash.slice(2),
+      hourStart: blockTime != null ? blockTime - (blockTime % 3600) : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Original confirmed settlement for a spent challenge. Refusals are not receipts. */
-function settlementReplay(rec, resourceHave) {
+async function settlementReplay(rec, resourceHave, cfg) {
   const settlement = rec?.settlement;
   if (!settlement || typeof settlement !== 'object') return null;
   if (settlement.replay === true || settlement.rejected) return null;
@@ -340,8 +380,95 @@ function settlementReplay(rec, resourceHave) {
     nonce: settlement.authNonce ?? null,
     token: settlement.token ?? null,
     authorizer: settlement.authorizer ?? null,
-    observation: settlement.observation || null,
+    observation: await rereadBaseObservation(rec, cfg),
+    network: rec.network || null,
   };
+}
+
+function intakeRowForHeader(paymentHeader, challenge) {
+  const dir = houseIntakeDir();
+  if (!dir || !challenge || isSolanaNetwork(challenge.network)) return null;
+  const auth = readEvmAuthorization(paymentHeader);
+  if (!auth?.from || !auth?.nonce) return null;
+  const key = authorizationKey({
+    chainId: Number(challenge.chainId || expectedEvmChainId(challenge.network) || 8453),
+    token: String(challenge.asset || '').replace(/^0x/, '').toLowerCase(),
+    authorizer: String(auth.from).replace(/^0x/, '').toLowerCase(),
+    nonce: String(auth.nonce).replace(/^0x/, '').toLowerCase(),
+  });
+  if (!key.ok) return null;
+  try {
+    return findByPaymentRef(openIntake(dir), key.hex);
+  } catch {
+    return null;
+  }
+}
+
+async function solanaRpc(url, method, params) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data || data.error) return null;
+  return data.result;
+}
+
+async function solanaFundsUnmoved(cfg, signature, blockhash) {
+  const url = settlementSolanaRpcUrl(cfg);
+  if (!url || !signature) return false;
+  const status = await solanaRpc(url, 'getSignatureStatuses', [[signature], { searchTransactionHistory: true }]);
+  const value = status && Array.isArray(status.value) ? status.value : null;
+  if (!value || value.length !== 1 || value[0] != null) return false;
+  const recent = blockhash && typeof blockhash.recentBlockhash === 'string' ? blockhash.recentBlockhash : null;
+  if (recent) {
+    const valid = await solanaRpc(url, 'isBlockhashValid', [recent, { commitment: 'finalized' }]);
+    if (valid && valid.value === false) return true;
+  }
+  const height = await solanaRpc(url, 'getBlockHeight', [{ commitment: 'finalized' }]);
+  const last = blockhash && Number.isInteger(blockhash.lastValidBlockHeight) ? blockhash.lastValidBlockHeight : null;
+  return typeof height === 'number' && last != null && height > last;
+}
+
+function recentBlockhashFromTransaction(encoded) {
+  let buf;
+  try { buf = Buffer.from(String(encoded || ''), 'base64'); } catch { return null; }
+  if (!Buffer.isBuffer(buf) || buf.length < 68) return null;
+  const sigs = buf[0];
+  if (sigs > 4) return null;
+  let off = 1 + sigs * 64 + 3;
+  if (off >= buf.length) return null;
+  const accounts = buf[off];
+  off += 1 + accounts * 32;
+  if (accounts > 64 || off + 32 > buf.length) return null;
+  return encodeBase58(buf.subarray(off, off + 32));
+}
+
+function solanaBlockhash(paymentHeader) {
+  const decoded = decodePaymentHeader(paymentHeader);
+  const extra = decoded?.accepted?.extra || decoded?.payload || {};
+  let recent = extra.recentBlockhash || decoded?.payload?.recentBlockhash || null;
+  if (typeof recent !== 'string' || !recent) {
+    recent = recentBlockhashFromTransaction(decoded?.payload?.transaction);
+  }
+  const raw = extra.lastValidBlockHeight ?? decoded?.payload?.lastValidBlockHeight;
+  const last = Number.isInteger(raw) ? raw : (typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : null);
+  return {
+    recentBlockhash: typeof recent === 'string' ? recent : null,
+    lastValidBlockHeight: last,
+  };
+}
+
+async function solanaFinalizedError(cfg, signature) {
+  const url = settlementSolanaRpcUrl(cfg);
+  if (!url || !signature) return false;
+  const tx = await solanaRpc(url, 'getTransaction', [signature, {
+    commitment: 'finalized',
+    maxSupportedTransactionVersion: 0,
+  }]);
+  return !!(tx && tx.meta && tx.meta.err != null);
 }
 
 /** SHA-256 of the raw payment header. The signature is inside that header. */
@@ -375,10 +502,171 @@ function replayAllowed(decision, { resourceHave, issued, paymentHeader }) {
  * still hold the response (or be writing it). Anything else is payment_replayed.
  * @returns {object|null} a decision to return, or null when this is not an exact replay
  */
+export async function sweepSolanaHolds(store, cfg = {}) {
+  if (!store || typeof store.listHoldHandles !== 'function') return [];
+  const done = [];
+  const rows = store.listHoldHandles();
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (!row || row.receipt || row.hold_class === 'terminal') continue;
+    if (!isSolanaNetwork(row.network)) continue;
+    const again = await repollSolanaFinality(cfg, {
+      network: row.network,
+      payTo: cfg.payTo || null,
+    }, null, row);
+    if (typeof store.noteHoldHint !== 'function') continue;
+    const sig = again?.tx || row.tx_hint || null;
+    const matched = again?.ok === true && again.finalized === true;
+    if (!matched) {
+      const failed = sig ? await solanaFinalizedError(cfg, sig) : false;
+      const dropped = sig ? await solanaFundsUnmoved(cfg, sig, row.blockhash || null) : false;
+      if ((failed || dropped) && typeof store.patch === 'function') {
+        const prefix = `settle:${row.network}:`;
+        const nonce = String(row.key || '').startsWith(prefix) ? String(row.key).slice(prefix.length) : '';
+        if (nonce) store.patch(nonce, { state: 'issued', lease_owner: null, lease_until: null });
+      }
+      continue;
+    }
+    const receipt = {
+      id: row.pending_id,
+      pending_id: row.pending_id,
+      state: 'final',
+      network: 'solana',
+      tx: sig,
+      payment_ref: sig,
+    };
+    store.noteHoldHint(row.key, { receipt });
+    const prefix = `settle:${row.network}:`;
+    const nonce = String(row.key || '').startsWith(prefix) ? String(row.key).slice(prefix.length) : '';
+    if (nonce && typeof store.markSpent === 'function' && !(typeof store.isSpent === 'function' && store.isSpent(nonce))) {
+      store.markSpent(nonce, {
+        txRef: sig,
+        payer: again.payer || row.payer || null,
+        payTo: again.payTo || cfg.payTo || null,
+        amount: String(again.amount || ''),
+      });
+    }
+    done.push(receipt);
+  }
+  return done;
+}
+
+export function serveSolanaHold(receiptId, store = null, paymentHeader = null) {
+  const active = store || getActiveChallengeStore() || defaultStore;
+  if (!active || typeof active.holdByPendingId !== 'function') return null;
+  const row = active.holdByPendingId(receiptId);
+  if (!row || !isSolanaNetwork(row.network)) return null;
+  if (row.receipt) {
+    const digest = headerDigest(paymentHeader);
+    const holder = typeof row.payment_hash === 'string' && typeof digest === 'string'
+      && row.payment_hash.length === digest.length
+      && digestEqual(row.payment_hash, digest);
+    if (!holder) {
+      return { status: 200, body: { state: 'final', pending_id: row.pending_id, finality: 'final' } };
+    }
+    return { status: 200, body: row.receipt };
+  }
+  return {
+    status: 202,
+    retryAfter: LATE_RETRY_AFTER_SEC,
+    body: { state: 'pending', pending_id: row.pending_id, code: 'settle_pending' },
+  };
+}
+
+async function repollSolanaFinality(cfg, challenge, paymentHeader, linked) {
+  const budget = Math.min(Number(cfg && cfg.solanaFinalizeWaitMs) || 5000, 5000);
+  return confirmSettlement({
+    challenge,
+    facilitator: {
+      transaction: linked?.tx_hint || null,
+      network: challenge?.network || 'solana',
+      payer: linked?.payer || null,
+    },
+    paymentHeader,
+    expectedPayTo: challenge?.payTo,
+    ignorePause: true,
+    cfg: { ...cfg, solanaFinalizeWaitMs: budget },
+  });
+}
+
+let solanaSweepTimer = null;
+
+export function startSolanaHoldSweep(store, cfg = {}) {
+  if (solanaSweepTimer) return { started: true, already: true };
+  const interval = Math.min(Math.max(Number(cfg.intervalMs) || 15000, 1000), 60000);
+  const tick = () => sweepSolanaHolds(store, cfg).catch(() => {});
+  const first = tick();
+  solanaSweepTimer = setInterval(tick, interval);
+  if (typeof solanaSweepTimer.unref === 'function') solanaSweepTimer.unref();
+  return { started: true, first };
+}
+
+export function stopSolanaHoldSweep() {
+  if (solanaSweepTimer) clearInterval(solanaSweepTimer);
+  solanaSweepTimer = null;
+}
+
+async function houseIntakeReplay(challenge, paymentHeader, cfg, requestBaseUrl) {
+  const chainId = Number(challenge?.chainId || expectedEvmChainId(challenge?.network) || 0);
+  if (!houseReplayOpen({ chainId })) return null;
+  const row = intakeRowForHeader(paymentHeader, challenge);
+  if (!row) return null;
+  const baseUrl = (cfg && (cfg.publicBaseUrl || cfg.publicBase)) || requestBaseUrl || '';
+  if (row.state === 'awaiting_block') {
+    const fresh = await rereadBaseObservation(challenge, cfg || {});
+    const ready = fresh && fresh.blockNumber != null && fresh.blockHash && fresh.blockTime != null
+      && fresh.txIndex != null && fresh.localLogIndex != null;
+    if (ready) {
+      const { resumeAwaitingHouse } = await import('./v13-issue.js');
+      const resumed = await resumeAwaitingHouse({
+        row,
+        observation: fresh,
+        paymentHeader,
+        challenge,
+        baseUrl,
+      });
+      if (resumed) {
+        return {
+          kind: 'house_answer',
+          status: resumed.status,
+          body: resumed.body,
+          retryAfter: resumed.retryAfter ?? null,
+        };
+      }
+    }
+    const held = answerStoredHouseRow(row, baseUrl);
+    if (!held) return null;
+    return { kind: 'house_answer', status: held.status, body: held.body, retryAfter: held.retryAfter };
+  }
+  const answered = answerStoredHouseRow(row, baseUrl);
+  if (!answered) return null;
+  return {
+    kind: 'house_answer',
+    status: answered.status,
+    body: answered.body,
+    retryAfter: answered.retryAfter,
+  };
+}
+
+function houseReplayOpen(prior) {
+  if (issuanceEnabled(process.env) !== true || mainnetSealerEnabled(process.env) !== true) return false;
+  if (storeEnabled(process.env) !== true) return false;
+  return Number(prior?.chainId) === 8453;
+}
+
 function decideReplay(req, prior, { resourceHave, issued, paymentHeader, nonce, serveStoredResponse }) {
   if (!replayAllowed(prior, { resourceHave, issued, paymentHeader })) return null;
   if (serveStoredResponse === true && replayBytesReady(nonce)) {
     return idempotentReplay(prior);
+  }
+  if (houseReplayOpen(prior)) {
+    return {
+      ...prior,
+      kind: 'settled',
+      confirmed: true,
+      replay: true,
+      idempotentReplay: false,
+    };
   }
   return refused(req, 'payment_replayed', { preSettle: true, network: prior?.network || null, sub: 'exact_replay' });
 }
@@ -457,6 +745,85 @@ export async function settleBoundPayment({
       const linked = lateLinked || (handle?.pending_id && samePayment(handle.payment_hash) ? handle : null);
       if (linked?.pending_id) {
         const terminal = linked.hold_class === 'terminal';
+        if (!terminal && isSolanaNetwork(challenge.network)) {
+          const again = await repollSolanaFinality(cfg, challenge, paymentHeader, linked);
+          const solanaMatch = again?.ok === true && again.finalized === true;
+          if (solanaMatch) {
+            if (active.isSpent(nonce)) {
+              const prior = await settlementReplay(
+                typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : challenge,
+                canonicalPaidRoute(challenge.resource),
+                cfg,
+              );
+              if (prior) return idempotentReplay(prior);
+            }
+            const tx = again.tx || linked.tx_hint || null;
+            const solanaSpentMeta = {
+              txRef: tx,
+              amount: String(again.amount || challenge.amount),
+              payer: again.payer || linked.payer || null,
+              payTo: again.payTo || challenge.payTo || null,
+              paymentHash: got,
+              route: canonicalPaidRoute(challenge.resource),
+              quotedAmount: String(challenge.amount),
+            };
+            active.markSpent(nonce, solanaSpentMeta);
+            if (typeof active.noteHoldHint === 'function') {
+              active.noteHoldHint(settleHoldKey(challenge.network, nonce), {
+                receipt: {
+                  id: linked.pending_id,
+                  pending_id: linked.pending_id,
+                  state: 'final',
+                  network: 'solana',
+                  payment_ref: tx,
+                },
+              });
+            }
+            return {
+              kind: 'settled',
+              confirmed: true,
+              replay: true,
+              idempotentReplay: false,
+              paymentRef: tx,
+              paymentHash: got,
+              route: canonicalPaidRoute(challenge.resource),
+              quotedAmount: String(challenge.amount),
+              settledAmount: String(again.amount || challenge.amount),
+              payerWallet: again.payer || linked.payer || null,
+              payTo: again.payTo || challenge.payTo || null,
+              asset: challenge.asset || 'USDC',
+              chainId: null,
+              network: challenge.network,
+              observation: null,
+              pendingId: linked.pending_id,
+            };
+          }
+          const sig = linked.tx_hint || null;
+          const failed = sig ? await solanaFinalizedError(cfg, sig) : false;
+          const dropped = sig ? await solanaFundsUnmoved(cfg, sig, solanaBlockhash(paymentHeader)) : false;
+          if (failed || dropped) {
+            if (typeof active.patch === 'function') {
+              active.patch(nonce, { state: 'issued', lease_owner: null, lease_until: null });
+            }
+            return refused(req, 'not_settled', {
+              preSettle: false,
+              pendingId: linked.pending_id,
+              verifyUrl: lateVerifyUrl(cfg, linked.pending_id),
+              holdClass: 'terminal',
+              network: challenge.network,
+              sub: 'missing_tx',
+            });
+          }
+          return refused(req, 'settle_pending', {
+            preSettle: false,
+            pendingId: linked.pending_id,
+            verifyUrl: lateVerifyUrl(cfg, linked.pending_id),
+            holdClass: 'resolvable',
+            retryAfter: LATE_RETRY_AFTER_SEC,
+            network: challenge.network,
+            sub: 'prior_unknown',
+          });
+        }
         const code = linked.code || (terminal ? 'settle_unconfirmed' : 'settle_pending');
         return refused(req, code, {
           preSettle: false,
@@ -484,6 +851,16 @@ export async function settleBoundPayment({
   // not a fresh challenge mismatch.
   // `sub` names the check (logs only). A spent nonce logs spent_nonce, never
   // the field, so the logs do not describe another payer's settled challenge.
+  const parked = intakeRowForHeader(paymentHeader, challenge);
+  if (parked && parked.state === 'not_settled') {
+    return refused(req, 'not_settled', {
+      pendingId: parked.pendingId,
+      holdClass: 'terminal',
+      network: challenge.network,
+      preSettle: false,
+      sub: 'other',
+    });
+  }
   const net = challenge.network;
   const mismatch = (sub) => refused(req, spent ? 'payment_replayed' : 'challenge_mismatch', {
     preSettle: true,
@@ -602,7 +979,16 @@ export async function settleBoundPayment({
   // that authorization is the one that already settled. Default is 409. A route
   // serves the stored response only when it opted in and the bytes are still here.
   if (spent) {
-    const prior = settlementReplay(challenge, resourceHave);
+    const prior = await settlementReplay(challenge, resourceHave, cfg);
+    const housed = await houseIntakeReplay(challenge, paymentHeader, cfg, baseUrl);
+    if (housed) return housed;
+    if (isSolanaNetwork(challenge.network) && typeof active.findHoldHandleByKey === 'function') {
+      const handle = active.findHoldHandleByKey(settleHoldKey(challenge.network, nonce));
+      const got = headerDigest(paymentHeader);
+      if (handle?.receipt && prior && got && digestEqual(handle.payment_hash || prior.paymentHash, got)) {
+        return idempotentReplay(prior);
+      }
+    }
     const replay = decideReplay(req, prior, {
       resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
     });
@@ -671,7 +1057,7 @@ export async function settleBoundPayment({
     }
     if (claim.reason === 'payment_replayed') {
       const rec = typeof active.replayRecord === 'function' ? active.replayRecord(nonce) : null;
-      const prior = rec ? settlementReplay(rec, resourceHave) : null;
+      const prior = rec ? await settlementReplay(rec, resourceHave, cfg) : null;
       const replay = decideReplay(req, prior, {
         resourceHave, issued, paymentHeader, nonce, serveStoredResponse,
       });
@@ -745,6 +1131,7 @@ export async function settleBoundPayment({
   let lateCapped = false;
   let preparedWindow = null;
   let seenTx = null;
+  let solanaPayer = null;
   const release = () => {
     if (lateRow?.sent) return;
     try { active.release(nonce, owner); } catch { /* already spent */ }
@@ -861,7 +1248,16 @@ export async function settleBoundPayment({
       try { active.linkHoldHandle(settleHoldKey(challenge.network, nonce), pendingId, headerDigest(paymentHeader)); } catch { /* store */ }
     }
     const verifyUrl = lateVerifyUrl(cfg, pendingId);
-    if (!solana && lateIssueEnabled(cfg) && !terminal) {
+    if (solana && nonce && typeof active.noteHoldHint === 'function') {
+      active.noteHoldHint(settleHoldKey(challenge.network, nonce), {
+        txHint: seenTx || null,
+        network: challenge.network,
+        payer: solanaPayer || null,
+        blockhash: solanaBlockhash(paymentHeader),
+      });
+    }
+    const solanaPendingHold = solana && !terminal;
+    if ((!solana && lateIssueEnabled(cfg) && !terminal) || solanaPendingHold) {
       return refused(req, 'settle_pending', {
         retryAfter: LATE_RETRY_AFTER_SEC,
         pendingId,
@@ -995,6 +1391,7 @@ export async function settleBoundPayment({
     return refused(req, clientPaymentCode(settled?.reason || 'settle_failed'), { network: net, sub: 'settle_not_sent' });
   }
   seenTx = settled.transaction || settled.txRef || null;
+  solanaPayer = settled.payer || null;
   postSent = true;
   postSentPending = lateRow?.pending_id || null;
   // Test-only observer. A throw here is the post-sent catch.
@@ -1141,6 +1538,35 @@ export async function settleBoundPayment({
     },
   });
   if (!chain.ok) {
+    if (solana) {
+      const sig = fields.transaction || seenTx;
+      const failed = !chain.pending && await solanaFinalizedError(cfg, sig);
+      const dropped = chain.pending && await solanaFundsUnmoved(cfg, sig, solanaBlockhash(paymentHeader));
+      if (failed || dropped) {
+        if (typeof active.patch === 'function') {
+          active.patch(nonce, { state: 'issued', lease_owner: null, lease_until: null });
+        }
+        let pendingId = lateRow?.pending_id || null;
+        if (!pendingId && nonce) {
+          const opened = openPostSettleHandle(active, {
+            key: settleHoldKey(challenge.network, nonce),
+            holdClass: 'terminal',
+            code: 'not_settled',
+            cfg,
+            paymentHash: headerDigest(paymentHeader),
+          });
+          pendingId = opened?.pendingId || null;
+        }
+        const verifyUrl = lateVerifyUrl(cfg, pendingId);
+        return refused(req, 'not_settled', {
+          pendingId,
+          verifyUrl,
+          holdClass: 'terminal',
+          network: challenge.network,
+          sub: failed ? 'chain_mismatch' : 'missing_tx',
+        });
+      }
+    }
     // Pause was already cleared before /settle. A miss here means the reader
     // could not see the pinned transfer, so the MF1 hold is the fallback.
     return await hold(chain.pending ? 'awaiting_finality' : 'chain_mismatch', 'settle_unconfirmed', {
@@ -1277,13 +1703,14 @@ export async function settleBoundPayment({
     token: house.token,
     authorizer: house.authorizer,
     observation: house.observation,
+    network: challenge.network || null,
   };
   }
   }
 }
 
 function refused(req, reason, extra = {}) {
-  const code = ['challenge_required', 'challenge_mismatch', 'network_not_accepted', 'payment_replayed', 'payment_in_flight', 'settle_unconfirmed', 'settle_pending', 'idempotency_conflict', 'replay_store_unavailable', 'payer_mismatch', 'stamp_underpaid', 'verify_failed', 'settle_failed', 'gateway_not_configured', 'invalid_payment_ref', 'payment_scheme_unsupported'].includes(reason)
+  const code = ['challenge_required', 'challenge_mismatch', 'network_not_accepted', 'payment_replayed', 'payment_in_flight', 'settle_unconfirmed', 'settle_pending', 'not_settled', 'idempotency_conflict', 'replay_store_unavailable', 'payer_mismatch', 'stamp_underpaid', 'verify_failed', 'settle_failed', 'gateway_not_configured', 'invalid_payment_ref', 'payment_scheme_unsupported'].includes(reason)
     ? reason
     : clientPaymentCode(reason);
   // pre_settle: /settle was not called. A /verify refusal is pre_settle

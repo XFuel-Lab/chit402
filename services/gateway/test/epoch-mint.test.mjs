@@ -332,7 +332,18 @@ test('T5 a paid house call ends pending, released, or refund_owed', async () => 
   assert.equal(issued.status, 202);
   assert.equal(issued.body.state, 'pending_anchor');
   assert.equal(issued.body.code, 'pending_anchor');
-  const closed = await closeOne(box, 0);
+  box.clock.now = HOUR;
+  const closed = await closeHour(box.sealer, {
+    hourStart: 0,
+    lines: [],
+    fees: FEES,
+    send: recorder().send,
+    finalityPoint: {
+      ok: true,
+      F: 10n,
+      blocks: new Map([['10', ['ab'.repeat(32)]]]),
+    },
+  });
   assert.equal(closed.ok, true, closed.reason);
   const pendingFetch = fetchReceipt(box.store, {
     receiptId: issued.body.pending_id,

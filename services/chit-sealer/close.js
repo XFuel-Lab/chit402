@@ -45,7 +45,7 @@ import {
   openAnchorIntentLog,
 } from './kms-secp256k1.js';
 import { buildAnchorCalldata } from './calldata.js';
-import { readPendingLines, sealIntakeLines } from '../chit-store/intake.js';
+import { readIntakeLeaves, readPendingLines, sealIntakeLines } from '../chit-store/intake.js';
 import { committedReceiptForLine, reconcileCommittedIntake } from '../chit-store/store.js';
 import { openJournal } from './journal.js';
 import { acceptCoreLine } from './lines.js';
@@ -646,6 +646,64 @@ export function openSealer(config) {
   };
 }
 
+function leafFromHex(lineHex) {
+  if (typeof lineHex !== 'string' || !/^[0-9a-f]{2048}$/.test(lineHex)) return null;
+  const bytes = Uint8Array.from(Buffer.from(lineHex, 'hex'));
+  const accepted = acceptCoreLine(bytes);
+  if (!accepted.ok || typeof accepted.payment.blockNumber !== 'bigint') return null;
+  return {
+    blockNumber: accepted.payment.blockNumber,
+    blockHash: Buffer.from(accepted.payment.blockHash).toString('hex'),
+    line: bytes,
+    payment: accepted.payment,
+  };
+}
+
+function blockHashMatches(point, leaf) {
+  const got = point.blocks && typeof point.blocks.get === 'function'
+    ? point.blocks.get(leaf.blockNumber.toString())
+    : null;
+  if (!got || got.length === 0) return false;
+  for (let i = 0; i < got.length; i += 1) {
+    if (got[i] !== leaf.blockHash) return false;
+  }
+  return true;
+}
+
+/**
+ * Base leaves that may enter this close. A missing finality field is pending.
+ * A reorged row is not sealable. finality final skips the Base block check.
+ */
+export function sealCandidates(leaves, point) {
+  const out = [];
+  if (!Array.isArray(leaves)) return out;
+  for (let i = 0; i < leaves.length; i += 1) {
+    const row = leaves[i];
+    if (!row || row.receiptId != null || typeof row.line !== 'string') continue;
+    if (row.state !== 'pending_anchor' && row.state !== 'reorged') continue;
+    if (row.state === 'reorged') continue;
+    const leaf = leafFromHex(row.line);
+    if (!leaf) continue;
+    const finality = row.finality === 'final' ? 'final' : 'pending';
+    const declaredFinal = row.finality === 'final';
+    // A stored final is still checked. Only a missing field that was
+    // classified as final skips, and that classification is not produced here.
+    if (finality !== 'final' || declaredFinal) {
+      if (!point || point.ok !== true || typeof point.F !== 'bigint') continue;
+      const F = point.F;
+      if (!(leaf.blockNumber <= F)) continue;
+      if (!blockHashMatches(point, leaf)) continue;
+    }
+    out.push({
+      line: leaf.line,
+      bookId: row.bookId,
+      paymentRef: row.paymentRef,
+      payment: leaf.payment,
+    });
+  }
+  return out;
+}
+
 function mergeIntake(sealer, planned, explicit) {
   const counted = tierCount(planned.k);
   if (!counted.ok) return counted;
@@ -658,11 +716,15 @@ function mergeIntake(sealer, planned, explicit) {
   if (room <= 0 || !sealer.store || typeof sealer.store.dir !== 'string') {
     return { ok: true, lines: explicit };
   }
-  const pending = readPendingLines(sealer.store.dir, sealer.store.io);
-  if (!pending.ok) return pending;
+  const point = sealer._input && sealer._input.finalityPoint;
+  if (!point) return { ok: true, lines: explicit };
+  const loaded = readIntakeLeaves(sealer.store.dir, sealer.store.io);
+  if (!loaded.ok) return loaded;
+  const picked = sealCandidates(loaded.leaves, point);
+  const pendingLines = picked;
   const extra = [];
-  for (let i = 0; i < pending.lines.length && extra.length < room; i += 1) {
-    const item = pending.lines[i];
+  for (let i = 0; i < pendingLines.length && extra.length < room; i += 1) {
+    const item = pendingLines[i];
     const accepted = acceptCoreLine(item.line);
     if (!accepted.ok) return fail('intake_unreadable');
     const id = canonicalPaymentId(accepted.payment);

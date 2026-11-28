@@ -1,0 +1,225 @@
+{
+  "suite": {
+    "cwd": ".",
+    "argv": [
+      "node",
+      "--test",
+      "--test-force-exit",
+      "--test-concurrency=1",
+      "services/gateway/test/finality-a.test.mjs",
+      "services/gateway/test/finality-a-kills.test.mjs",
+      "services/gateway/test/doctor-repro.test.mjs",
+      "services/gateway/test/doctor-repro-sol.test.mjs",
+      "services/gateway/test/doctor-delta.test.mjs",
+      "services/gateway/test/doctor-delta-sol.test.mjs",
+      "services/gateway/test/doctor-delta-sol2.test.mjs",
+      "services/chit-sealer/test/rpc-base.test.mjs",
+      "services/gateway/test/v13-anchor-scheduler.test.mjs"
+    ]
+  },
+  "mutants": [
+    {
+      "id": "MF1",
+      "file": "services/chit-sealer/close.js",
+      "find": "leaf.blockNumber <= F",
+      "replace": "leaf.blockNumber < F",
+      "note": "seal a leaf only when its block is strictly below F"
+    },
+    {
+      "id": "MF2",
+      "file": "services/chit-sealer/close.js",
+      "find": "  for (let i = 0; i < got.length; i += 1) {\n    if (got[i] !== leaf.blockHash) return false;\n  }\n  return true;",
+      "replace": "  return true;",
+      "note": "drop the per-RPC hash check"
+    },
+    {
+      "id": "MF3",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "if (answered[i].number < F) F = answered[i].number;",
+      "replace": "if (answered[i].number > F) F = answered[i].number;",
+      "note": "F is the max finalized number"
+    },
+    {
+      "id": "MF4",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "else if (answered.length >= 2 && hashF !== atF[i].hash) return unavailable();",
+      "replace": "else if (answered.length >= 3 && hashF !== atF[i].hash) return unavailable();",
+      "note": "accept one hash when two RPCs disagree"
+    },
+    {
+      "id": "MF5",
+      "file": "services/chit-sealer/close.js",
+      "find": "const picked = sealCandidates(loaded.leaves, point);",
+      "replace": "const picked = loaded.leaves.filter((row) => row && typeof row.line === 'string' && row.receiptId == null).map((row) => ({ line: Uint8Array.from(Buffer.from(row.line, 'hex')), bookId: row.bookId, paymentRef: row.paymentRef }));",
+      "note": "seal every pending leaf"
+    },
+    {
+      "id": "MF6",
+      "file": "services/chit-sealer/close.js",
+      "find": "const result = await broadcastRecord(sealer, record, input.send, input.signal);",
+      "replace": "return fail('anchor_finality_unavailable'); const result = await broadcastRecord(sealer, record, input.send, input.signal);",
+      "note": "recovery re-runs the finality filter"
+    },
+    {
+      "id": "MF7",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "observation: await rereadBaseObservation(rec, cfg),",
+      "replace": "observation: settlement.observation || null,",
+      "note": "replay reuses the stored observation"
+    },
+    {
+      "id": "MF8",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "export function isBaseHousePayment(payment) {\n  if (!payment || typeof payment !== 'object') return false;\n  if (Number(payment.chainId) !== 8453) return false;\n  return true;\n}",
+      "replace": "export function isBaseHousePayment(payment) {\n  void payment;\n  return true;\n}",
+      "note": "every rail enters house issuance"
+    },
+    {
+      "id": "MF9",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "    if (pendingId) {\n      body.pending_id = pendingId;\n      body.verify_url = err.verify_url || null;\n    }\n    return { status: 202, body, retryAfter: 30 };",
+      "replace": "    if (pendingId) {\n      body.verify_url = err.verify_url || null;\n    }\n    return { status: 202, body, retryAfter: 30 };",
+      "note": "202 body drops pending_id"
+    },
+    {
+      "id": "MF10",
+      "file": "services/gateway/src/openai-gateway.js",
+      "find": "if (failure.retryAfter != null) res.set('Retry-After', String(failure.retryAfter));",
+      "replace": "void failure;",
+      "note": "Retry-After header removed"
+    },
+    {
+      "id": "MF11",
+      "file": "services/chit-sealer/close.js",
+      "find": "    if (row.state === 'reorged') continue;\n",
+      "replace": "",
+      "note": "a reorged row is sealable"
+    },
+    {
+      "id": "MF12",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "if (gone && cleared) {",
+      "replace": "if (gone) {",
+      "note": "not_settled without authorizationState == false"
+    },
+    {
+      "id": "MF13",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "if (released && holder) return { status: 200, body: released };",
+      "replace": "if (released) return { status: 200, body: released };",
+      "note": "receipt body returned to a non-holder"
+    },
+    {
+      "id": "MF14",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "const solanaPendingHold = solana && !terminal;",
+      "replace": "const solanaPendingHold = false;",
+      "note": "Solana timeout is not a resolvable hold"
+    },
+    {
+      "id": "MF15",
+      "file": "services/chit-store/intake.js",
+      "find": "if (existing.state === 'reorged' && existing.receiptId == null && typeof input.rebookedFrom === 'string') {",
+      "replace": "if (existing.receiptId == null && typeof input.rebookedFrom === 'string') {",
+      "note": "intake_conflict exception when the old row is not reorged"
+    },
+    {
+      "id": "MF16",
+      "file": "services/gateway/src/v13-anchor-scheduler.js",
+      "find": "const intake = countSealableIntake(session, point);",
+      "replace": "const intake = pendingIntakeCount(session.sealer.store);",
+      "note": "sealable count uses every pending row"
+    },
+    {
+      "id": "MF17",
+      "file": "services/chit-sealer/close.js",
+      "find": "const finality = row.finality === 'final' ? 'final' : 'pending';",
+      "replace": "const finality = row.finality === 'final' || row.finality == null ? 'final' : 'pending';",
+      "note": "a missing finality field is treated as final"
+    },
+    {
+      "id": "MF18",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "booked = bookLeaf(intake, {\n          paymentRef: key.hex,\n          line,\n          caller: input.caller,\n          hourStart: observation.hourStart,\n          finality: 'pending',\n          paymentHash: input.paymentHash,\n          txHash,\n        });",
+      "replace": "booked = { ok: false, reason: 'intake_not_booked' };",
+      "note": "delete the status-1 bookLeaf call"
+    },
+    {
+      "id": "MF19",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "const housed = await houseIntakeReplay(challenge, paymentHeader, cfg, baseUrl);\n    if (housed) return housed;\n",
+      "replace": "",
+      "note": "replay skips the intake lookup"
+    },
+    {
+      "id": "MF20",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "const txIndex = observation.txIndex == null ? null : observation.txIndex;",
+      "replace": "const txIndex = observation.txIndex == null ? 0 : observation.txIndex;",
+      "note": "restore a zero default for a missing transaction index"
+    },
+    {
+      "id": "MF21",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "saltP: randomBytes(32).toString('hex'),",
+      "replace": "saltP: createHash('sha256').update(String(payment.nonce || key.hex)).digest('hex'),",
+      "note": "salt derived from the public nonce"
+    },
+    {
+      "id": "MF22",
+      "file": "services/chit-sealer/rpc-base.js",
+      "find": "return rows.every((row) => /^0x0{64}$/.test(row.word.trim().toLowerCase()));",
+      "replace": "return rows.every((row) => /^0x0{64}$/.test(row.word.trim().toLowerCase()) || row.word.trim().toLowerCase() === '0x');",
+      "note": "an empty 0x word counts as cleared"
+    },
+    {
+      "id": "MF23",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "const again = await repollSolanaFinality(cfg, challenge, paymentHeader, linked);",
+      "replace": "const again = { ok: false, pending: true };",
+      "note": "Solana retry skips the re-poll"
+    },
+    {
+      "id": "MF24",
+      "file": "services/chit-sealer/close.js",
+      "find": "if (!point) return { ok: true, lines: explicit };\n  const loaded = readIntakeLeaves(sealer.store.dir, sealer.store.io);\n  if (!loaded.ok) return loaded;\n  const picked = sealCandidates(loaded.leaves, point);\n  const pendingLines = picked;",
+      "replace": "const pending = readPendingLines(sealer.store.dir, sealer.store.io);\n  if (!pending.ok) return pending;\n  const pendingLines = pending.lines;",
+      "note": "no finality point seals every pending leaf"
+    },
+    {
+      "id": "MF25",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "  const matched = String(tx || '').match(/0x[0-9a-fA-F]{64}/);\n  const hash = matched ? `0x${matched[0].slice(2).toLowerCase()}` : null;",
+      "replace": "  const matched = null;\n  const hash = String(tx || '').startsWith('0x') ? String(tx) : `0x${tx}`;",
+      "note": "re-read the normalized payment key instead of the raw tx hash"
+    },
+    {
+      "id": "MF26",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "        const parked = bookAwaiting(intake, {\n          paymentRef: key.hex,\n          caller: input.caller,\n          paymentHash: input.paymentHash,\n          txHash: observation.txHash || null,\n        });\n        const id = parked && parked.row ? parked.row.pendingId : null;\n        return holdResponse('pending_anchor', key.hex, input.baseUrl, 'pending', id);",
+      "replace": "        return holdResponse('pending_anchor', key.hex, input.baseUrl, 'pending');",
+      "note": "a not-ready observation returns an unbound random id"
+    },
+    {
+      "id": "MF27",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "            active.markSpent(nonce, solanaSpentMeta);",
+      "replace": "            void solanaSpentMeta;",
+      "note": "a finalized Solana retry does not spend the nonce"
+    },
+    {
+      "id": "MF28",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "      payer: linked?.payer || null,",
+      "replace": "      payer: null,",
+      "note": "the re-poll drops the facilitator payer"
+    },
+    {
+      "id": "MF29",
+      "file": "services/gateway/src/x402-chain.js",
+      "find": "  const finalized = tx.confirmationStatus == null\n    ? tx.finalized !== false\n    : (tx.confirmationStatus === 'finalized' || tx.finalized === true);",
+      "replace": "  const finalized = tx.confirmationStatus === 'finalized' || tx.finalized === true;",
+      "note": "a getTransaction result without confirmationStatus is not final"
+    }
+  ]
+}

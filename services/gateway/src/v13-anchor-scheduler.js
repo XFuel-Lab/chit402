@@ -12,21 +12,29 @@
  * window still carries any pending intake. Empty windows are not submitted.
  */
 
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { MAX_BACKLOG, feeBump, hourIsFinished, openSealer, pendingCommits, recover } from '../../chit-sealer/close.js';
+import { MAX_BACKLOG, feeBump, hourIsFinished, openSealer, pendingCommits, recover, sealCandidates } from '../../chit-sealer/close.js';
 import { guardCloseHour, withSealerGuard } from '../../chit-sealer/guard.js';
 import { assertFeeCeiling, bumpFeeQuote, createCheckpointSigner } from '../../chit-sealer/kms-secp256k1.js';
 import { guardKmsClient } from '../../chit-sealer/anchor-mainnet.js';
 import { MAINNET_ANCHOR, MAINNET_CHAIN_ID } from '../../chit-sealer/mainnet-pin.js';
 import {
+  agreeCloseFinality,
   assertSealerRpcPair,
+  authorizationCleared,
   createBaseBroadcaster,
   dirModeOk,
   fileModeOk,
   readFeeCapWei,
+  readPaymentReceipts,
 } from '../../chit-sealer/rpc-base.js';
-import { readPendingLines } from '../../chit-store/intake.js';
+import { acceptCoreLine } from '../../chit-sealer/lines.js';
+import { getActiveChallengeStore } from './x402-durable-store.js';
+import { localTransferIndex } from './x402-chain.js';
+import { bookLeaf, openIntake, readIntakeLeaves, readPendingLines, updateLeaf } from '../../chit-store/intake.js';
+import { readV13Runtime, rebuildHouseLine } from './v13-issue.js';
 import { committedReceiptForLine, isHouseShapedEpoch, noteAnchored } from '../../chit-store/store.js';
 import logger from './logger.js';
 import { testSwitchesOn } from './test-switch.js';
@@ -76,6 +84,7 @@ const REASONS = new Set([
   'anchor_nonce_retired',
   'anchor_stalled',
   'anchor_hold_unreadable',
+  'anchor_finality_unavailable',
 ]);
 
 const HOLD_REASONS = new Set(['anchor_reverted', 'anchor_nonce_conflict', 'anchor_nonce_retired']);
@@ -554,6 +563,213 @@ export function selectAnchorHour(state, now, intakeCount, marginSec = CLOSE_MARG
   return { action: 'close', hourStart: lastComplete };
 }
 
+function lineLeaf(lineHex) {
+  if (typeof lineHex !== 'string') return null;
+  let bytes;
+  try { bytes = Uint8Array.from(Buffer.from(lineHex, 'hex')); } catch { return null; }
+  const accepted = acceptCoreLine(bytes);
+  if (!accepted.ok || typeof accepted.payment.blockNumber !== 'bigint') return null;
+  const pay = accepted.payment;
+  return {
+    blockNumber: pay.blockNumber,
+    blockHash: Buffer.from(pay.blockHash).toString('hex'),
+    txHash: `0x${Buffer.from(pay.txHash).toString('hex')}`,
+    token: `0x${Buffer.from(pay.token).toString('hex')}`,
+    to: `0x${Buffer.from(pay.to).toString('hex')}`,
+    authorizer: Buffer.from(pay.authorizer).toString('hex'),
+    nonce: Buffer.from(pay.nonce).toString('hex'),
+    value: pay.value,
+    line: bytes,
+  };
+}
+
+function countSealableIntake(session, point) {
+  const loaded = readIntakeLeaves(session.sealer.store.dir, session.sealer.store.io);
+  if (!loaded.ok) return loaded;
+  const picked = sealCandidates(loaded.leaves, point);
+  let count = 0;
+  for (let i = 0; i < picked.length; i += 1) {
+    const hex = Buffer.from(picked[i].line).toString('hex');
+    if (committedReceiptForLine(session.sealer.store, hex)) continue;
+    count += 1;
+  }
+  return { ok: true, count };
+}
+
+function releaseChallengeForTx(txHash) {
+  const store = getActiveChallengeStore();
+  if (!store || !store.map || typeof store.patch !== 'function') return;
+  const want = String(txHash || '').toLowerCase().replace(/^0x/, '');
+  for (const [nonce, rec] of store.map) {
+    const tx = rec && rec.settlement && rec.settlement.txRef;
+    if (!tx || String(tx).toLowerCase().replace(/^0x/, '') !== want) continue;
+    if (store.spent && typeof store.spent.delete === 'function') store.spent.delete(nonce);
+    store.patch(nonce, { state: 'issued', lease_owner: null, lease_until: null });
+  }
+}
+
+function receiptStatusOk(receipt) {
+  if (!receipt) return false;
+  return receipt.status === '0x1' || receipt.status === '0x01' || receipt.status === 1;
+}
+
+function sameTransfer(receipt, leaf) {
+  if (!receiptStatusOk(receipt) || !Array.isArray(receipt.logs)) return false;
+  const to = leaf.to.toLowerCase();
+  const token = leaf.token.toLowerCase();
+  for (let i = 0; i < receipt.logs.length; i += 1) {
+    const log = receipt.logs[i];
+    if (!log || String(log.address || '').toLowerCase() !== token) continue;
+    const topics = Array.isArray(log.topics) ? log.topics : [];
+    if (topics.length < 3) continue;
+    const dest = `0x${String(topics[2]).toLowerCase().replace(/^0x/, '').slice(-40)}`;
+    if (dest !== to) continue;
+    let value = -1n;
+    try { value = BigInt(log.data || '0x0'); } catch { value = -1n; }
+    if (value === leaf.value) return true;
+  }
+  return false;
+}
+
+function markHashMismatches(session, point, leaves) {
+  const dir = session.sealer.store.dir;
+  const io = session.sealer.store.io;
+  for (let i = 0; i < leaves.length; i += 1) {
+    const row = leaves[i];
+    if (!row || row.state !== 'pending_anchor' || row.receiptId != null) continue;
+    const finality = row.finality === 'final' ? 'final' : 'pending';
+    if (finality === 'final') continue;
+    const leaf = lineLeaf(row.line);
+    if (!leaf || !point || point.ok !== true || typeof point.F !== 'bigint') continue;
+    if (!(leaf.blockNumber <= point.F)) continue;
+    const got = point.blocks && point.blocks.get(leaf.blockNumber.toString());
+    if (!got || got.length === 0) continue;
+    if (got.some((hash) => hash !== leaf.blockHash)) {
+      updateLeaf(dir, row.paymentRef, (target) => { target.state = 'reorged'; }, io);
+    }
+  }
+}
+
+async function reconcileReorged(session, leaves) {
+  const dir = session.sealer.store.dir;
+  const io = session.sealer.store.io;
+  for (let i = 0; i < leaves.length; i += 1) {
+    const row = leaves[i];
+    if (!row || row.state !== 'reorged' || row.receiptId != null) continue;
+    const leaf = lineLeaf(row.line);
+    if (!leaf) continue;
+    const seen = await readPaymentReceipts({
+      fetchImpl: session.rpc && session.rpc.fetchImpl,
+      urls: session.rpc && session.rpc.urls,
+      txHash: leaf.txHash,
+      timeoutMs: session.rpc && session.rpc.timeoutMs,
+    });
+    if (!seen.ok) continue;
+    const receipts = seen.receipts || [];
+    const present = receipts.filter((item) => item);
+    if (present.length === receipts.length && present.length > 0 && present.every((item) => sameTransfer(item, leaf))) {
+      const blockNumber = Number(BigInt(present[0].blockNumber));
+      const blockHash = String(present[0].blockHash || '').toLowerCase().replace(/^0x/, '');
+      const agreed = present.every((item) => {
+        let n = NaN;
+        try { n = Number(BigInt(item.blockNumber)); } catch { n = NaN; }
+        const h = String(item.blockHash || '').toLowerCase().replace(/^0x/, '');
+        return n === blockNumber && h === blockHash && h !== '';
+      });
+      if (!agreed || !blockHash || blockHash === leaf.blockHash || !Number.isSafeInteger(blockNumber)) continue;
+      const txIndex = present[0].transactionIndex != null ? Number(BigInt(present[0].transactionIndex)) : null;
+      const localLogIndex = localTransferIndex(present[0].logs, {
+        token: leaf.token,
+        from: leaf.from,
+        to: leaf.to,
+        value: leaf.value,
+      });
+      if (!Number.isInteger(txIndex) || !Number.isInteger(localLogIndex)) continue;
+      let blockTime = null;
+      let timeOk = Array.isArray(session.rpc.urls) && session.rpc.urls.length > 0;
+      for (const url of session.rpc.urls) {
+        try {
+          const block = await session.rpc.fetchImpl(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'eth_getBlockByHash',
+              params: [`0x${blockHash}`, false],
+            }),
+          });
+          const parsed = await block.json();
+          const got = String(parsed?.result?.hash || '').toLowerCase().replace(/^0x/, '');
+          const ts = parsed?.result?.timestamp;
+          const next = ts == null ? null : Number(BigInt(ts));
+          if (got !== blockHash || !Number.isInteger(next)) {
+            timeOk = false;
+            break;
+          }
+          if (blockTime == null) blockTime = next;
+          else if (blockTime !== next) {
+            timeOk = false;
+            break;
+          }
+        } catch {
+          timeOk = false;
+          break;
+        }
+      }
+      if (!timeOk || !Number.isInteger(blockTime)) continue;
+      const rebuilt = rebuildHouseLine(leaf.line, { blockNumber, blockHash, blockTime, txIndex, localLogIndex });
+      if (!rebuilt) continue;
+      const caller = readV13Runtime() && readV13Runtime().caller;
+      const oldSha = createHash('sha256').update(Buffer.from(row.line, 'hex')).digest('hex');
+      if (caller) {
+        const intake = openIntake(dir, { io });
+        bookLeaf(intake, {
+          paymentRef: row.paymentRef,
+          line: rebuilt,
+          caller,
+          rebookedFrom: oldSha,
+          hourStart: Number.isSafeInteger(row.hourStart) ? row.hourStart : null,
+          txHash: leaf.txHash,
+        });
+      }
+      continue;
+    }
+    const gone = receipts.length > 0 && present.length === 0;
+    if (!gone) continue;
+    const cleared = await authorizationCleared({
+      fetchImpl: session.rpc && session.rpc.fetchImpl,
+      urls: session.rpc && session.rpc.urls,
+      token: leaf.token,
+      authorizer: leaf.authorizer,
+      nonce: leaf.nonce,
+      timeoutMs: session.rpc && session.rpc.timeoutMs,
+    });
+    if (gone && cleared) {
+      updateLeaf(dir, row.paymentRef, (target) => { target.state = 'not_settled'; }, io);
+      releaseChallengeForTx(leaf.txHash);
+    }
+  }
+}
+
+async function finalityFor(session, leaves) {
+  const numbers = [];
+  for (let i = 0; i < leaves.length; i += 1) {
+    const row = leaves[i];
+    if (!row || row.state !== 'pending_anchor' || row.receiptId != null) continue;
+    const leaf = lineLeaf(row.line);
+    if (leaf) numbers.push(leaf.blockNumber);
+  }
+  if (numbers.length === 0) return { ok: true, F: 0n, hashF: null, blocks: new Map(), empty: true };
+  if (!session.rpc) return { ok: false, code: 'anchor_finality_unavailable' };
+  return agreeCloseFinality({
+    fetchImpl: session.rpc.fetchImpl,
+    urls: session.rpc.urls,
+    blockNumbers: numbers,
+    timeoutMs: session.rpc.timeoutMs,
+  });
+}
+
 function pendingIntakeCount(store) {
   const pending = readPendingLines(store.dir, store.io);
   if (!pending.ok) return pending;
@@ -629,6 +845,12 @@ async function openSession(opts) {
   };
   const guarded = guardSigner(signer, sealer, broadcaster, boot.dir);
   sealer.signer = guarded;
+  const rpc = {
+    fetchImpl: deps.fetch,
+    urls: boot.urls,
+    timeoutMs: deps.timeoutMs,
+  };
+  sealer._rpc = rpc;
   return {
     env,
     dir: boot.dir,
@@ -637,6 +859,7 @@ async function openSession(opts) {
     sealer,
     broadcaster,
     send,
+    rpc,
     stuckMs: stuckAfterMs(env),
   };
 }
@@ -965,6 +1188,19 @@ function intakeStall(session) {
         origin = earlier(origin, fromHour);
       }
     }
+    const heldLeaves = readIntakeLeaves(session.sealer.store.dir, session.sealer.store.io);
+    if (heldLeaves.ok && Array.isArray(heldLeaves.leaves)) {
+      for (let i = 0; i < heldLeaves.leaves.length; i += 1) {
+        const row = heldLeaves.leaves[i];
+        if (!row || row.state !== 'reorged' || row.receiptId != null) continue;
+        const fromHour = hourEnd(row.hourStart);
+        if (fromHour == null) {
+          nullHour = true;
+          continue;
+        }
+        origin = earlier(origin, fromHour);
+      }
+    }
   } catch {
     // A missing intake file is not a stall by itself.
   }
@@ -1072,7 +1308,24 @@ export async function runAnchorTick(session) {
     }
     const bumped = await maybeBump(session);
     if (bumped) return finish(session, bumped);
-    const intake = pendingIntakeCount(session.sealer.store);
+    const loaded = readIntakeLeaves(session.sealer.store.dir, session.sealer.store.io);
+    if (!loaded.ok) {
+      report(session.log, 'intake_unreadable');
+      return finish(session, end(false, 'intake_unreadable'));
+    }
+    await reconcileReorged(session, loaded.leaves);
+    const fresh = readIntakeLeaves(session.sealer.store.dir, session.sealer.store.io);
+    const leaves = fresh.ok ? fresh.leaves : loaded.leaves;
+    const pendingLeft = leaves.some((row) => row && row.state === 'pending_anchor' && row.receiptId == null);
+    const point = await finalityFor(session, leaves);
+    if (pendingLeft && (!point || point.ok !== true)) {
+      report(session.log, 'anchor_finality_unavailable');
+      return finish(session, end(false, 'anchor_finality_unavailable'));
+    }
+    if (point && point.ok === true && point.empty !== true) markHashMismatches(session, point, leaves);
+    const marked = readIntakeLeaves(session.sealer.store.dir, session.sealer.store.io);
+    if (marked.ok) await reconcileReorged(session, marked.leaves);
+    const intake = countSealableIntake(session, point);
     if (!intake.ok) {
       report(session.log, 'intake_unreadable');
       return finish(session, end(false, 'intake_unreadable'));
@@ -1098,6 +1351,7 @@ export async function runAnchorTick(session) {
       lines: [],
       fees: quote,
       send: session.send,
+      finalityPoint: point,
     }, {
       env: session.env,
       log: (fields) => report(session.log, fields && fields.code),

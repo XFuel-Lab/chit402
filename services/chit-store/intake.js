@@ -7,7 +7,7 @@
  * closeHour is the only reader that turns a booked leaf into an epoch.
  */
 
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -152,17 +152,44 @@ function findRef(intake, paymentRef) {
 
 function leafRow(input, lineHex) {
   const hourStart = Number.isSafeInteger(input.hourStart) ? input.hourStart : null;
-  return {
+  const row = {
     paymentRef: input.paymentRef,
-    pendingId: pendingIdFor(input.paymentRef),
+    pendingId: /^[0-9a-f]{32}$/.test(String(input.pendingId || ''))
+      ? input.pendingId
+      : randomBytes(16).toString('hex'),
     bookId: input.bookId,
     tokenHash: input.tokenHash,
     line: lineHex,
     hourStart,
     state: 'pending_anchor',
+    finality: input.finality === 'final' ? 'final' : 'pending',
     receiptId: null,
     epoch: null,
   };
+  if (typeof input.paymentHash === 'string' && /^[0-9a-f]{64}$/.test(input.paymentHash)) {
+    row.paymentHash = input.paymentHash;
+  }
+  if (typeof input.txHash === 'string' && input.txHash) row.txHash = input.txHash;
+  if (typeof input.rebookedFrom === 'string' && /^[0-9a-f]{64}$/.test(input.rebookedFrom)) {
+    row.rebooked_from = input.rebookedFrom;
+  }
+  return row;
+}
+
+/** Missing finality is pending and is re-checked at seal. */
+export function rowFinality(row) {
+  if (row && row.finality === 'final') return 'final';
+  return 'pending';
+}
+
+let houseDir = '';
+
+export function setHouseIntakeDir(dir) {
+  houseDir = typeof dir === 'string' ? dir : '';
+}
+
+export function houseIntakeDir() {
+  return houseDir;
 }
 
 /**
@@ -171,6 +198,46 @@ function leafRow(input, lineHex) {
  * @param {object} intake
  * @param {object} input
  */
+export function bookAwaiting(intake, input) {
+  if (!intake || !Array.isArray(intake.leaves)) return { ok: false, reason: 'intake_unreadable' };
+  const paymentRef = typeof input?.paymentRef === 'string' ? input.paymentRef : '';
+  if (!PAYMENT_REF.test(paymentRef)) return { ok: false, reason: 'bad_payment_ref' };
+  const bookId = input?.caller?.bookId;
+  const token = input?.caller?.token;
+  if (typeof bookId !== 'string' || bookId === '' || typeof token !== 'string' || token === '') {
+    return { ok: false, reason: 'bad_owner' };
+  }
+  const existing = findRef(intake, paymentRef);
+  if (existing) return { ok: true, row: existing };
+  const row = {
+    paymentRef,
+    pendingId: randomBytes(16).toString('hex'),
+    bookId,
+    tokenHash: tokenHashHex(token),
+    line: null,
+    hourStart: null,
+    state: 'awaiting_block',
+    finality: 'pending',
+    receiptId: null,
+    epoch: null,
+  };
+  if (typeof input.paymentHash === 'string' && /^[0-9a-f]{64}$/.test(input.paymentHash)) {
+    row.paymentHash = input.paymentHash;
+  }
+  if (typeof input.txHash === 'string' && input.txHash) row.txHash = input.txHash;
+  intake.leaves.push(row);
+  try {
+    persist(intake);
+  } catch (err) {
+    intake.leaves.pop();
+    const wrapped = new Error('intake not booked');
+    wrapped.code = 'intake_not_booked';
+    wrapped.cause = err;
+    throw wrapped;
+  }
+  return { ok: true, row };
+}
+
 export function bookLeaf(intake, input) {
   if (!intake || !Array.isArray(intake.leaves)) return { ok: false, reason: 'intake_unreadable' };
   const paymentRef = typeof input?.paymentRef === 'string' ? input.paymentRef : '';
@@ -186,8 +253,49 @@ export function bookLeaf(intake, input) {
   const existing = findRef(intake, paymentRef);
   if (existing) {
     if (!sameOwner(existing, input.caller)) return { ok: false, reason: 'not_owner' };
+    if (existing.state === 'awaiting_block' && existing.line == null) {
+      existing.line = lineHex;
+      existing.state = 'pending_anchor';
+      existing.finality = 'pending';
+      if (typeof input.txHash === 'string' && input.txHash) existing.txHash = input.txHash;
+      if (typeof input.paymentHash === 'string' && /^[0-9a-f]{64}$/.test(input.paymentHash)) {
+        existing.paymentHash = input.paymentHash;
+      }
+      try {
+        persist(intake);
+      } catch (err) {
+        const wrapped = new Error('intake not booked');
+        wrapped.code = 'intake_not_booked';
+        wrapped.cause = err;
+        throw wrapped;
+      }
+      return { ok: true, replay: false, row: existing };
+    }
     if (existing.state === 'refund_owed') return { ok: true, replay: true, row: existing };
-    if (existing.line !== lineHex) return { ok: false, reason: 'intake_conflict' };
+    if (existing.line !== lineHex) {
+      if (existing.state === 'reorged' && existing.receiptId == null && typeof input.rebookedFrom === 'string') {
+        const oldSha = createHash('sha256').update(Buffer.from(existing.line, 'hex')).digest('hex');
+        if (input.rebookedFrom !== oldSha) return { ok: false, reason: 'intake_conflict' };
+        existing.line = lineHex;
+        existing.state = 'pending_anchor';
+        existing.finality = 'pending';
+        existing.rebooked_from = input.rebookedFrom;
+        existing.receiptId = null;
+        existing.epoch = null;
+        if (Number.isSafeInteger(input.hourStart)) existing.hourStart = input.hourStart;
+        if (typeof input.txHash === 'string' && input.txHash) existing.txHash = input.txHash;
+        try {
+          persist(intake);
+        } catch (err) {
+          const wrapped = new Error('intake not booked');
+          wrapped.code = 'intake_not_booked';
+          wrapped.cause = err;
+          throw wrapped;
+        }
+        return { ok: true, replay: false, rebooked: true, row: existing };
+      }
+      return { ok: false, reason: 'intake_conflict' };
+    }
     return { ok: true, replay: true, row: existing };
   }
   const row = leafRow({
@@ -268,7 +376,7 @@ export function writeRefund(intake, input) {
   }
   const row = {
     paymentRef,
-    pendingId: pendingIdFor(paymentRef),
+    pendingId: randomBytes(16).toString('hex'),
     bookId,
     tokenHash: tokenHashHex(token),
     line: null,
@@ -288,6 +396,49 @@ export function writeRefund(intake, input) {
     throw wrapped;
   }
   return { ok: true, replay: false, row };
+}
+
+export function readIntakeLeaves(dir, io = fs) {
+  if (typeof dir !== 'string' || dir === '') return { ok: true, leaves: [] };
+  let intake;
+  try {
+    intake = openIntake(dir, { io });
+  } catch (err) {
+    return { ok: false, reason: err?.code || 'intake_unreadable' };
+  }
+  return { ok: true, leaves: intake.leaves };
+}
+
+export function updateLeaf(dir, paymentRef, mutate, io = fs) {
+  let intake;
+  try {
+    intake = openIntake(dir, { io });
+  } catch (err) {
+    return { ok: false, reason: err?.code || 'intake_unreadable' };
+  }
+  const row = findRef(intake, paymentRef);
+  if (!row) return { ok: false, reason: 'intake_unreadable' };
+  mutate(row);
+  try {
+    persist(intake);
+  } catch (err) {
+    return { ok: false, reason: err?.code || 'intake_not_booked' };
+  }
+  return { ok: true, row };
+}
+
+export function findLeafByPendingId(dir, pendingId, io = fs) {
+  if (typeof pendingId !== 'string' || !PENDING_ID.test(pendingId)) return null;
+  let intake;
+  try {
+    intake = openIntake(dir, { io });
+  } catch {
+    return null;
+  }
+  for (let i = 0; i < intake.leaves.length; i += 1) {
+    if (intake.leaves[i].pendingId === pendingId) return intake.leaves[i];
+  }
+  return null;
 }
 
 export function findByPaymentRef(intake, paymentRef) {
@@ -321,6 +472,7 @@ export function readPendingLines(dir, io = fs) {
       bookId: row.bookId,
       paymentRef: row.paymentRef,
     };
+    if (row.finality === 'final' || row.finality === 'pending') line.finality = row.finality;
     if (Number.isSafeInteger(row.hourStart) && row.hourStart >= 0) line.hourStart = row.hourStart;
     lines.push(line);
   }

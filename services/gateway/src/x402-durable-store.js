@@ -243,6 +243,9 @@ export class DurableChallengeStore {
   ensureHoldHandle(spec) { return this._with((s) => s.ensureHoldHandle(spec)); }
   getHoldHandle(id) { return this._with((s) => s.getHoldHandle(id)); }
   findHoldHandleByKey(key) { return this._read((s) => s.findHoldHandleByKey(key)); }
+  noteHoldHint(key, fields) { return this._with((s) => s.noteHoldHint(key, fields)); }
+  holdByPendingId(id) { return this._read((s) => s.holdByPendingId(id)); }
+  listHoldHandles() { return this._read((s) => s.listHoldHandles()); }
   linkHoldHandle(key, linked, paymentHash) { return this._with((s) => s.linkHoldHandle(key, linked, paymentHash)); }
   holdPageLink(id) { return this._with((s) => s.holdPageLink(id)); }
   listPending() { return this._with((s) => s.listPending()); }

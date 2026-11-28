@@ -1,6 +1,6 @@
 {
   "about": "Tests each gateway test file reports. run-tests.mjs fails on any difference, and on more skipped or todo tests than `skipped`. Regenerate with npm run test:counts after a clean run.",
-  "total": 2892,
+  "total": 2927,
   "skipped": 3,
   "files": {
     "test/a2a-paid-door.test.mjs": 6,
@@ -52,6 +52,11 @@
     "test/cs2-smt.test.mjs": 1,
     "test/demo-mode.test.mjs": 6,
     "test/discovery-copy-brand.test.mjs": 3,
+    "test/doctor-delta-sol.test.mjs": 2,
+    "test/doctor-delta-sol2.test.mjs": 5,
+    "test/doctor-delta.test.mjs": 1,
+    "test/doctor-repro-sol.test.mjs": 2,
+    "test/doctor-repro.test.mjs": 3,
     "test/door-metrics-route.test.mjs": 2,
     "test/door-metrics.test.mjs": 9,
     "test/dotenv-load-pin.test.mjs": 14,
@@ -66,6 +71,8 @@
     "test/explorer-url-security.test.mjs": 10,
     "test/export-coverage.test.mjs": 6,
     "test/export-universe-hash-recompute.test.mjs": 3,
+    "test/finality-a-kills.test.mjs": 19,
+    "test/finality-a.test.mjs": 3,
     "test/first-paid-settlement.test.mjs": 3,
     "test/fixed-head-eip712.test.mjs": 45,
     "test/foreign-x402-ingest.test.mjs": 53,

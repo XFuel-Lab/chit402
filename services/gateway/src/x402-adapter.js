@@ -649,6 +649,49 @@ export class ChallengeStore {
       hold_class: row.hold_class,
       code: row.code || null,
       payment_hash: row.payment_hash || null,
+      tx_hint: row.tx_hint || null,
+      network: row.network || null,
+      payer: row.payer || null,
+      receipt: row.receipt || null,
+    };
+  }
+
+  noteHoldHint(key, fields = {}) {
+    const row = this.holdHandles.find((item) => item.key === key);
+    if (!row || !fields || typeof fields !== 'object') return null;
+    if (typeof fields.txHint === 'string' && fields.txHint) row.tx_hint = fields.txHint;
+    if (typeof fields.network === 'string' && fields.network) row.network = fields.network;
+    if (typeof fields.payer === 'string' && fields.payer) row.payer = fields.payer;
+    if (fields.blockhash && typeof fields.blockhash === 'object') row.blockhash = fields.blockhash;
+    if (fields.receipt && typeof fields.receipt === 'object') row.receipt = fields.receipt;
+    return { pending_id: row.pending_id };
+  }
+
+  listHoldHandles() {
+    return this.holdHandles.map((row) => ({
+      key: row.key,
+      pending_id: row.pending_id,
+      hold_class: row.hold_class,
+      code: row.code || null,
+      network: row.network || null,
+      tx_hint: row.tx_hint || null,
+      payer: row.payer || null,
+      blockhash: row.blockhash || null,
+      receipt: row.receipt || null,
+    }));
+  }
+
+  holdByPendingId(id) {
+    if (typeof id !== 'string') return null;
+    const row = this.holdHandles.find((item) => item.pending_id === id);
+    if (!row) return null;
+    return {
+      pending_id: row.pending_id,
+      hold_class: row.hold_class,
+      code: row.code || null,
+      network: row.network || null,
+      payment_hash: row.payment_hash || null,
+      receipt: row.receipt || null,
     };
   }
 
