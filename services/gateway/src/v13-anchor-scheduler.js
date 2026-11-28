@@ -32,6 +32,7 @@ import {
 } from '../../chit-sealer/rpc-base.js';
 import { acceptCoreLine } from '../../chit-sealer/lines.js';
 import { getActiveChallengeStore } from './x402-durable-store.js';
+import { localTransferIndex } from './x402-chain.js';
 import { bookLeaf, openIntake, readIntakeLeaves, readPendingLines, updateLeaf } from '../../chit-store/intake.js';
 import { readV13Runtime, rebuildHouseLine } from './v13-issue.js';
 import { committedReceiptForLine, isHouseShapedEpoch, noteAnchored } from '../../chit-store/store.js';
@@ -677,30 +678,46 @@ async function reconcileReorged(session, leaves) {
       });
       if (!agreed || !blockHash || blockHash === leaf.blockHash || !Number.isSafeInteger(blockNumber)) continue;
       const txIndex = present[0].transactionIndex != null ? Number(BigInt(present[0].transactionIndex)) : null;
-      let localLogIndex = null;
-      const logs = Array.isArray(present[0].logs) ? present[0].logs : [];
-      for (let li = 0; li < logs.length; li += 1) {
-        const topics = logs[li] && logs[li].topics;
-        if (!topics || topics.length < 3) continue;
-        const dest = `0x${String(topics[2]).toLowerCase().replace(/^0x/, '').slice(-40)}`;
-        if (dest === String(leaf.to).toLowerCase()) {
-          localLogIndex = li;
+      const localLogIndex = localTransferIndex(present[0].logs, {
+        token: leaf.token,
+        from: leaf.from,
+        to: leaf.to,
+        value: leaf.value,
+      });
+      if (!Number.isInteger(txIndex) || !Number.isInteger(localLogIndex)) continue;
+      let blockTime = null;
+      let timeOk = Array.isArray(session.rpc.urls) && session.rpc.urls.length > 0;
+      for (const url of session.rpc.urls) {
+        try {
+          const block = await session.rpc.fetchImpl(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              jsonrpc: '2.0',
+              id: 1,
+              method: 'eth_getBlockByHash',
+              params: [`0x${blockHash}`, false],
+            }),
+          });
+          const parsed = await block.json();
+          const got = String(parsed?.result?.hash || '').toLowerCase().replace(/^0x/, '');
+          const ts = parsed?.result?.timestamp;
+          const next = ts == null ? null : Number(BigInt(ts));
+          if (got !== blockHash || !Number.isInteger(next)) {
+            timeOk = false;
+            break;
+          }
+          if (blockTime == null) blockTime = next;
+          else if (blockTime !== next) {
+            timeOk = false;
+            break;
+          }
+        } catch {
+          timeOk = false;
           break;
         }
       }
-      if (!Number.isInteger(txIndex) || !Number.isInteger(localLogIndex)) continue;
-      let blockTime = null;
-      try {
-        const block = await session.rpc.fetchImpl(session.rpc.urls[0], {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBlockByNumber', params: [`0x${blockNumber.toString(16)}`, false] }),
-        });
-        const parsed = await block.json();
-        const ts = parsed && parsed.result && parsed.result.timestamp;
-        if (ts != null) blockTime = Number(BigInt(ts));
-      } catch { blockTime = null; }
-      if (!Number.isInteger(blockTime)) continue;
+      if (!timeOk || !Number.isInteger(blockTime)) continue;
       const rebuilt = rebuildHouseLine(leaf.line, { blockNumber, blockHash, blockTime, txIndex, localLogIndex });
       if (!rebuilt) continue;
       const caller = readV13Runtime() && readV13Runtime().caller;

@@ -221,8 +221,12 @@ test('FA5 a replay re-read books the chain hash, not the stored one', async () =
     from: `0x${'11'.repeat(20)}`,
     logs: [{
       address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
-      topics: ['0x' + 'dd'.repeat(32), '0x' + '00'.repeat(12) + '11'.repeat(20), '0x' + '00'.repeat(12) + '22'.repeat(20)],
-      data: '0x' + '0'.repeat(63) + '1',
+      topics: [
+        '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+        '0x' + '00'.repeat(12) + '11'.repeat(20),
+        '0x' + '00'.repeat(12) + '22'.repeat(20),
+      ],
+      data: `0x${(2000).toString(16).padStart(64, '0')}`,
     }],
   });
   const prev = {};
@@ -772,7 +776,11 @@ test('M3 a missing transaction index is a 202 and not a booked line', async () =
     });
     mkdirSync(join(box.root, 'bind'), { recursive: true });
     assert.equal(out.status, 202);
-    assert.equal(readIntakeLeaves(box.store.dir).leaves.length, 0);
+    const parked = readIntakeLeaves(box.store.dir).leaves;
+    assert.equal(parked.length, 1);
+    assert.equal(parked[0].state, 'awaiting_block');
+    assert.equal(parked[0].line, null);
+    assert.equal(parked[0].pendingId, out.body.pending_id);
   } finally {
     rmSync(box.root, { recursive: true, force: true });
   }
@@ -795,10 +803,16 @@ test('M8 a status-1 read with no block hash is 202 and a later read books one le
     });
     assert.equal(first.status, 202);
     assert.match(first.body.pending_id, /^[0-9a-f]{32}$/);
-    assert.equal(readIntakeLeaves(box.store.dir).leaves.length, 0);
+    const parked = readIntakeLeaves(box.store.dir).leaves;
+    assert.equal(parked.length, 1);
+    assert.equal(parked[0].state, 'awaiting_block');
+    assert.equal(parked[0].line, null);
     const second = await book(box, 41, 10, 'ab'.repeat(32));
     assert.equal(second.status, 202);
-    assert.equal(readIntakeLeaves(box.store.dir).leaves.length, 1);
+    assert.equal(second.body.pending_id, first.body.pending_id);
+    const booked = readIntakeLeaves(box.store.dir).leaves;
+    assert.equal(booked.length, 1);
+    assert.equal(typeof booked[0].line, 'string');
   } finally {
     rmSync(box.root, { recursive: true, force: true });
   }

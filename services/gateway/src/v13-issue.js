@@ -13,6 +13,7 @@ import { SAMPLE } from '../../../packages/cs2-core/line/sample.mjs';
 import { MAINNET_USDC, assertLivePin, mainnetPin, normHex } from '../../chit-sealer/mainnet-pin.js';
 import { acceptCoreLine } from '../../chit-sealer/lines.js';
 import {
+  bookAwaiting,
   bookLeaf,
   findByPaymentRef,
   findLeafByPendingId,
@@ -487,7 +488,26 @@ async function issueV13(input) {
       && observation.blockTime != null
       && txIndex != null
       && localLogIndex != null;
-    if (!blockReady) return holdResponse('pending_anchor', key.hex, input.baseUrl, 'pending');
+    if (!blockReady) {
+      const dir = input.dir;
+      if (!dir) return refundOwed(input, key.hex);
+      return await withLock(key.hex, async () => {
+        let intake;
+        try {
+          intake = openIntake(intakeDirOf(input), { io: intakeIo(input) });
+        } catch {
+          return refundOwed(input, key.hex);
+        }
+        const parked = bookAwaiting(intake, {
+          paymentRef: key.hex,
+          caller: input.caller,
+          paymentHash: input.paymentHash,
+          txHash: observation.txHash || null,
+        });
+        const id = parked && parked.row ? parked.row.pendingId : null;
+        return holdResponse('pending_anchor', key.hex, input.baseUrl, 'pending', id);
+      });
+    }
     const dir = input.dir;
     if (!dir) return refundOwed(input, key.hex);
     return await withLock(key.hex, async () => {
@@ -500,7 +520,9 @@ async function issueV13(input) {
         return refundOwed(input, key.hex);
       }
       const existing = findByPaymentRef(intake, key.hex);
-      if (existing) return answerRow(input, existing, key.hex);
+      if (existing && !(existing.state === 'awaiting_block' && blockReady)) {
+        return answerRow(input, existing, key.hex);
+      }
       const blockHash = String(observation.blockHash || '').replace(/^0x/, '').toLowerCase();
       const txHash = String(observation.txHash || '').toLowerCase().split(':').pop().replace(/^0x/, '');
       let line;
@@ -707,5 +729,44 @@ export async function handleHouse(request, ctx) {
     payment: body.payment,
     observation: body.observation,
     caller: request.caller,
+  });
+}
+
+/** Book an awaiting row once the block fields are known. Same pending id. */
+export async function resumeAwaitingHouse({ row, observation, paymentHeader, challenge, baseUrl }) {
+  const runtime = readV13Runtime();
+  if (!runtime || !runtime.store || !runtime.caller) return null;
+  let auth = {};
+  try {
+    const decoded = JSON.parse(Buffer.from(String(paymentHeader || ''), 'base64').toString('utf8'));
+    auth = decoded?.payload?.authorization || decoded?.authorization || {};
+  } catch {
+    auth = {};
+  }
+  const fixed = (value, bytes) => {
+    const raw = String(value || '').trim().toLowerCase().replace(/^0x/, '');
+    if (!raw || raw.length > bytes * 2 || !/^[0-9a-f]+$/.test(raw)) return '';
+    return raw.padStart(bytes * 2, '0');
+  };
+  return issueHouseReceipt({
+    env: process.env,
+    observation,
+    payment: {
+      chainId: 8453,
+      token: fixed(challenge?.asset, 20),
+      authorizer: fixed(auth.from, 20),
+      nonce: fixed(auth.nonce, 32),
+      from: fixed(auth.from, 20),
+      to: fixed(auth.to || challenge?.payTo, 20),
+      value: auth.value || challenge?.amount,
+      method: 1,
+    },
+    paymentHash: row?.paymentHash || null,
+    baseUrl,
+    store: runtime.store,
+    dir: runtime.dir,
+    caller: runtime.caller,
+    client: runtime.client,
+    send: runtime.send,
   });
 }

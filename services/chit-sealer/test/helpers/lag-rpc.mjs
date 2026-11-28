@@ -176,6 +176,14 @@ export function startLagRpc(options = {}) {
       if (n == null) return null;
       return blockOf(n);
     }
+    if (method === 'eth_getBlockByHash') {
+      const want = String(params[0] || '').toLowerCase();
+      for (let n = 0; n <= latest; n += 1) {
+        const row = blockOf(n);
+        if (row && String(row.hash).toLowerCase() === want) return row;
+      }
+      return null;
+    }
     if (method === 'eth_getTransactionReceipt') {
       const tx = String(params[0] || '').toLowerCase();
       return receipts.has(tx) ? receipts.get(tx) : null;

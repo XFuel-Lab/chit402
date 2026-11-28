@@ -107,6 +107,7 @@ test('DOC-R3 a same-header Solana retry after a finality hold re-reads the chain
       extra: { feePayer: SOL_FEE },
       nonce,
     });
+    let finalNow = false;
     const cfg = {
       network: 'solana',
       payTo: SOL_HOUSE,
@@ -119,7 +120,16 @@ test('DOC-R3 a same-header Solana retry after a finality hold re-reads the chain
       solana: { enabled: true, network: 'solana', payTo: SOL_HOUSE, facilitatorUrl: fac.url },
       chainReader: async () => {
         reads += 1;
-        return { ok: false, pending: true };
+        if (!finalNow) return { ok: false, pending: true };
+        return {
+          ok: true,
+          confirmed: true,
+          finalized: true,
+          amount: '2000',
+          payer: SOL_PAYER,
+          payTo: SOL_HOUSE,
+          tx: 'sig-final',
+        };
       },
     };
     const header = solHeader({ transaction: tx });
@@ -145,6 +155,21 @@ test('DOC-R3 a same-header Solana retry after a finality hold re-reads the chain
     assert.equal(fac.hits.settle, 1);
     const other = await pay(solHeader({ transaction: compiledMessage(SOL_FEE, SOL_FEE) }));
     assert.equal(other.pendingId || null, null);
+    finalNow = true;
+    const won = await pay(header);
+    assert.equal(won.kind, 'settled', won.code);
+    assert.notEqual(won.idempotentReplay, true);
+    assert.equal(won.paymentRef, 'sig-final');
+    const later = [];
+    for (let i = 0; i < 3; i += 1) later.push(await pay(header));
+    const raced = await Promise.all([pay(header), pay(header)]);
+    const fresh = [won, ...later, ...raced].filter((row) => row.kind === 'settled' && row.idempotentReplay !== true);
+    assert.equal(fresh.length, 1);
+    for (const row of [...later, ...raced]) {
+      assert.equal(row.idempotentReplay, true, row.code);
+      assert.equal(row.paymentRef, 'sig-final');
+    }
+    assert.equal(fac.hits.settle, 1);
   } finally {
     await fac.close();
   }

@@ -198,6 +198,46 @@ export function houseIntakeDir() {
  * @param {object} intake
  * @param {object} input
  */
+export function bookAwaiting(intake, input) {
+  if (!intake || !Array.isArray(intake.leaves)) return { ok: false, reason: 'intake_unreadable' };
+  const paymentRef = typeof input?.paymentRef === 'string' ? input.paymentRef : '';
+  if (!PAYMENT_REF.test(paymentRef)) return { ok: false, reason: 'bad_payment_ref' };
+  const bookId = input?.caller?.bookId;
+  const token = input?.caller?.token;
+  if (typeof bookId !== 'string' || bookId === '' || typeof token !== 'string' || token === '') {
+    return { ok: false, reason: 'bad_owner' };
+  }
+  const existing = findRef(intake, paymentRef);
+  if (existing) return { ok: true, row: existing };
+  const row = {
+    paymentRef,
+    pendingId: randomBytes(16).toString('hex'),
+    bookId,
+    tokenHash: tokenHashHex(token),
+    line: null,
+    hourStart: null,
+    state: 'awaiting_block',
+    finality: 'pending',
+    receiptId: null,
+    epoch: null,
+  };
+  if (typeof input.paymentHash === 'string' && /^[0-9a-f]{64}$/.test(input.paymentHash)) {
+    row.paymentHash = input.paymentHash;
+  }
+  if (typeof input.txHash === 'string' && input.txHash) row.txHash = input.txHash;
+  intake.leaves.push(row);
+  try {
+    persist(intake);
+  } catch (err) {
+    intake.leaves.pop();
+    const wrapped = new Error('intake not booked');
+    wrapped.code = 'intake_not_booked';
+    wrapped.cause = err;
+    throw wrapped;
+  }
+  return { ok: true, row };
+}
+
 export function bookLeaf(intake, input) {
   if (!intake || !Array.isArray(intake.leaves)) return { ok: false, reason: 'intake_unreadable' };
   const paymentRef = typeof input?.paymentRef === 'string' ? input.paymentRef : '';
@@ -213,6 +253,24 @@ export function bookLeaf(intake, input) {
   const existing = findRef(intake, paymentRef);
   if (existing) {
     if (!sameOwner(existing, input.caller)) return { ok: false, reason: 'not_owner' };
+    if (existing.state === 'awaiting_block' && existing.line == null) {
+      existing.line = lineHex;
+      existing.state = 'pending_anchor';
+      existing.finality = 'pending';
+      if (typeof input.txHash === 'string' && input.txHash) existing.txHash = input.txHash;
+      if (typeof input.paymentHash === 'string' && /^[0-9a-f]{64}$/.test(input.paymentHash)) {
+        existing.paymentHash = input.paymentHash;
+      }
+      try {
+        persist(intake);
+      } catch (err) {
+        const wrapped = new Error('intake not booked');
+        wrapped.code = 'intake_not_booked';
+        wrapped.cause = err;
+        throw wrapped;
+      }
+      return { ok: true, replay: false, row: existing };
+    }
     if (existing.state === 'refund_owed') return { ok: true, replay: true, row: existing };
     if (existing.line !== lineHex) {
       if (existing.state === 'reorged' && existing.receiptId == null && typeof input.rebookedFrom === 'string') {

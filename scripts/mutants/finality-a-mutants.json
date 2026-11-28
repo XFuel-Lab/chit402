@@ -10,6 +10,9 @@
       "services/gateway/test/finality-a-kills.test.mjs",
       "services/gateway/test/doctor-repro.test.mjs",
       "services/gateway/test/doctor-repro-sol.test.mjs",
+      "services/gateway/test/doctor-delta.test.mjs",
+      "services/gateway/test/doctor-delta-sol.test.mjs",
+      "services/gateway/test/doctor-delta-sol2.test.mjs",
       "services/chit-sealer/test/rpc-base.test.mjs",
       "services/gateway/test/v13-anchor-scheduler.test.mjs"
     ]
@@ -144,7 +147,7 @@
     {
       "id": "MF19",
       "file": "services/gateway/src/x402-settle.js",
-      "find": "const housed = houseIntakeReplay(challenge, paymentHeader);\n    if (housed) return housed;\n",
+      "find": "const housed = await houseIntakeReplay(challenge, paymentHeader, cfg, baseUrl);\n    if (housed) return housed;\n",
       "replace": "",
       "note": "replay skips the intake lookup"
     },
@@ -182,6 +185,41 @@
       "find": "if (!point) return { ok: true, lines: explicit };\n  const loaded = readIntakeLeaves(sealer.store.dir, sealer.store.io);\n  if (!loaded.ok) return loaded;\n  const picked = sealCandidates(loaded.leaves, point);\n  const pendingLines = picked;",
       "replace": "const pending = readPendingLines(sealer.store.dir, sealer.store.io);\n  if (!pending.ok) return pending;\n  const pendingLines = pending.lines;",
       "note": "no finality point seals every pending leaf"
+    },
+    {
+      "id": "MF25",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "  const matched = String(tx || '').match(/0x[0-9a-fA-F]{64}/);\n  const hash = matched ? `0x${matched[0].slice(2).toLowerCase()}` : null;",
+      "replace": "  const matched = null;\n  const hash = String(tx || '').startsWith('0x') ? String(tx) : `0x${tx}`;",
+      "note": "re-read the normalized payment key instead of the raw tx hash"
+    },
+    {
+      "id": "MF26",
+      "file": "services/gateway/src/v13-issue.js",
+      "find": "        const parked = bookAwaiting(intake, {\n          paymentRef: key.hex,\n          caller: input.caller,\n          paymentHash: input.paymentHash,\n          txHash: observation.txHash || null,\n        });\n        const id = parked && parked.row ? parked.row.pendingId : null;\n        return holdResponse('pending_anchor', key.hex, input.baseUrl, 'pending', id);",
+      "replace": "        return holdResponse('pending_anchor', key.hex, input.baseUrl, 'pending');",
+      "note": "a not-ready observation returns an unbound random id"
+    },
+    {
+      "id": "MF27",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "            active.markSpent(nonce, solanaSpentMeta);",
+      "replace": "            void solanaSpentMeta;",
+      "note": "a finalized Solana retry does not spend the nonce"
+    },
+    {
+      "id": "MF28",
+      "file": "services/gateway/src/x402-settle.js",
+      "find": "      payer: linked?.payer || null,",
+      "replace": "      payer: null,",
+      "note": "the re-poll drops the facilitator payer"
+    },
+    {
+      "id": "MF29",
+      "file": "services/gateway/src/x402-chain.js",
+      "find": "  const finalized = tx.confirmationStatus == null\n    ? tx.finalized !== false\n    : (tx.confirmationStatus === 'finalized' || tx.finalized === true);",
+      "replace": "  const finalized = tx.confirmationStatus === 'finalized' || tx.finalized === true;",
+      "note": "a getTransaction result without confirmationStatus is not final"
     }
   ]
 }
